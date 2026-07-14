@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- hsync-bootnode — launchd service (macOS)
+
+Install (system-wide daemon):
+  sudo cp packaging/launchd/it.hsync.bootnode.plist /Library/LaunchDaemons/
+  sudo install -m 0640 -o root -g wheel /path/to/group-keys /etc/hsync-bootnode/group-keys
+  sudo launchctl bootstrap system /Library/LaunchDaemons/it.hsync.bootnode.plist
+
+The shell wrapper exposes the group-keys file as fd 3 (read once at startup
+via HSYNC_BOOTNODE_KEYS_FD); nothing is ever written to disk (no-log).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>it.hsync.bootnode</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/sh</string>
+        <string>-c</string>
+        <string>exec /usr/local/bin/hsync-bootnode run --host 0.0.0.0 --port 443 --keys-fd 3 3&lt;/etc/hsync-bootnode/group-keys</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+
+    <key>RootDirectory</key>
+    <string>/</string>
+    <key>Umask</key>
+    <integer>7</integer>
+
+    <key>StandardOutPath</key>
+    <string>/dev/null</string>
+    <key>StandardErrorPath</key>
+    <string>/dev/null</string>
+</dict>
+</plist>

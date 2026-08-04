@@ -1,0 +1,74 @@
+"""In-memory token-bucket rate limiters (D11) — RAM only, no persistence.
+
+A token bucket expresses the spec's ``N/min (burst B)`` semantics exactly:
+the bucket holds at most ``capacity`` tokens (the burst) and is refilled at
+``refill`` tokens per ``window`` seconds (the sustained rate), lazily on each
+check using a monotonic clock. Expired state is pruned lazily too; nothing is
+ever written to disk.
+"""
+
+from __future__ import annotations
+
+import time
+
+__all__ = [
+    "TokenBucketLimiter",
+    "RateLimitKey",
+]
+
+RateLimitKey = str
+
+
+class TokenBucketLimiter:
+    """Per-key token bucket: at most ``capacity`` tokens, refill ``refill``/window.
+
+    ``allow(key)`` consumes one token and returns True, or returns False when
+    the bucket is empty; ``retry_after(key)`` then reports the seconds until
+    the next token is available so the caller can answer with an explicit
+    ``retry_after`` instead of silently dropping. Bucket state initialises on
+    first use and refills lazily on each check (monotonic clock); a caller may
+    pass ``now`` explicitly for deterministic tests.
+    """
+
+    def __init__(self, capacity: int, refill: float, window: float = 60.0) -> None:
+        if capacity < 1 or refill <= 0 or window <= 0:
+            raise ValueError("capacity/refill/window must be positive")
+        self._capacity = float(capacity)
+        self._rate = refill / window  # tokens per second
+        self._tokens: dict[RateLimitKey, float] = {}
+        self._updated: dict[RateLimitKey, float] = {}
+
+    def allow(self, key: RateLimitKey, now: float | None = None) -> bool:
+        now = now if now is not None else time.monotonic()
+        tokens = self._refill(key, now)
+        if tokens < 1.0:
+            return False
+        self._tokens[key] = tokens - 1.0
+        return True
+
+    def retry_after(self, key: RateLimitKey, now: float | None = None) -> int:
+        """Seconds until the next token of ``key`` becomes available (>=1)."""
+        now = now if now is not None else time.monotonic()
+        tokens = self._refill(key, now)
+        if tokens >= 1.0:
+            return 1
+        seconds = (1.0 - tokens) / self._rate
+        return max(1, int(seconds) + 1)
+
+    def clear(self) -> None:
+        self._tokens.clear()
+        self._updated.clear()
+
+    def _refill(self, key: RateLimitKey, now: float) -> float:
+        """Return the (unconsumed) token count after applying the elapsed refill."""
+        updated_at = self._updated.get(key)
+        if updated_at is None:
+            # first use: start full, stamp the provided clock
+            self._tokens[key] = self._capacity
+            self._updated[key] = now
+            return self._capacity
+        elapsed = max(0.0, now - updated_at)
+        tokens = min(self._capacity, self._tokens[key] + elapsed * self._rate)
+        self._tokens[key] = tokens
+        self._updated[key] = now
+        return tokens

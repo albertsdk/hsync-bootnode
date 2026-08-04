@@ -1,0 +1,95 @@
+"""No-log property tests: the boot/1 hot path never opens a file for writing.
+
+The bootnode is no-log by design (D7): the register→query handler path, the
+in-memory identity and the QUIC configuration must be able to run under a filesystem
+guard that makes any write-mode open explode. Reading is allowed (libraries,
+locale data), writing is not.
+"""
+
+from __future__ import annotations
+
+import builtins
+import os
+from typing import Any
+
+import pytest
+from pydantic import SecretStr
+
+from hsync_bootnode.handler import BootHandler
+from hsync_bootnode.server import build_quic_configuration, make_identity
+from hsync_bootnode.tokens import derive_bucket_token
+
+CID = "A1b2C3d4E5f6G7h8I9j0K"
+FP = "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
+
+_REAL_OPEN = builtins.open
+_REAL_OS_OPEN = os.open
+
+_WRITE_MODES = "wax+"
+
+
+class _WriteAttempted(RuntimeError):
+    pass
+
+
+def _no_write_open(file: Any, *args: Any, **kwargs: Any) -> Any:
+    mode: str = ""
+    if args:
+        mode = str(args[0])
+    elif "mode" in kwargs:
+        mode = str(kwargs["mode"])
+    if any(ch in mode for ch in _WRITE_MODES):
+        raise _WriteAttempted(str(file))
+    return _REAL_OPEN(file, *args, **kwargs)
+
+
+def _no_write_os_open(path: Any, flags: int, *args: Any, **kwargs: Any) -> Any:
+    if flags & (os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND | os.O_TRUNC):
+        raise _WriteAttempted(str(path))
+    return _REAL_OS_OPEN(path, flags, *args, **kwargs)
+
+
+@pytest.fixture
+def read_only_fs(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(builtins, "open", _no_write_open)
+    monkeypatch.setattr(os, "open", _no_write_os_open)
+
+
+def test_register_query_prune_never_writes(read_only_fs: pytest.MonkeyPatch) -> None:
+    handler = BootHandler(
+        protected_buckets=("shared",),
+        group_keys={"shared": SecretStr("kshared")},
+    )
+    token = derive_bucket_token(b"kshared", "shared")
+    register = {
+        "protocol_version": "boot/1",
+        "type": "register",
+        "cid": CID,
+        "bucket": "shared",
+        "group": "home",
+        "bucket_token": token,
+        "cert_fp": FP,
+        "version": "1.0.0",
+        "endpoints": [{"proto": "tcp", "host": "198.51.100.7", "port": 443}],
+    }
+    ack = handler.handle(register, peer_ip="198.51.100.7", peer_port=54321)
+    assert ack is not None and ack["type"] == "ack"
+
+    query = {
+        "protocol_version": "boot/1",
+        "type": "query",
+        "bucket": "shared",
+        "group": "home",
+        "bucket_token": token,
+    }
+    response = handler.handle(query, peer_ip="10.0.0.1", peer_port=54321)
+    assert response is not None and response["count"] == 1
+    handler.prune()
+
+
+def test_identity_and_config_never_write(read_only_fs: pytest.MonkeyPatch) -> None:
+    identity = make_identity(host="127.0.0.1")
+    config = build_quic_configuration(identity)
+    assert config.certificate is not None
+    assert config.private_key is not None
+    assert identity.fingerprint

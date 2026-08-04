@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- hsync-bootnode — Windows service definition (WinSW v2)
+
+Install:
+  1. Install WinSW-x64.exe next to this file and rename it
+     hsync-bootnode-service.exe (https://github.com/winsw/winsw).
+  2. Edit the <executable>/<arguments> below to the real python/entry-point
+     path of the venv.
+  3. .\hsync-bootnode-service.exe install
+     .\hsync-bootnode-service.exe start
+
+The service runs in open mode (no protected buckets) unless HSYNC_P2P group
+keys are provisioned out of band; see docs/usage.md for the keys-fd contract.
+-->
+<service>
+  <id>hsync-bootnode</id>
+  <name>HSYNC bootnode</name>
+  <description>HSYNC P2P bootstrap node (boot/1, QUIC/UDP 443, no-log, in-memory)</description>
+
+  <executable>C:\hsync-bootnode\.venv\Scripts\python.exe</executable>
+  <arguments>-m hsync_bootnode run --host 0.0.0.0 --port 443</arguments>
+  <workingdirectory>C:\hsync-bootnode</workingdirectory>
+
+  <startmode>Automatic</startmode>
+  <onfailure action="restart" delay="5000"/>
+
+  <serviceaccount>
+    <domain>NT AUTHORITY</domain>
+    <user>LocalService</user>
+  </serviceaccount>
+
+  <log mode="none"/>
+</service>

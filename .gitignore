@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+
+# Rust
+target/
+Cargo.lock
+*.rs.bk
+
+# C
+*.o
+*.a
+*.so
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Local secrets (never commit)
+*.env
+!*.example.env

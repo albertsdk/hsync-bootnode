@@ -1,0 +1,60 @@
+# hsync-bootnode — hardened systemd unit (Linux)
+#
+# Install:
+#   sudo cp packaging/systemd/hsync-bootnode.service /etc/systemd/system/
+#   sudo install -d -m 0750 /etc/hsync-bootnode
+#   sudo install -m 0640 -o root -g hsync-bootnode /path/to/group-keys \
+#       /etc/hsync-bootnode/group-keys
+#   sudo systemctl daemon-reload && sudo systemctl enable --now hsync-bootnode
+#
+# The group-keys file is exposed to the process ONLY through systemd's
+# credential mechanism (fd, never a path inside the sandbox) and read once
+# at startup via HSYNC_BOOTNODE_KEYS_FD. Nothing is written to disk (no-log).
+
+[Unit]
+Description=HSYNC P2P bootstrap node (boot/1, QUIC/UDP 443, no-log)
+Documentation=https://github.com/mv/mastervoice/tree/main/hsync-bootnode
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+User=hsync-bootnode
+# Keys arrive on fd 5 from systemd's credential store (ReadWritePaths= not
+# needed: the credential is mounted read-only by the service manager).
+LoadCredential=group-keys:/etc/hsync-bootnode/group-keys
+ExecStart=/bin/sh -c 'exec /usr/local/bin/hsync-bootnode run --host 0.0.0.0 --port 443 --keys-fd 5 5< "$CREDENTIALS_DIRECTORY/group-keys"'
+Restart=on-failure
+RestartSec=5s
+
+# ---- Hardening (no-log, in-memory: the process needs no filesystem at all)
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+SystemCallArchitectures=native
+UMask=077
+ReadWritePaths=
+
+[Install]
+WantedBy=multi-user.target

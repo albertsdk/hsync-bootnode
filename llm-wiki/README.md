@@ -8,6 +8,7 @@ Internal, agent-optimized knowledge base for the `hsync-bootnode` project
 | Document | Content |
 |---|---|
 | [architecture.md](architecture.md) | High-level system overview: layers, data flow, security model, target matrix |
+| [decisions.md](decisions.md) | Implementation decisions and deviations from the plan |
 
 ## Project snapshot (v1 — Python, Fase 1 complete)
 

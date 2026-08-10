@@ -1,0 +1,17 @@
+#!/bin/sh
+#
+# prerm — Debian maintainer script, runs before package removal/upgrade.
+#
+# Stops the running hsync-bootnode service so the binary can be safely
+# replaced or removed.
+
+set -e
+
+if command -v systemctl >/dev/null 2>&1; then
+    if systemctl is-active --quiet hsync-bootnode.service 2>/dev/null; then
+        systemctl stop hsync-bootnode.service 2>/dev/null || true
+    fi
+    systemctl disable hsync-bootnode.service 2>/dev/null || true
+fi
+
+exit 0

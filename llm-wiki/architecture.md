@@ -76,6 +76,22 @@ UDP :443
 | Linux | `packaging/systemd/hsync-bootnode.service` | v1 |
 | macOS | `packaging/launchd/it.hsync.bootnode.plist` | v1 |
 | Windows | `packaging/windows/hsync-bootnode-service.xml` (WinSW) | v1 |
+| Linux `.deb` (amd64/arm64/armhf) | `../compile_deb.sh` (`-l/--language`, default `python`; `rust`/`c` rejected until those ports exist) + `packaging/deb/` (control, maintainer scripts, deb unit, man page) | v1 |
+
+## Packaging (Fase 1-bis)
+
+- `python/compile.sh` builds binaries only (`native` host standalone,
+  `onedir` bundle consumed by the root assembler). `python/dist/` and
+  `python/build/` are git-ignored build outputs.
+- `../compile_deb.sh -t deb` embeds the selected language's payload
+  (today `python/compile.sh -t onedir`) as `/usr/lib/hsync-bootnode/` with a
+  `/usr/bin/hsync-bootnode` symlink, the hardened deb systemd unit, and the
+  gzipped man page; `DEBIAN/postinst` creates `/etc/hsync-bootnode/` (0750)
+  for the out-of-package group-keys file and never enables the service.
+- `rust/`/`c` ports plug in by extending `validate_language()`,
+  `_build_binary()` and `_container_build_cmd()` in `../compile_deb.sh`
+  (dispatch points, fail-fast contract) — never by adding `deb` logic inside
+  the per-language script.
 
 ## Tests
 

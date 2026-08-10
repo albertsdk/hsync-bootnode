@@ -1,0 +1,35 @@
+#!/bin/sh
+#
+# postinst — Debian maintainer script, runs after package installation.
+#
+# Creates the directory holding the (out-of-package) group-keys file, reloads
+# the systemd manager and prints the opt-in enable command. The service is
+# NEVER enabled or started automatically: the administrator must opt in
+# explicitly with ``systemctl enable --now hsync-bootnode.service``.
+# The process itself runs as a DynamicUser (no system user is created).
+
+set -e
+
+KEYS_DIR="/etc/hsync-bootnode"
+
+# -- Group-keys directory -----------------------------------------------------
+# The group-keys file is a SECRET provisioned by the administrator (never
+# shipped in the package, never listed in conffiles). The directory is
+# root-only so a future keys file dropped in place is protected by default.
+if [ ! -d "${KEYS_DIR}" ]; then
+    mkdir -p "${KEYS_DIR}"
+fi
+chown root:root "${KEYS_DIR}" 2>/dev/null || true
+chmod 0750 "${KEYS_DIR}"
+
+# -- systemd ------------------------------------------------------------------
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload 2>/dev/null || true
+fi
+
+echo "hsync-bootnode installed (service NOT enabled — no-log node, opt-in start)."
+echo "  Enable with:   sudo systemctl enable --now hsync-bootnode.service"
+echo "  Group keys (optional, D11 protected buckets):"
+echo "    sudo install -m 0640 /path/to/group-keys ${KEYS_DIR}/group-keys"
+
+exit 0

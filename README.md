@@ -14,6 +14,7 @@ In-memory, zero-knowledge P2P bootstrap node for HSYNC (API and protocol under a
 | [`packaging/`](packaging/) | OS service units — systemd / launchd / WinSW | v1 |
 | [`llm-wiki/`](llm-wiki/) | Internal agent knowledge base (architecture) | v1 |
 | [`docs/`](docs/) | End-user documentation (install, usage reference) | v1 |
+| [`compile_deb.sh`](compile_deb.sh) | Root `.deb` assembler: `-l/--language` (default `python`; `rust`/`c` rejected until those ports exist), `deb`/`deb-all` targets | v1 |
 | [`rust/`](rust/) | Future implementation — Rust + quinn | Not started |
 | [`c/`](c/) | Optional future implementation — C | Not started |
 

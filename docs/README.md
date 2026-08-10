@@ -22,6 +22,24 @@ every trace of your network is gone.
 - UDP port 443 (or any other UDP port) reachable from the Internet
 - Optional: a UPnP-capable router for zero-touch TCP port mapping
 
+## Install (Debian/Ubuntu — `.deb`)
+
+```bash
+./compile_deb.sh -t deb        # host arch → dist/deb/hsync-bootnode_<ver>_<arch>.deb
+sudo dpkg -i dist/deb/hsync-bootnode_*.deb
+sudo systemctl enable --now hsync-bootnode.service
+```
+
+`./compile_deb.sh -t deb-all` cross-builds amd64/arm64/armhf via Docker +
+`qemu-user-static`. The `-l/--language` flag (default `python`,
+also `DEB_LANGUAGE`) selects which implementation the package embeds;
+`rust`/`c` are rejected until those ports exist. Protected buckets need a
+group-keys file (never shipped in the package):
+
+```bash
+sudo install -m 0640 /path/to/group-keys /etc/hsync-bootnode/group-keys
+```
+
 ## Install (from source)
 
 ```bash

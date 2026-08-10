@@ -43,6 +43,15 @@ python/
 python -m hsync_bootnode run --host 0.0.0.0 --port 443
 ```
 
-Protected buckets and keys provisioning, service deployment and the full
-option list: [`../docs/usage.md`](../docs/usage.md). Internal architecture:
+## Build (standalone binary)
+
+```bash
+cd python
+./compile.sh            # → dist/linux-amd64/hsync-bootnode (host standalone)
+```
+
+Binaries only — the Debian package is assembled at the repo root
+(`../compile_deb.sh`). Protected buckets and keys provisioning, service
+deployment and the full option list: [`../docs/usage.md`](../docs/usage.md).
+Internal architecture:
 [`../llm-wiki/architecture.md`](../llm-wiki/architecture.md).

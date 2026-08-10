@@ -1,0 +1,28 @@
+#!/bin/sh
+#
+# postrm — Debian maintainer script, runs after package removal.
+#
+# On purge: removes the group-keys directory (containing operator secrets).
+# On remove (without purge): keeps the directory (the administrator may be
+# reinstalling and does not want to lose the provisioned keys).
+
+set -e
+
+KEYS_DIR="/etc/hsync-bootnode"
+
+case "$1" in
+    purge)
+        rm -rf "${KEYS_DIR}" 2>/dev/null || true
+        ;;
+    remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+        # Keep the (possibly provisioned) keys directory.
+        ;;
+    *)
+        ;;
+esac
+
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload 2>/dev/null || true
+fi
+
+exit 0

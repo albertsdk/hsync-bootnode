@@ -20,7 +20,7 @@ every trace of your network is gone.
 
 - Python 3.12+ (Linux, macOS, Windows)
 - UDP port 443 (or any other UDP port) reachable from the Internet
-- Optional: a UPnP-capable router for zero-touch TCP port mapping
+- Optional: a UPnP-capable router for zero-touch UDP port mapping
 
 ## Install (Debian/Ubuntu — `.deb`)
 

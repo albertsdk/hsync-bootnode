@@ -18,7 +18,7 @@ UDP :443
             ├─ ratelimit.py  sliding-window limiters (spec §5)
             └─ tokens.py     bucket_token derivation + constant-time compare
   └─ protocol.py  pydantic models for every boot/1 frame (extra="forbid")
-  └─ upnp.py      zero-touch TCP port mapping via SSDP + SOAP (best-effort)
+  └─ upnp.py      zero-touch UDP port mapping via SSDP + SOAP (best-effort)
   └─ cli.py       Typer CLI: `hsync-bootnode run [OPTIONS]`, `--version`
 ```
 
@@ -98,8 +98,8 @@ UDP :443
 | Suite | Scope |
 |---|---|
 | `python/tests/test_handler.py` | Routing, TTL (frozen clock), D11, rate limits, STUN-echo, frame rejection |
-| `python/tests/test_protocol.py` | Frame schema positives/negatives (rigid D3) |
-| `python/tests/test_server.py` | QUIC loopback: register/query/protected refusal, garbage frames |
+| `python/tests/test_scaffold.py` | Fixtures / spec contract + frame schema positives/negatives (rigid D3) |
+| `python/tests/test_server.py` | QUIC loopback: register/query/protected refusal, garbage frames, pipelined frames on one stream |
 | `python/tests/test_nolog.py` | Zero-write invariant under read-only fs |
 | `python/tests/test_upnp.py` | SSDP/SOAP shapes, error downgrade, stateless no-IGD |
 | `python/tests/test_cli.py` | CLI version/fail-fast/keys-fd contract |

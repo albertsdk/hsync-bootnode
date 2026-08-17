@@ -10,7 +10,7 @@
 # debian:bookworm targets Debian 12 / Ubuntu 22.04+ (glibc 2.36).
 #
 # Built and consumed locally by:
-#   python/compile.sh --target deb-all (from hsync-bootnode)
+#   ../compile_deb.sh --target deb-all (from hsync-bootnode)
 # Never published to any registry.
 
 # PYTHON_VERSION and PYTHON_SHA256 are kept in sync with the upstream

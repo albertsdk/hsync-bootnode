@@ -2,7 +2,7 @@
 
 In-memory, zero-knowledge P2P bootstrap node for HSYNC (API and protocol under active design — see `protocol-spec/boot-1.md`).
 
-> **Status**: scaffolding. No-log/in-memory design; multi-language implementations sharing one wire protocol (`boot/1`).
+> **Status**: v1 (Python, Fasi 0+1+1-bis). No-log/in-memory design; multi-language implementations sharing one wire protocol (`boot/1`).
 
 ## Layout (monorepo — multiple implementations of the SAME protocol)
 

@@ -110,6 +110,33 @@ async def _exchange(protocol: QuicConnectionProtocol, frame: dict) -> dict:
     return json.loads(raw)
 
 
+@pytest.mark.asyncio
+async def test_loopback_pipelined_frames_on_one_stream() -> None:
+    """Two frames sent back-to-back on one stream each get their own reply."""
+    handler = BootHandler()
+    server, port, _identity = await start_server("127.0.0.1", 0, handler, retry=True)
+    try:
+        client_config = QuicConfiguration(
+            is_client=True, alpn_protocols=[BOOT_ALPN], verify_mode=ssl.CERT_NONE
+        )
+        async with connect("127.0.0.1", port, configuration=client_config) as protocol:
+            reader, writer = await protocol.create_stream()
+            payload = (json.dumps(_register_frame(None)) + "\n") + (
+                json.dumps(_query_frame(None)) + "\n"
+            )
+            writer.write(payload.encode("utf-8"))
+            await writer.drain()
+            first = json.loads(await asyncio.wait_for(reader.readline(), timeout=5.0))
+            second = json.loads(await asyncio.wait_for(reader.readline(), timeout=5.0))
+            writer.close()
+            assert first["type"] == "ack"
+            assert second["type"] == "response"
+            assert second["count"] == 1
+            assert second["peers"][0]["cid"] == CID
+    finally:
+        server.close()
+
+
 def _register_frame(token: str | None) -> dict:
     frame = {
         "protocol_version": "boot/1",

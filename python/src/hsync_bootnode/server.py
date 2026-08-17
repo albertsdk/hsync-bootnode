@@ -138,13 +138,14 @@ class BootQuicProtocol(QuicConnectionProtocol):
         peer_ip: str = str(peer[0])
         peer_port: int = int(peer[1])
         try:
+            pending = bytearray()
             while True:
-                raw = await _read_frame(reader)
+                raw = await _read_frame(reader, pending)
                 if raw is None:
                     return  # EOF or oversized frame: close the session silently
                 frame = _decode_frame(raw)
                 if frame is None:
-                    continue  # malformed line: drop, keep reading (no-log)
+                    continue  # malformed frame: drop, keep reading (no-log)
                 response = self.boot_handler.handle(
                     frame,
                     peer_ip=peer_ip,
@@ -206,22 +207,27 @@ async def start_server(
     return server, bound_port, identity
 
 
-async def _read_frame(reader: Any) -> bytes | None:
+async def _read_frame(reader: Any, pending: bytearray) -> bytes | None:
     """Read one newline-terminated frame (bounded to MAX_FRAME_BYTES).
 
-    Returns ``None`` on EOF or when a single frame exceeds the bound (the
-    session is then silently dropped — oversized frames are refused, no-log).
+    ``pending`` keeps bytes already received but not yet consumed, so several
+    frames sent back-to-back on the same stream are each returned in turn
+    (no pipelined frame is ever lost). Returns ``None`` on EOF or when a
+    single frame exceeds the bound (the session is then silently dropped —
+    oversized frames are refused, no-log).
     """
-    buf = bytearray()
     while True:
+        newline = pending.find(b"\n")
+        if newline != -1:
+            frame = bytes(pending[: newline + 1])
+            del pending[: newline + 1]
+            return frame
+        if len(pending) > MAX_FRAME_BYTES:
+            return None
         chunk = await reader.read(256)
         if not chunk:
-            return bytes(buf) if buf else None
-        buf.extend(chunk)
-        if b"\n" in buf:
-            return bytes(buf)
-        if len(buf) > MAX_FRAME_BYTES:
             return None
+        pending.extend(chunk)
 
 
 def _decode_frame(raw: bytes) -> dict | None:

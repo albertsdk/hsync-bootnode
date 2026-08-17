@@ -26,10 +26,9 @@ python/
 │   ├── routing.py        # in-memory routing table (TTL/prune/sample)
 │   ├── ratelimit.py      # sliding-window rate limiters
 │   ├── tokens.py         # bucket_token derive + constant-time compare
-│   └── upnp.py           # zero-touch TCP mapping (SSDP + SOAP, best-effort)
+│   └── upnp.py           # zero-touch UDP mapping (SSDP + SOAP, best-effort)
 └── tests/
-    ├── test_scaffold.py   # fixtures / spec contract
-    ├── test_protocol.py   # frame schema positives/negatives
+    ├── test_scaffold.py   # fixtures / spec + schema positives/negatives
     ├── test_handler.py    # routing, TTL, D11, rate limits, STUN-echo
     ├── test_server.py     # QUIC loopback
     ├── test_upnp.py       # SSDP/SOAP shapes, stateless no-IGD

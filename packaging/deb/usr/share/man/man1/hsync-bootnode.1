@@ -45,7 +45,7 @@ line per group; blank lines and
 comments are ignored. Read once at startup, never written to disk.
 .TP
 .B run\ \fR--no-upnp\fP
-Disable the zero-touch UPnP TCP port mapping.
+Disable the zero-touch UPnP UDP port mapping.
 .TP
 .B \fR--version\fP
 Print the version and the protocol, then exit.
@@ -57,8 +57,8 @@ Integer file descriptor carrying the group keys; same as
 .TP
 .B HSYNC_VERSION
 Overrides the version used by
-.BR compile.sh (1)
-when building packages.
+.BR compile_deb.sh (1)
+when building packages (per-language binaries live in e.g. python/compile.sh).
 .SH FILES
 .TP
 .I /etc/hsync-bootnode/group-keys

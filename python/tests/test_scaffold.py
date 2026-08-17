@@ -2,10 +2,32 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from hsync_bootnode.protocol import (
     CID_PATTERN,
+    BootAck,
+    BootQuery,
     BootRegister,
+    BootResponse,
 )
+
+FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
+
+
+def _load_fixture(name: str) -> dict:
+    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+
+
+def test_fixtures_match_boot1_models() -> None:
+    """The shared SSOT fixtures must validate against the boot/1 models."""
+    assert BootRegister.model_validate(_load_fixture("bootnode-register.json"))
+    assert BootQuery.model_validate(_load_fixture("bootnode-query.json"))
+    assert BootAck.model_validate(_load_fixture("bootnode-ack.json"))
+    assert BootResponse.model_validate(_load_fixture("bootnode-response.json"))
+
+
 from hsync_bootnode.ratelimit import TokenBucketLimiter
 from hsync_bootnode.routing import PeerRecord, RoutingTable
 from hsync_bootnode.tokens import derive_bucket_token, verify_bucket_token

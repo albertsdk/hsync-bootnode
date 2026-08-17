@@ -9,7 +9,9 @@
 - QUIC/UDP, port **443** (single listener; no TCP fallback — zero legacy).
 - TLS 1.3 inside QUIC: the exchanged peer list is not readable by ISPs.
 - ALPN `hsync-boot/1`.
-- Base64/JSON payloads over a single bidirectional QUIC stream per session.
+- NDJSON payloads (one JSON object per line) over bidirectional QUIC streams;
+  a client may pipeline several frames back-to-back on one stream and the
+  server answers each frame in order.
 - **Every frame** carries the common header `{protocol_version, type, ...}`;
   the server routes on `type` and rejects anything else (rigid validator).
 

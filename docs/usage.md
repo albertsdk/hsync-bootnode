@@ -21,7 +21,7 @@ hsync-bootnode --version
 | `--port` | `443` | UDP port (1–65535). 443 is the QUIC/HTTP3 default. |
 | `--protected-bucket` | *(none)* | Bucket that requires a valid `bucket_token` (D11). Repeatable. Declaring a protected bucket without provisioning its key fails fast at startup (exit code 2). |
 | `--keys-fd` | *(none)* | File descriptor carrying the group keys (see below). Environment variable form: `HSYNC_BOOTNODE_KEYS_FD`. |
-| `--no-upnp` | *(disabled flag)* | Disable the zero-touch UPnP TCP mapping. |
+| `--no-upnp` | *(disabled flag)* | Disable the zero-touch UPnP UDP mapping. |
 
 ### `--version`
 
@@ -91,4 +91,4 @@ Edit the executable paths inside each unit to the location of your venv.
 | `configuration error: protected bucket(s) without a group key …` | You declared `--protected-bucket` without provisioning its key: pass `--keys-fd`/`HSYNC_BOOTNODE_KEYS_FD` with a matching `bucket=<key>` line. |
 | Client gets `token_required` | Bucket is protected and the client's derived token is missing/wrong — check the group key on the client side. |
 | Client gets `rate_limited` | A limit was exceeded (per-IP ~10 req/s, 5/min failed tokens, 5/min queries per (IP, bucket), 10/min registers per bucket); wait for `retry_after` seconds. |
-| No UPnP mapping | Router without IGD, or mapping refused: the node keeps running stateless; publish a public TCP endpoint in another way or use `--no-upnp` to skip discovery entirely. |
+| No UPnP mapping | Router without IGD, or mapping refused: the node keeps running stateless; publish a public UDP endpoint in another way or use `--no-upnp` to skip discovery entirely. |

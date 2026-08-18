@@ -1,0 +1,491 @@
+# Project Rules & Coding Guidelines (hsync-bootnode — Python + Rust)
+
+This document defines the strict architectural, development, and code-reuse rules
+for the `hsync-bootnode` repository. Claude must strictly adhere to these
+guidelines at all times.
+
+`hsync-bootnode` is a **multi-language repository**: one wire protocol
+(`boot/1`) with several implementations of the *same* contract
+(`python/` today, `rust/` next, optional `c/` later). This file mirrors the
+Python project guidelines used by the other HSYNC projects and adds the rules
+that apply to the Rust implementation.
+
+---
+
+## 🗂️ Repository Layout & Git Rules
+
+| Path | Content |
+|---|---|
+| `protocol-spec/boot-1.md` | Wire-protocol specification — the **single source of truth (SSOT)** |
+| `fixtures/bootnode-*.json` | Shared protocol fixtures (single source for every language) |
+| `tests/` | **Language-neutral** black-box suite (spawns the binary, wire-only) |
+| `bench/` | L1/L2/L3 benchmarks; L2/L3 are language-neutral |
+| `python/` | Python + aioquic implementation (v1) and its white-box unit suite |
+| `rust/` | Rust + quinn implementation (planned, v2) |
+| `c/` | Optional C implementation (not started) |
+| `packaging/` | OS service units (`systemd`/`launchd`/`windows`) and the `.deb` payload |
+| `compile_deb.sh` | Root `.deb` assembler (`-l/--language`, `deb`/`deb-all`) |
+| `llm-wiki/` | Internal agent knowledge base |
+| `docs/` | End-user documentation |
+
+* **One commit per repository**: `hsync-bootnode` is its own git repository.
+  Verify it before any git command with
+  `git -C hsync-bootnode rev-parse --git-dir`; if the check fails, **stop and
+  report it as a blocker** — never `git init`, never commit these files from
+  another repository.
+* Inspect what you are about to commit (`git -C hsync-bootnode status --short`
+  and `git diff --cached`) and prefer explicit paths over `git add -A`.
+* **Never stage build outputs or secrets**: `dist/`, `build/`, `target/`,
+  `*.deb`, `*.o`/`*.a`/`*.so`, `*.env`, and any local `group-keys` file.
+* Each implementation is compiled by the build script inside **its own**
+  directory (`python/compile.sh`, and `rust/compile.sh` once the port lands);
+  `compile_deb.sh` at the root only *dispatches* and assembles packages.
+
+---
+
+## 📚 Documentation Maintenance (Dual-Docs System)
+
+The project maintains two distinct documentation environments. You must understand the difference and maintain both appropriately:
+1. **`llm-wiki/` (Internal/Agent Knowledge Base)**: An agent-readable, structured map of the application's architecture, logic, and internal code references.
+2. **`docs/` (End-User Technical Documentation)**: Human-readable documentation, user guides, and public API references meant for the final user.
+
+### 1. Docs-First Workflow (Mandatory)
+* **Read Before Exploring or Modifying Code**: Before exploring or modifying application code, you **MUST** first consult the internal wiki, starting from `llm-wiki/README.md`, and then drill down into the specific `llm-wiki/` file(s) relevant to the task. Administrative, repository-inspection, and documentation-only operations may use a proportionate subset of this workflow.
+* **Index-Driven Navigation**: Use `llm-wiki/README.md` as the map: identify which module/feature/data-model docs are relevant, read them, and follow their `path/to/file.py:line` (Python) / `path/to/file.rs:line` (Rust) references to reach the right code directly instead of blindly searching the whole repository.
+* **Docs Guide the Search**: Treat `llm-wiki/` as the first search surface. Codebase-wide exploration is a **fallback** for what the wiki does not yet cover. Remember that `llm-wiki/README.md` also lists the **hard invariants** (no-log, RAM-only, rigid schema, protected buckets, zero backward compatibility) that must be read before touching any module.
+* **Bootstrap on Absence**: If a specific doc does not exist or lacks relevant content, note the gap and create/extend it as part of the task. A missing doc is never an excuse to skip the docs-first step.
+
+### 2. Mandatory Dual-Synchronization
+* **Code & Docs Are One Change**: Whenever you **add, modify, or remove** any relevant element of the application, you **MUST** update the documentation **within the same task**.
+* **Assess the Impact (The Dual Update)**:
+  * *Internal Changes* (Refactoring, internal schemas, private logic): You must update the relevant files in **`llm-wiki/`**.
+  * *User-Facing Changes* (Public APIs, CLI commands, features, configuration files): You must update the internal architecture in **`llm-wiki/`** AND the user guides/technical specs in **`docs/`**.
+* **No Stale Docs**: Leaving either `llm-wiki/` or `docs/` out of sync with the code is **STRICTLY PROHIBITED**. If you cannot fully document a change in both places, the task is **not complete**.
+* **Semantic Changes Only**: Update documentation when the documented architecture, behavior, contract, configuration, or operational procedure changes. Pure formatting, behavior-preserving refactoring, and test-only changes do not require documentation churn unless they reveal that existing documentation is inaccurate.
+
+### 3. Directory Structures
+Both doc sets follow a recommended **baseline** layout; adapt the exact file set
+to the project's nature (multi-language network daemon) and keep each index
+`README.md` honest about what actually exists.
+* **LLM-Wiki (`llm-wiki/`) - Agent Optimized** (baseline):
+  * `llm-wiki/README.md` — index / table of contents linking every other doc, plus the hard invariants.
+  * `llm-wiki/architecture.md` — high-level system overview and component interactions.
+  * `llm-wiki/modules/<module>.md` — internal responsibilities, key functions (add, rename, split or omit as the project requires; a doc is justified only when it maps to real code).
+  * `llm-wiki/data-models.md` — the `boot/1` frame models of every implementation and their relationships (pydantic models in `python/`, structs/enums in `rust/`); add it as soon as the models are worth mapping.
+  * `llm-wiki/decisions.md` — log of design decisions and deviations from the plan (already present; keep the numbering stable).
+* **User Docs (`docs/`) - Human Optimized** (only the subset that applies):
+  * `docs/README.md` — welcome page, installation, and quickstart for the user.
+  * `docs/usage.md` — how to use the software (CLI reference, group keys, OS services).
+  * Add domain-appropriate guides when relevant (e.g. `docs/api.md` only when a public HTTP API exists) and omit what does not apply.
+
+### 4. Content & Style Rules
+* **For `llm-wiki/` (Concise & Factual)**: Write for an LLM consumer. Use bullet lists, tables, and clear headings. Avoid duplication. Reference the relevant source location using the `path/to/file.py:line` / `path/to/file.rs:line` pattern so the doc stays anchored to the implementation. Do not duplicate large code blocks; describe intent and point to the code.
+* **For `docs/` (Clear & Explanatory)**: Write for a human developer/user. Provide context, practical examples, and clear step-by-step guides. Do NOT expose internal routing or private function names here; focus on the public interface.
+* **Keep the Indexes Honest**: When you add, rename, or delete a doc file in either directory, update the respective `README.md` in the same change.
+
+### 5. User-Docs Authoring Framework (`docs/` only)
+
+When creating or modifying end-user documentation, apply these standard
+documentation-engineering rules:
+
+* **Diátaxis roles — one dominant role per file**: every `docs/` file has a
+  single dominant role:
+  * *Tutorial / Chooser* — a short landing page that picks the path and links
+    to what to do next; it never embeds full procedures.
+  * *How-To* — a task procedure with concrete, copy-paste commands for **one
+    environment only** (no mixed native/Docker or Linux/macOS/Windows blocks in
+    the same code fence).
+  * *Reference* — command/option/env-var/table listings; the single source of
+    truth for syntax and defaults (`docs/usage.md` today).
+  * *Explanation* — concepts, flows, and why-things-work; it may link to a
+    How-To but must NOT embed or restate its procedures.
+  Do not write "hybrid" pages (e.g. a reference that contains a full tutorial,
+  or a concept guide that duplicates the quick start).
+* **Single-source-of-truth (SSOT)**: every command, option, or procedure is
+  documented exactly once. Quick-start procedures live only in the dedicated
+  getting-started pages; concept/usage pages link to them instead of repeating
+  them. Index/splitter pages are links only — no content that can drift from the
+  page they point to.
+* **Task-based / outcomes-first**: organise content by user goal ("Install",
+  "Run the node", "Protected buckets", "Deploy as a service", "Troubleshoot"),
+  and structure the docs `README.md` as a linear journey (Install → run →
+  configure → operate → understand → reference). Never organise by internal
+  module names.
+* **One environment per page**: when a procedure differs by installation or
+  run mode (`.deb`, from source, Docker, per-OS service), split it into separate
+  self-contained pages; a single code fence must contain commands for only one
+  environment.
+* **Link integrity, atomically**: when adding, renaming, moving, or removing
+  sections, update every affected intra-doc anchor, every inter-repo link (e.g.
+  the monorepo roadmap `../PIANO-hsync-bootnode-p2p.md`), and the docs index in
+  the same change.
+
+### 6. Removal Discipline
+* **Delete With the Code**: When a feature or logic is **removed**, delete or update its documentation in BOTH `llm-wiki/` and `docs/` in the same change. Consistent with the project's *Zero Backward Compatibility* stance, do **NOT** keep documentation describing removed functionality.
+
+---
+
+## ⚠️ Domain-Critical Rules
+
+* **Wire protocol — single source of truth**
+  `protocol-spec/boot-1.md` is the SSOT for the `boot/1` wire protocol, shared by
+  **every** implementation. Before modifying any frame, field, ALPN, framing rule
+  or refusal semantic you **MUST** read it and follow it. **Never fork the spec**
+  into `python/`, `rust/` or `c/`: the same frames must be byte-identical across
+  languages.
+
+* **Shared fixtures**
+  `fixtures/bootnode-*.json` are the shared protocol fixtures: the same bytes
+  must validate every implementation. Any protocol change updates the spec, the
+  fixtures, every implementation, the drift/parity tests and the docs
+  **atomically**.
+
+* **Language-neutral black-box suite**
+  `tests/` at the repository root is the *contract* test suite. It spawns the
+  binary resolved from `HSYNC_BOOTNODE_BIN` and observes only the public CLI and
+  the `boot/1` wire protocol: it **never** imports `hsync_bootnode` (or any Rust
+  crate) and never touches internal state. The identical suite must pass against
+  `python/`, `rust/` and `c/`. Frame builders live in `tests/harness.py` (single
+  source, language-neutral) — do not duplicate them inside an implementation
+  directory. Readiness is signalled through the `HSYNC_BOOTNODE_READY_FILE`
+  seam; the suite is gated by `HSYNC_BB_BOOTNODE=1`.
+
+* **No-log invariant (D7)**
+  Identical in every language: the process NEVER writes peer data (IPs, CIDs,
+  timestamps) to disk. The routing table is RAM-only; the TLS identity is
+  in-memory and regenerated per process; diagnostics are opt-in and non-PII
+  (`--debug` / `HSYNC_BOOTNODE_DEBUG=1`). Enforced for Python by
+  `python/tests/test_nolog.py` (read-only filesystem sandbox): the Rust port must
+  ship an equivalent enforcement test.
+
+* **Rigid schema (D3)**
+  Every `boot/1` frame model rejects unknown fields (pydantic
+  `extra="forbid"` in Python; equivalent deny-unknown-fields serde attribute in
+  Rust). Unknown or targeted fields make the frame invalid and it is silently
+  dropped — never reinterpreted, never partially applied.
+
+* **Protected buckets (D11)**
+  Tokens are derived as `HMAC-SHA256(key, "boot/1" || bucket)[:32]` hex and
+  compared in constant time; refusals are uniform (`token_required`) and never
+  reveal whether a bucket exists. Group keys enter the process **only** through
+  `--keys-fd` / `HSYNC_BOOTNODE_KEYS_FD` (a file descriptor, never a path inside
+  the sandbox) and are read once at startup. Rate limits are in-memory sliding
+  windows; `HSYNC_BOOTNODE_NO_RATE_LIMIT` is a test/benchmark seam that must
+  never be documented as a production option.
+
+* **Packaging — synchronous updates are mandatory**
+  Any change to CLI flags, environment variables (`HSYNC_BOOTNODE_*`), option
+  defaults or user-facing behavior **REQUIRES** an atomic update to:
+  * the implementation CLI (`python/src/hsync_bootnode/cli.py`, and `rust/` once
+    the port lands);
+  * the man page `packaging/deb/usr/share/man/man1/hsync-bootnode.1`
+    (OPTIONS, ENVIRONMENT, FILES, EXAMPLES, `.TH` date/version);
+  * the `.deb` payload under `packaging/deb/` and the language dispatch points in
+    `compile_deb.sh` (`validate_language`, `_build_binary`,
+    `_container_build_cmd`);
+  * the OS service units `packaging/{systemd,launchd,windows}/`;
+  * `README.md` and `docs/usage.md`;
+  * the language-neutral suite `tests/` when the observable CLI/exit-code
+    contract changes.
+
+  A new language port also requires its own per-language binary script (e.g.
+  `rust/compile.sh`) and must be wired into `compile_deb.sh`; the root script must
+  keep failing fast for languages that do not exist yet.
+
+---
+
+## 🚀 Evolution & Breaking Changes
+
+* **Zero Backward Compatibility**
+  There are no existing production environments. **Backward compatibility is NOT required when the requested design intentionally changes a contract.** Prioritize the ideal architecture and optimal design over supporting legacy states, but do not introduce unrelated breaking changes. Update all affected callers, models, tests, configuration, persisted assumptions, protocol artifacts, consumers, packaging, and documentation atomically.
+
+* **Clean Breaking Changes**
+  Treat every major intervention as a completely new version of the application. Implement rigid contracts, mandatory protocol versions, and strict data fields. **CATEGORICALLY REMOVE** shims, legacy channels, migration phases, and fallback logic.
+
+* **Multi-language obligation**
+  Breaking the wire contract means bumping the mandatory `protocol_version`
+  (`boot/1` → `boot/next`) and updating **atomically**: `protocol-spec/boot-1.md`
+  (or its successor), `fixtures/`, `python/`, `rust/`, `c/`, `tests/`, `bench/`,
+  `compile_deb.sh`/`packaging/`, `llm-wiki/` and `docs/`. No implementation may
+  keep speaking the retired version, and no compatibility shim may exist in one
+  language only.
+
+---
+
+## ✅ Implementation Quality Gate
+
+Every code change must pass a bounded implementation and verification cycle before the task may be considered complete.
+
+### 1. Acceptance Criteria Before Implementation
+
+Before modifying code, the agent must identify:
+
+* the requested observable behavior and the affected contracts — the CLI
+  surface, the `boot/1` wire protocol (spec + fixtures) and the no-log invariant;
+* failure cases, boundaries, security implications (untrusted network input,
+  token handling, path/traversal on the ready file), concurrency and state
+  transitions (TTL prune, refresh, graceful shutdown);
+* the existing implementation and tests (white-box in `python/tests/`,
+  language-neutral in `tests/`);
+* reusable models/utilities (pydantic models in `protocol.py`; the shared frame
+  builders and fixtures) and whether the `hsync-common` SSOT already provides
+  the needed contract;
+* the cross-language and packaging impact (see the table below).
+
+Do not invent unsupported requirements. Apply these checks proportionally to
+trivial documentation-only or formatting-only changes.
+
+| Implementation | Observable behavior | Cross-language / artifact impact |
+| --- | --- | --- |
+| `python/` | CLI, `boot/1` wire behavior, no-log | spec, fixtures, `rust/`, `c/`, root `tests/`, `bench/`, `compile_deb.sh`, `packaging/`, docs |
+| `rust/` | same CLI + `boot/1` wire behavior | spec, fixtures, `python/`, root `tests/`, `bench/`, `compile_deb.sh`, `packaging/`, docs |
+| root (`tests/`, `bench/`, `fixtures/`, spec) | the shared contract itself | every implementation |
+
+### 2. First Implementation Pass
+
+Implement the smallest complete change satisfying the acceptance criteria. Do not add speculative functionality, hide failures with broad catches or silent fallbacks, weaken tests, or change unrelated code. In Rust, "silent fallback" includes `unwrap_or_default()`/`ok()`-style error swallowing on the hot path.
+
+### 3. Mandatory Verification Pass
+
+After the first implementation pass, and before finalizing:
+
+1. Re-read the original request and acceptance criteria without assuming the implementation is correct.
+2. Inspect the **complete diff** (`cd hsync-bootnode && git diff` / `git status`), including tests, fixtures, the spec, `compile_deb.sh`, `packaging/`, the man page, `llm-wiki/` and `docs/`. Reviewing your own edit history is not enough — read the actual diff.
+3. Trace normal, invalid-input, empty/missing, minimum/maximum, oversized, malformed, pipelined-frames, TTL-expiry, cancellation, graceful-shutdown, partial-write and rate-limit paths where applicable.
+4. Verify consistency across the spec, the committed fixtures, the frame models of **every** implementation, the CLI/env contract (flags ↔ `HSYNC_BOOTNODE_*` ↔ man page ↔ service units), the packaging scripts and the documentation.
+5. Run the narrowest relevant checks first (see below), then the broader ones when practical.
+6. Correct every issue found and rerun the affected checks.
+
+Diff inspection and executed checks are required; stating that the implementation was reviewed is insufficient.
+
+#### Commands — Python (v1, committed virtualenv)
+
+`poetry` is **not** installed and `ruff` is **not** on `PATH`: always invoke the
+tools through the committed virtualenv, prefixing every command with
+`cd hsync-bootnode/python &&`, one command per shell invocation.
+
+```
+# targeted unit test, then the full unit suite
+cd hsync-bootnode/python && .venv/bin/python -m pytest -q tests/test_handler.py::test_name
+cd hsync-bootnode/python && .venv/bin/python -m pytest -q
+# lint + format check + types
+cd hsync-bootnode/python && .venv/bin/python -m ruff check .
+cd hsync-bootnode/python && .venv/bin/python -m ruff format --check .
+cd hsync-bootnode/python && .venv/bin/python -m mypy hsync_bootnode
+```
+
+#### Commands — language-neutral code at the repository root (`tests/`, `bench/`)
+
+These are linted with the root `ruff.toml` but run with the Python virtualenv's
+interpreter (it is the test runner only):
+
+```
+cd hsync-bootnode && python/.venv/bin/python -m ruff check tests bench
+cd hsync-bootnode && HSYNC_BB_BOOTNODE=1 python/.venv/bin/python -m pytest -q tests/
+cd hsync-bootnode && HSYNC_BB_BOOTNODE=1 HSYNC_BOOTNODE_BIN=/path/to/rust/binary \
+    python/.venv/bin/python -m pytest -q tests/
+```
+
+#### Commands — Rust (`rust/`, once the crate exists)
+
+```
+cd hsync-bootnode/rust && cargo fmt --check
+cd hsync-bootnode/rust && cargo clippy --all-targets -- -D warnings
+cd hsync-bootnode/rust && cargo test
+```
+
+Plus, when the change touches `unsafe` code, `cargo miri test`; when it touches
+the untrusted-input frame decoder, the `cargo fuzz` targets (see the Rust
+section).
+
+Notes:
+* Read what a command **actually printed**: never report a check as passed when
+  it did not run, and never treat `command not found` (exit 127) as a passing
+  result. `ruff check` exits non-zero when violations remain — that is a real
+  finding to fix, never to mask with `|| true`.
+* The workspace-root `Makefile` does **not** fan out to `hsync-bootnode` yet:
+  run the commands above directly instead of inventing a `make` target.
+* Never run `ruff check`/`ruff format` from the workspace root, and never chain
+  several of these commands with `;` on one line.
+
+### 4. Regression and Contract Tests
+
+Every bug fix must include a regression test that fails against the faulty
+behavior and passes after the fix. New behavior must cover its success path and
+the relevant failure/boundary cases.
+
+* **Protocol changes**: update `protocol-spec/boot-1.md`, `fixtures/` and every
+  implementation atomically, and keep a **drift test** that validates each
+  implementation's frame models against the committed fixtures. The same fixtures
+  must be consumed by the Rust suite: mirror the Python drift test, never
+  re-derive the expected bytes locally.
+* **CLI / env / packaging changes**: extend the language-neutral suite in
+  `tests/` (exit codes, `--version`, fail-fast refusals) and update the man page,
+  service units and `docs/usage.md`.
+* A test may be omitted only when genuinely impractical, with the reason and the
+  alternative verification reported.
+
+**Black-box tests (`test_bb_*`)** must verify the public contract, never the implementation. Every new `test_bb_*` test must be able to answer **YES** to all of these questions:
+
+* Does the test use only public CLI commands, documented environment variables,
+  or `boot/1` wire frames?
+* If the internal implementation were completely rewritten — including in another
+  language — while keeping the same contract, would the test still pass?
+* Does the test verify a behavior that the end user or a remote client can
+  actually observe?
+
+Black-box tests must go through the shared harness in `tests/harness.py` (frame
+builders, binary resolution via `HSYNC_BOOTNODE_BIN`, environment scrubbing) —
+never a hand-rolled process spawn with an unscrubbed environment. Readiness is
+awaited through the `HSYNC_BOOTNODE_READY_FILE` PID file, never with sleeps.
+Randomized inputs must log their seed (`[seed] <n>`) so failures are
+reproducible.
+
+### 4-bis. Test Environment Isolation
+
+* **Clean start**: every test or fixture must verify that the starting
+  environment is clean (no leftover temp files, no stray `HSYNC_*` environment
+  variables, no orphaned processes, no global state polluted by a previous
+  test). The ready-file path must be a fresh, unique location.
+* **Clean exit**: every test must restore the initial state when it finishes,
+  even on error or interruption (`try`/`finally`, fixtures, `tmp_path`). Started
+  node processes must be terminated (and reaped) on every exit path.
+* **No cross-test contamination**: a test's outcome must never depend on
+  execution order or on whether a previous test failed. Rust tests must not share
+  global mutable state; the routing table must be owned per test instance.
+
+### 5. Bounded Correction Cycle
+
+Fix issues found during verification and repeat the relevant checks, for at most two review-and-correction cycles unless the user requests more. Do not finalize with known failures. If blocked by dependencies, credentials, external services, platform tooling (missing Rust toolchain, `cargo miri`/`cargo fuzz`/`cargo-audit` components), UAC/network availability or pre-existing failures, report the blocker precisely and stop changing code. Never claim a check passed unless it completed successfully.
+
+### 6. Definition of Done
+
+Completion requires satisfied acceptance criteria, complete diff review, passing relevant checks, adequate tests, synchronized spec/fixtures/implementations/packaging/documentation, and no known correctness or security defect. The final response must state what changed, the commands executed and their outcomes, the checks not executed and why, and the remaining risks or limitations.
+
+For authentication, secrets (group keys), LAN/WAN trust, protocol contracts,
+destructive or privacy-relevant paths (the no-log invariant), persistence and
+concurrency changes, request an independent review when available; this does not
+replace self-verification or tests.
+
+---
+
+## 🐍 Python Standards & Code Reuse (`python/**/*.py`, `tests/`, `bench/`)
+
+### 1. Strict DRY & Duplication Prevention
+* **Pre-implementation Check**: Before writing any new function, component, or logic, you **MUST** search the relevant module and shared utility/model locations (`python/src/hsync_bootnode/`, `tests/harness.py`, `fixtures/`) for an existing implementation. Expand to a repository-wide search only when the wiki and local search are insufficient.
+* **No Copy-Paste-Modify**: Copying, pasting, and slightly modifying existing code snippets for a new use case is **STRICTLY PROHIBITED** — including duplicating a frame builder that already lives in `tests/harness.py`.
+* **Refactoring over Duplication**: If *similar* (but not identical) logic already exists, **DO NOT** create a duplicate. Instead, refactor the existing code to make it more generic, parameterized, and reusable. Briefly explain your refactoring logic when doing so.
+* **Rule of Three**: If you identify or need the same logic/code block for a second time, treat it as a warning. If requested for a third time, you **MUST** extract it into a standalone utility function, helper, or common base class.
+* **No Inline Helpers**: Writing nested or inline helper functions inside main functions is **PROHIBITED** if the logic is generic and extractable. Always promote exportation and centralized reuse.
+* **Semantic Reuse over Superficial Similarity**: Extract shared logic only when behavior, invariants, and reasons to change are the same. Prefer small local duplication over an incorrect or unstable abstraction.
+
+### 2. Typing & Data Models
+* **Centralized Models**: Strictly use type hints. For data structures, **ALWAYS** reuse the existing pydantic frame models in `python/src/hsync_bootnode/protocol.py` (or the `hsync-common` models when the contract lives there).
+* **No Manual Parsing**: **DO NOT** perform manual parsing or complex dictionary navigation (e.g., `dict.get()`) if a pydantic class already exists to validate and instantiate that specific frame.
+* **SSOT discipline**: shared contracts come from `hsync-common`, not from a local re-definition. Known local mirrors (e.g. the CID pattern in `protocol.py`) are temporary and must be replaced by the `hsync-common` import with a drift test as soon as the dependency exposes it.
+
+### 3. Modularity & Maintainability
+* **File Responsibility Control**: Split a file when it contains multiple independently changing responsibilities (as `server.py`/`handler.py`/`routing.py` already do), not merely because of line count. Do not perform unrelated structural refactoring as part of a narrowly scoped fix.
+
+---
+
+## 🦀 Rust Standards & Code Reuse (`rust/**/*.rs`)
+
+The Rust implementation is a second implementation of the **same** contract: it
+never gets its own dialect, its own spec or its own fixtures.
+
+### 1. Safety and Rust idioms
+* **Zero warnings**: all code must compile cleanly under
+  `cargo clippy --all-targets -- -D warnings` (and `cargo fmt --check`); a warning
+  is a defect, not a note.
+* **No panics in production paths**: `.unwrap()`, `.expect()` and `panic!()` are
+  **strictly forbidden** in non-test code. Propagate errors with the `?` operator
+  and model failures with **custom error types** (an `enum` implementing
+  `Display` + `std::error::Error`, or the equivalent idiomatic error crate already
+  adopted by the crate). Test code may use them to fail loudly, but must not rely
+  on a panic as its only assertion mechanism.
+* **No `unsafe` by default**: the keyword is not allowed unless genuinely
+  unavoidable; when used, it **must** be preceded by a comment stating the exact
+  invariants upheld and the reasoning for the block, and the code path must be
+  exercised under `cargo miri test`.
+* **Fuzzing the untrusted input**: any component that processes raw network data
+  or untrusted input — in this repository the `boot/1` NDJSON frame decoder and
+  its length/UTF-8/field validation — **must** ship `cargo fuzz` targets,
+  seeded from the committed `fixtures/`.
+* **Parsing must be exhaustive and strict**: frame decoding validates size
+  bounds, UTF-8 and unknown fields, and rejects anything that does not match the
+  spec. Do not add lenient re-interpretation, aliases or compatibility fallbacks.
+* **Concurrency and state**: the routing table is in-memory state shared across
+  sockets; use the crate's async runtime and lock primitives with documented
+  ordering, never hold a lock across `.await`, and never persist state to disk
+  (the no-log invariant applies to Rust exactly as it does to Python).
+* **Behavioural parity**: refusals (`token_required`, `rate_limited` +
+  `retry_after`), framing, STUN-echo semantics and TTL handling must be
+  indistinguishable from the Python implementation on the wire — that is exactly
+  what the language-neutral `tests/` suite verifies.
+
+### 2. Types and models
+* **Typed frames**: represent every `boot/1` frame with `struct`s/`enum`s and the
+  crate's serialization library — never hand-rolled string concatenation or manual
+  byte slicing where a typed model applies. One model per frame, one shared enum
+  for the frame kind.
+* **No manual parsing**: do not navigate raw JSON value maps when a typed frame
+  can be deserialized directly.
+
+### 3. DRY, traits and modularity
+* **No Copy-Paste-Modify**: copying a module and slightly adapting it for another
+  purpose is **STRICTLY PROHIBITED**.
+* **Rule of Three**: when the same logic is needed a second time, treat it as a
+  warning; at the third occurrence you **MUST** extract it into a standalone
+  function, a trait (e.g. a shared handler/response trait) or a shared module.
+* **No inline helpers**: nested helper functions/closures inside a large function
+  are **PROHIBITED** when the logic is generic and extractable — promote it to a
+  module-level item.
+* **Semantic reuse over superficial similarity**: extract shared logic only when
+  behaviour, invariants and reasons to change are the same; prefer small local
+  duplication over an incorrect abstraction.
+* **Modularity**: split a module when it carries multiple independently changing
+  responsibilities, not merely because of line count.
+
+### 4. Build and layout
+* The crate lives under `hsync-bootnode/rust/` and must not fork
+  `protocol-spec/boot-1.md` or `fixtures/`.
+* The Rust CLI exposes the same commands, flags, environment variables, exit
+  codes and `--version` shape as the Python implementation, so the
+  language-neutral suite passes unchanged against
+  `HSYNC_BOOTNODE_BIN=<rust binary>`.
+* Do not add a dependency, change the edition or bump pinned versions unless the
+  task explicitly requires it: this is a no-log daemon, keep the dependency
+  surface minimal.
+
+---
+
+## 💬 Language Policy
+
+* **English-only**: commit messages (subject and body), the internal agent wiki
+  (`llm-wiki/`), and the user documentation (`docs/`) MUST be written in
+  English, regardless of the language used in the task.
+* This also applies to code comments, doc comments (Python docstrings and Rust
+  `///` doc comments), error messages and CLI help strings.
+* Commit messages follow Conventional Commits: `type(scope): description`
+  (feat, fix, docs, style, refactor, test, chore, perf, ci, build).
+
+---
+
+## 📝 Changelog Maintenance
+
+Before completing any task that introduces a user-facing change, bug fix, or
+notable internal improvement, evaluate whether the change warrants an entry in
+`CHANGELOG.md` following the [Keep a Changelog](https://keepachangelog.com/)
+format. Add an entry under an `## [Unreleased]` section when relevant. The
+repository does not ship a `CHANGELOG.md` yet: the first change that warrants an
+entry creates it.
+
+* **Explicit User Confirmation Required**: Do not edit `CHANGELOG.md` unless the
+  user has explicitly confirmed the update for the current task. If an entry
+  appears warranted and the user has not already requested it, pause before
+  editing the file and ask whether they want the changelog updated. Proceed only
+  after an affirmative response; otherwise leave `CHANGELOG.md` unchanged.
+
+Irrelevant for: typo fixes, purely internal refactors with no behavioral change,
+CI/formatting-only changes, or doc updates that don't document new features.

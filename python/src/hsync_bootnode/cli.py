@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import sys
 
 import typer
 from pydantic import SecretStr
 
 from hsync_bootnode import __version__
+from hsync_bootnode.debug import configure_debug, debug_log
 from hsync_bootnode.handler import BootConfigError, BootHandler
 from hsync_bootnode.server import start_server
 from hsync_bootnode.upnp import UpnpManager
@@ -36,6 +38,14 @@ app = typer.Typer(
 # ``HSYNC_BOOTNODE_KEYS_FD`` is the envvar form (plan §4), honoured by
 # systemd/launchd/Windows service wrappers. Read once, never written.
 _DEFAULT_KEYS_FD_ENV = "HSYNC_BOOTNODE_KEYS_FD"
+# Opt-in stderr diagnostics (see debug.py): non-PII only, disabled by default.
+_DEFAULT_DEBUG_ENV = "HSYNC_BOOTNODE_DEBUG"
+# Test/ops readiness seam: write the process PID here once the listener is
+# bound, mirroring the client's HSYNC_READY_FILE. Contains no peer data.
+_DEFAULT_READY_FILE_ENV = "HSYNC_BOOTNODE_READY_FILE"
+# Benchmark/test seam: disable rate limiting entirely (opt-in). Never set this
+# in production — it removes the anti-abuse limits the spec requires (D11).
+_DEFAULT_NO_RATE_LIMIT_ENV = "HSYNC_BOOTNODE_NO_RATE_LIMIT"
 
 
 @app.callback()
@@ -71,6 +81,31 @@ def run(
         help="FD with group keys (one 'bucket=<hex-key>' per line). Env: HSYNC_BOOTNODE_KEYS_FD.",
     ),
     no_upnp: bool = typer.Option(False, "--no-upnp", help="Disable UPnP mapping."),
+    ttl: int = typer.Option(
+        60,
+        "--ttl",
+        min=1,
+        max=3600,
+        help="Record TTL in seconds (spec default: 60).",
+    ),
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        envvar=_DEFAULT_DEBUG_ENV,
+        help="Emit non-PII diagnostics to stderr (opt-in; disabled by default).",
+    ),
+    ready_file: str | None = typer.Option(
+        None,
+        "--ready-file",
+        envvar=_DEFAULT_READY_FILE_ENV,
+        help="Write the process PID to this path once the listener is bound.",
+    ),
+    no_rate_limit: bool = typer.Option(
+        False,
+        "--no-rate-limit",
+        envvar=_DEFAULT_NO_RATE_LIMIT_ENV,
+        help="Disable rate limiting (benchmark/test seam; never in production).",
+    ),
 ) -> None:
     """Run the bootstrap node: single QUIC/UDP listener (boot/1)."""
     try:
@@ -78,41 +113,82 @@ def run(
         handler = BootHandler(
             protected_buckets=protected_bucket,
             group_keys=keys,
+            ttl=float(ttl),
+            enforce_rate_limits=not no_rate_limit,
         )
     except BootConfigError as exc:
         typer.echo(f"configuration error: {exc}", err=True)
         raise typer.Exit(code=2) from exc
 
+    configure_debug(debug)
     _install_uvloop()
+    _install_sigterm_handler()
 
     banner = (
         f"hsync-bootnode {__version__} — boot/1, no-log, in-memory\n"
         f"  listener : {host}:{port} (QUIC/UDP, TLS 1.3, RETRY+address-validation)\n"
         f"  protected buckets: {', '.join(protected_bucket) or '(none)'}\n"
         f"  group keys loaded: {len(keys)}\n"
+        f"  ttl       : {ttl}s\n"
+        f"  debug     : {'on' if debug else 'off'}\n"
+        f"  rate limit: {'disabled' if no_rate_limit else 'enabled'}\n"
         f"  upnp      : {'disabled' if no_upnp else 'enabled (zero-touch)'}"
     )
     typer.echo(banner)
     try:
-        asyncio.run(_async_main(host, port, handler, no_upnp))
+        asyncio.run(_async_main(host, port, handler, no_upnp, ready_file))
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass  # graceful shutdown: transport closed in _async_main's finally
 
 
-async def _async_main(host: str, port: int, handler: BootHandler, no_upnp: bool) -> None:
+async def _async_main(
+    host: str,
+    port: int,
+    handler: BootHandler,
+    no_upnp: bool,
+    ready_file: str | None = None,
+) -> None:
     server, bound_port, identity = await start_server(host, port, handler, retry=True)
     typer.echo(f"  running   : {host}:{bound_port} — cert fingerprint {identity.fingerprint}")
+    debug_log(f"listener bound {host}:{bound_port} (retry+address-validation)")
 
-    tasks = [asyncio.create_task(_prune_loop(handler))]
-    if not no_upnp:
-        tasks.append(asyncio.create_task(UpnpManager(bound_port).run()))
-
+    tasks: list[asyncio.Task] = []
     try:
+        if ready_file:
+            _write_ready_file(ready_file)
+            debug_log(f"readiness written to {ready_file}")
+
+        tasks.append(asyncio.create_task(_prune_loop(handler)))
+        if not no_upnp:
+            tasks.append(asyncio.create_task(UpnpManager(bound_port).run()))
+
         await asyncio.Future()  # serve forever
     finally:
         server.close()
         for task in tasks:
             task.cancel()
+        if ready_file:
+            _remove_ready_file(ready_file)
+
+
+def _write_ready_file(path: str) -> None:
+    """Write this process's PID to ``path`` (readiness seam, no peer data).
+
+    Created with ``O_EXCL | O_NOFOLLOW`` so a predictable path in an
+    attacker-writable directory cannot be redirected (symlink) to clobber an
+    existing file under the node's privileges.
+    """
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(str(os.getpid()))
+
+
+def _remove_ready_file(path: str) -> None:
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
 
 
 async def _prune_loop(handler: BootHandler) -> None:
@@ -158,6 +234,21 @@ def _install_uvloop() -> None:
     except ImportError:
         return
     uvloop.install()
+
+
+def _install_sigterm_handler() -> None:
+    """Make SIGTERM graceful (service Stop): run the same teardown as Ctrl+C.
+
+    The default SIGTERM action would terminate the process abruptly, skipping
+    the ``finally`` in ``_async_main`` (transport close + ready-file removal).
+    Raising ``KeyboardInterrupt`` from the handler reuses the existing graceful
+    path (caught around ``asyncio.run``).
+    """
+
+    def _handle(signum: int, frame: object) -> None:
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, _handle)
 
 
 if __name__ == "__main__":

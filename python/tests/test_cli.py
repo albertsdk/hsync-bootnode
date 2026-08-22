@@ -6,7 +6,7 @@ import os
 
 from typer.testing import CliRunner
 
-from hsync_bootnode.cli import _load_keys, app
+from hsync_bootnode.cli import _load_keys, _remove_ready_file, _write_ready_file, app
 
 runner = CliRunner()
 
@@ -52,3 +52,19 @@ def test_load_keys_ignores_blank_and_comments() -> None:
     # None / negative fd → empty mapping (no crash)
     assert _load_keys(None) == {}
     assert _load_keys(-1) == {}
+
+
+def test_ttl_out_of_range_is_rejected() -> None:
+    for bad in ("0", "-1", "3601"):
+        result = runner.invoke(app, ["run", "--ttl", bad])
+        assert result.exit_code == 2
+
+
+def test_ready_file_helpers_write_pid_and_remove(tmp_path) -> None:
+    ready = tmp_path / "ready"
+    _write_ready_file(str(ready))
+    assert ready.read_text(encoding="utf-8").strip() == str(os.getpid())
+    _remove_ready_file(str(ready))
+    assert not ready.exists()
+    # removing a missing file is a no-op, not an error
+    _remove_ready_file(str(ready))

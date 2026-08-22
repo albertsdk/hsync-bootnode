@@ -33,7 +33,8 @@ UDP :443
 | `python/src/hsync_bootnode/tokens.py` | D11 derivation `HMAC-SHA256(key, "boot/1" || bucket)[:32]` | `derive_bucket_token`, `verify_bucket_token` |
 | `python/src/hsync_bootnode/server.py` | QUIC adapter: in-memory self-signed TLS identity (`hsync_common.ssl_utils`), RETRY, frame IO bound to 8 KiB | `start_server`, `NodeIdentity`, `make_identity`, `BootQuicProtocol` |
 | `python/src/hsync_bootnode/upnp.py` | SSDP IGD discovery + SOAP `AddPortMapping`/`DeletePortMapping`; stateless when no IGD | `UpnpManager.run`, `add_port_mapping`, `discover_igd` |
-| `python/src/hsync_bootnode/cli.py` | Typer multi-command app; group keys from `--keys-fd` / `HSYNC_BOOTNODE_KEYS_FD` (read once); fail-fast config | `run`, `main` (`--version`), `_load_keys` |
+| `python/src/hsync_bootnode/debug.py` | Opt-in stderr diagnostics (non-PII); off by default (no-log D7) | `configure_debug`, `debug_log` |
+| `python/src/hsync_bootnode/cli.py` | Typer multi-command app; group keys from `--keys-fd` / `HSYNC_BOOTNODE_KEYS_FD` (read once); fail-fast config; `--ttl`/`--debug`/`--ready-file` seams | `run`, `main` (`--version`), `_load_keys` |
 
 ## Request flow (per datagram/stream frame)
 
@@ -103,6 +104,20 @@ UDP :443
 | `python/tests/test_nolog.py` | Zero-write invariant under read-only fs |
 | `python/tests/test_upnp.py` | SSDP/SOAP shapes, error downgrade, stateless no-IGD |
 | `python/tests/test_cli.py` | CLI version/fail-fast/keys-fd contract |
+| `tests/` (repo root) | **Black-box** suite (language-neutral): spawns the real binary (`HSYNC_BOOTNODE_BIN`), speaks only `boot/1` over QUIC, gated by `HSYNC_BB_BOOTNODE=1` |
+
+### Black-box (language-neutral) tests
+
+The root `tests/` directory holds the functional black-box suite. It is
+deliberately **independent of any implementation language**: it launches the
+bootnode executable (path via `HSYNC_BOOTNODE_BIN`, defaulting to the Python
+build) as a subprocess, waits for the `HSYNC_BOOTNODE_READY_FILE` readiness
+seam, and drives it **only** through the public CLI + `boot/1` wire protocol
+(QUIC/UDP, NDJSON, ALPN `hsync-boot/1`). It never imports
+`hsync_bootnode`. The same suite will validate the future `rust/` and `c/`
+ports unchanged. Benchmarks (`bench/`) follow the same rule for L2/L3
+(`bench_quic.py`, `soak.py` spawn the binary); only L1 (`bench/bench_handler.py`)
+is Python-internal.
 
 ## Known gaps / next phases (per `PIANO-hsync-bootnode-p2p.md`)
 

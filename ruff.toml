@@ -1,0 +1,21 @@
+# Ruff config for the language-neutral code at the repo root (tests/, bench/).
+# Mirrors python/pyproject.toml [tool.ruff] so the whole repo lints consistently.
+
+line-length = 100
+target-version = "py313"
+
+[lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]
+ignore = [
+    "E501",
+    "E402",
+    "B904",
+    "SIM115",
+    "SIM117",
+    "B008",
+    "B017",
+    "SIM101",
+    "SIM103",
+    "SIM105",
+    "SIM118",
+]

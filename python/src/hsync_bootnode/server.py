@@ -26,6 +26,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa as rsa_key
 from cryptography.x509.oid import NameOID
 from hsync_common import ssl_utils
 
+from hsync_bootnode.debug import debug_log
 from hsync_bootnode.handler import BootHandler, CertificateFingerprint
 
 __all__ = [
@@ -142,9 +143,10 @@ class BootQuicProtocol(QuicConnectionProtocol):
             while True:
                 raw = await _read_frame(reader, pending)
                 if raw is None:
-                    return  # EOF or oversized frame: close the session silently
+                    return  # EOF: normal stream close, not a protocol drop
                 frame = _decode_frame(raw)
                 if frame is None:
+                    debug_log("drop: malformed frame, keep reading")
                     continue  # malformed frame: drop, keep reading (no-log)
                 response = self.boot_handler.handle(
                     frame,
@@ -158,6 +160,9 @@ class BootQuicProtocol(QuicConnectionProtocol):
                         )
                     )
                     await writer.drain()
+        except _OversizedFrame:
+            debug_log("drop: oversized frame, closing session")
+            return  # oversized frame: refuse and close the session silently
         except (asyncio.CancelledError, ConnectionError, TimeoutError):
             return
         finally:
@@ -207,14 +212,18 @@ async def start_server(
     return server, bound_port, identity
 
 
+class _OversizedFrame(Exception):
+    """A single frame exceeded MAX_FRAME_BYTES (refused, no-log)."""
+
+
 async def _read_frame(reader: Any, pending: bytearray) -> bytes | None:
     """Read one newline-terminated frame (bounded to MAX_FRAME_BYTES).
 
     ``pending`` keeps bytes already received but not yet consumed, so several
     frames sent back-to-back on the same stream are each returned in turn
-    (no pipelined frame is ever lost). Returns ``None`` on EOF or when a
-    single frame exceeds the bound (the session is then silently dropped —
-    oversized frames are refused, no-log).
+    (no pipelined frame is ever lost). Returns ``None`` on EOF; raises
+    ``_OversizedFrame`` when a single frame exceeds the bound (the session is
+    then silently dropped — oversized frames are refused, no-log).
     """
     while True:
         newline = pending.find(b"\n")
@@ -223,7 +232,7 @@ async def _read_frame(reader: Any, pending: bytearray) -> bytes | None:
             del pending[: newline + 1]
             return frame
         if len(pending) > MAX_FRAME_BYTES:
-            return None
+            raise _OversizedFrame
         chunk = await reader.read(256)
         if not chunk:
             return None

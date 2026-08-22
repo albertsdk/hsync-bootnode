@@ -204,14 +204,20 @@ def test_leave_removes_record_anonymously() -> None:
 
 def test_refresh_renews_ttl_but_never_creates() -> None:
     h = make_handler()
-    # Freeze the routing clock so the TTL math is deterministic regardless of
-    # the host's time.monotonic() granularity.
-    with patch("hsync_bootnode.routing.time.monotonic", return_value=1_000.0):
+    # Freeze both clocks (routing + handler) so the TTL math and the periodic
+    # prune inside handle() are deterministic regardless of the host clock.
+    with (
+        patch("hsync_bootnode.routing.time.monotonic", return_value=1_000.0),
+        patch("hsync_bootnode.handler.time.monotonic", return_value=1_000.0),
+    ):
         h.handle(register_frame(), peer_ip="10.0.0.1", peer_port=1)
     before = h.routing.get(CID, "shared", "home")
     assert before is not None
     before_expires = before.expires_at  # live record: touch() mutates it too
-    with patch("hsync_bootnode.routing.time.monotonic", return_value=1_030.0):
+    with (
+        patch("hsync_bootnode.routing.time.monotonic", return_value=1_030.0),
+        patch("hsync_bootnode.handler.time.monotonic", return_value=1_030.0),
+    ):
         refreshed = h.handle(
             {
                 "protocol_version": "boot/1",
@@ -231,17 +237,22 @@ def test_refresh_renews_ttl_but_never_creates() -> None:
     assert after.expires_at > before_expires
     assert before_expires == 1_060.0  # register: t + TTL
     assert after.expires_at == 1_090.0  # refresh: t + TTL from the new time
-    # unknown CID: refresh must NOT create a record
-    dropped = h.handle(
-        {
-            "protocol_version": "boot/1",
-            "type": "refresh",
-            "cid": CID2,
-            "bucket": "shared",
-        },
-        peer_ip="10.0.0.1",
-        peer_port=1,
-    )
+    # unknown CID: refresh must NOT create a record. Stays under the frozen clock
+    # so the periodic prune (now=1030) does not expire the live CID (t+TTL 1090).
+    with (
+        patch("hsync_bootnode.routing.time.monotonic", return_value=1_030.0),
+        patch("hsync_bootnode.handler.time.monotonic", return_value=1_030.0),
+    ):
+        dropped = h.handle(
+            {
+                "protocol_version": "boot/1",
+                "type": "refresh",
+                "cid": CID2,
+                "bucket": "shared",
+            },
+            peer_ip="10.0.0.1",
+            peer_port=1,
+        )
     assert dropped is None
     assert h.routing.count(bucket="shared") == 1
 
@@ -300,3 +311,52 @@ def test_prune_removes_expired_records() -> None:
     )
     assert h.prune(now=1500.0) == 1
     assert h.routing.count() == 0
+
+
+def test_handle_prunes_periodically() -> None:
+    """handle() sweeps expired records at most once per prune_interval.
+
+    Regression for the bug where ``handle()`` never invoked ``prune()`` — expired
+    records would linger until the next real frame arrived, so a quiet bucket
+    kept stale peers in memory (and the soak failed its convergence check).
+    """
+    from hsync_bootnode.routing import PeerRecord
+
+    h = make_handler()
+
+    def add_expired(cid: str, expires_at: float, ip: str) -> None:
+        h.routing.upsert(
+            PeerRecord(
+                cid=cid,
+                bucket="shared",
+                group="home",
+                ip=ip,
+                port=1,
+                proto="udp",
+                cert_fp=FP,
+                version="1.0.0",
+                endpoints=[],
+                expires_at=expires_at,
+            )
+        )
+
+    # An already-expired record must be swept by the FIRST handle() (the
+    # last_prune is None, so the first call always sweeps).
+    add_expired("expired-first", 1000.0, "10.0.0.1")
+    with patch("hsync_bootnode.handler.time.monotonic", return_value=2000.0):
+        h.handle(register_frame(cid=CID2), peer_ip="10.0.0.1", peer_port=1)
+        assert h.routing.count() == 1  # "expired-first" swept, CID2 live
+        # A second call within the same 15 s window must NOT re-sweep.
+        h.handle(register_frame(cid=CID), peer_ip="10.0.0.2", peer_port=1)
+        assert h.routing.count() == 2
+
+    # A record that only expires AFTER the first sweep, then advance past
+    # prune_interval: the interval sweep must remove it (not the register,
+    # which targets a different CID).
+    add_expired("expired-between", 2010.0, "10.0.0.3")
+    assert h.routing.count() == 3
+    with patch("hsync_bootnode.handler.time.monotonic", return_value=2020.0):
+        h.handle(register_frame(cid=CID), peer_ip="10.0.0.4", peer_port=1)
+    # "expired-between" swept by the interval prune; CID2 + CID remain.
+    assert h.routing.count() == 2
+    assert h.routing.get("expired-between", "shared", "home") is None

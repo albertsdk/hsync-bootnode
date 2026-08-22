@@ -1,4 +1,4 @@
-.TH HSYNC-BOOTNODE 1 "2026-11-09" "hsync-bootnode 0.1.0" "User Commands"
+.TH HSYNC-BOOTNODE 1 "2026-09-11" "hsync-bootnode 0.1.0" "User Commands"
 .SH NAME
 hsync-bootnode \- HSYNC P2P bootstrap node (no-log, in-memory, zero-knowledge)
 .SH SYNOPSIS
@@ -15,9 +15,10 @@ which peers are currently online, speaking the
 protocol over QUIC/UDP port 443 (TLS 1.3 inside QUIC, mandatory RETRY and
 address-validation tokens).
 .PP
-The routing table lives exclusively in RAM with a 60\-second TTL: nothing is
-ever written to disk, no log file is produced, and the TLS identity is
-generated per process. Stopping the process erases every trace of the network.
+The routing table lives exclusively in RAM with a configurable TTL (default
+60 seconds, 1\-3600): nothing is ever written to disk, no log file is
+produced, and the TLS identity is generated per process. Stopping the process
+erases every trace of the network.
 .SH COMMANDS
 .TP
 .B run
@@ -47,6 +48,26 @@ comments are ignored. Read once at startup, never written to disk.
 .B run\ \fR--no-upnp\fP
 Disable the zero-touch UPnP UDP port mapping.
 .TP
+.BI run\ \fR--ttl\fP= SECONDS
+Record TTL in seconds (1\-3600). Default: 60 (peers refresh every 30 s).
+.TP
+.B run\ \fR--debug\fP
+Emit non\-PII diagnostics to stderr (opt\-in; off by default). Never logs
+IPs, CIDs or fingerprints. Env form:
+.BR HSYNC_BOOTNODE_DEBUG=1 .
+.TP
+.BI run\ \fR--ready-file\fP= PATH
+Write the process PID to
+.I PATH
+once the QUIC listener is bound, and remove it on graceful shutdown (contains
+no peer data). Env form:
+.BR HSYNC_BOOTNODE_READY_FILE .
+.TP
+.B run\ \fR--no-rate-limit\fP
+Disable rate limiting entirely (benchmark/test seam; never in production — it
+removes the anti\-abuse limits D11 requires). Env form:
+.BR HSYNC_BOOTNODE_NO_RATE_LIMIT=1 .
+.TP
 .B \fR--version\fP
 Print the version and the protocol, then exit.
 .SH ENVIRONMENT
@@ -54,6 +75,22 @@ Print the version and the protocol, then exit.
 .B HSYNC_BOOTNODE_KEYS_FD
 Integer file descriptor carrying the group keys; same as
 .BR "run \-\-keys\-fd" .
+.TP
+.B HSYNC_BOOTNODE_DEBUG
+Set to
+.I 1
+to enable non\-PII stderr diagnostics; same as
+.BR "run \-\-debug" .
+.TP
+.B HSYNC_BOOTNODE_READY_FILE
+Path for the readiness PID file; same as
+.BR "run \-\-ready\-file" .
+.TP
+.B HSYNC_BOOTNODE_NO_RATE_LIMIT
+Set to
+.I 1
+to disable rate limiting (benchmark/test seam); same as
+.BR "run \-\-no\-rate\-limit" .
 .TP
 .B HSYNC_VERSION
 Overrides the version used by

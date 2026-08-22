@@ -11,12 +11,14 @@ No-log invariant: nothing in this module ever opens a file for writing.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
 from typing import Literal, cast
 
 from pydantic import SecretStr, ValidationError
 
+from hsync_bootnode.debug import debug_log
 from hsync_bootnode.protocol import (
     PROTOCOL_VERSION_BOOT,
     BootAck,
@@ -78,9 +80,16 @@ class BootHandler:
         protected_buckets: Iterable[str] = (),
         group_keys: Mapping[str, SecretStr] | None = None,
         routing: RoutingTable | None = None,
+        enforce_rate_limits: bool = True,
     ) -> None:
         self.ttl = ttl
         self.routing = routing if routing is not None else RoutingTable(ttl=ttl)
+        # ``None`` sentinel forces the first handle() to sweep; a 0.0 seed would
+        # skip the first sweep when monotonic() < prune_interval (recent boot).
+        self._last_prune: float | None = None
+        # Benchmark/test seam: disable every token bucket so measured ops stay
+        # on the unthrottled fast path (--no-rate-limit).
+        self._enforce_rate_limits = enforce_rate_limits
 
         self._protected: set[str] = set(protected_buckets)
         keys = dict(group_keys or {})
@@ -122,6 +131,17 @@ class BootHandler:
 
     # ------------------------------------------------------------------ API
 
+    def _maybe_prune(self) -> None:
+        """Run a TTL sweep at most once per prune_interval."""
+        now = time.monotonic()
+        if self._last_prune is None or now - self._last_prune >= self.prune_interval:
+            self.prune(now)
+            self._last_prune = now
+
+    def _limit_ok(self, limiter: TokenBucketLimiter, key: str) -> bool:
+        """Consume one token, or always admit when rate limits are disabled."""
+        return not self._enforce_rate_limits or limiter.allow(key)
+
     def handle(
         self,
         frame: object,
@@ -134,9 +154,15 @@ class BootHandler:
         Malformed / unknown frames are silently dropped (no-log, no oracle).
         """
         if not isinstance(frame, dict):
+            debug_log("drop: non-object frame")
             return None
-        if not self._ops_ip.allow(peer_ip):
+        if not self._limit_ok(self._ops_ip, peer_ip):
             return self._rate_limited(self._ops_ip, peer_ip)
+
+        # Prune expired records periodically (spec: every 15 s) so memory does
+        # not grow unbounded under sustained load. Runs on the first handle()
+        # (self._last_prune == 0.0) and then once per prune_interval.
+        self._maybe_prune()
 
         frame_type = frame.get("type")
         try:
@@ -154,12 +180,21 @@ class BootHandler:
                 query = BootQuery.model_validate(frame)
                 return self._query(query, peer_ip)
         except ValidationError:
+            debug_log("drop: invalid frame")
             return None
+        debug_log("drop: unknown frame type")
         return None
 
     def prune(self, now: float | None = None) -> int:
         """Drop expired records (TTL sweep); returns number removed."""
-        return self.routing.prune(now)
+        removed = self.routing.prune(now)
+        if removed:
+            debug_log(f"prune removed {removed} expired record(s)")
+        if now is None:
+            # Background sweep: keep the request-side gating in sync so handle()
+            # does not redundantly re-sweep right after this one.
+            self._last_prune = time.monotonic()
+        return removed
 
     @property
     def prune_interval(self) -> float:
@@ -168,10 +203,12 @@ class BootHandler:
     # ------------------------------------------------------------- register
 
     def _register(self, model: BootRegister, peer_ip: str, peer_port: int) -> dict:
-        if not self._register_bucket.allow(model.bucket):
+        if not self._limit_ok(self._register_bucket, model.bucket):
+            debug_log("register rate_limited (bucket)")
             return self._rate_limited(self._register_bucket, model.bucket)
         result = self._authorize(model.bucket, model.bucket_token, peer_ip)
         if result != "ok":
+            debug_log("register refused")
             return self._refusal(result, peer_ip)
 
         record = PeerRecord(
@@ -189,43 +226,53 @@ class BootHandler:
         )
         record.touch(self.ttl)
         self.routing.upsert(record)
+        debug_log("register ack")
         return self._ack(peer_ip, peer_port)
 
     def _refresh(self, model: BootRefresh, peer_ip: str, peer_port: int) -> dict | None:
-        if not self._register_bucket.allow(model.bucket):
+        if not self._limit_ok(self._register_bucket, model.bucket):
+            debug_log("refresh rate_limited (bucket)")
             return self._rate_limited(self._register_bucket, model.bucket)
         result = self._authorize(model.bucket, model.bucket_token, peer_ip)
         if result != "ok":
+            debug_log("refresh refused")
             return self._refusal(result, peer_ip)
 
         record = self.routing.get(model.cid, model.bucket, model.group)
         if record is None:
             # refresh must not create: an unknown CID is silently dropped so the
             # client falls back to a full register. Clean, anti-abuse.
+            debug_log("refresh dropped (unknown record)")
             return None
         record.touch(self.ttl)
         if model.connected is not None:
             record.connected = model.connected
+        debug_log("refresh ack")
         return self._ack(peer_ip, peer_port)
 
     def _leave(self, model: BootLeave) -> None:
         # Anonymous by design: exposes nothing, no token, no rate limit beyond
         # the generic per-IP admission. No response frame (spec has none).
         self.routing.remove(model.cid, model.bucket)
+        debug_log("leave removed")
         return None
 
     def _query(self, model: BootQuery, peer_ip: str) -> dict:
         pair_key = f"{peer_ip}|{model.bucket}"
-        if not self._query_pair.allow(pair_key):
+        if not self._limit_ok(self._query_pair, pair_key):
+            debug_log("query rate_limited (ip,bucket pair)")
             return self._rate_limited(self._query_pair, pair_key)
-        if not self._query_bucket.allow(model.bucket):
+        if not self._limit_ok(self._query_bucket, model.bucket):
+            debug_log("query rate_limited (bucket)")
             return self._rate_limited(self._query_bucket, model.bucket)
         result = self._authorize(model.bucket, model.bucket_token, peer_ip)
         if result != "ok":
+            debug_log("query refused")
             return self._refusal(result, peer_ip)
 
         records = self.routing.sample(model.bucket, model.group, model.limit)
         peers = [self._to_peer(record, model) for record in records]
+        debug_log(f"query response ({len(peers)} peers)")
         return BootResponse(
             protocol_version=PROTOCOL_VERSION_BOOT,
             type="response",
@@ -247,7 +294,7 @@ class BootHandler:
             return "ok"
         if verify_bucket_token(self._tokens[bucket], token):
             return "ok"
-        if self._bad_token_ip.allow(peer_ip):
+        if not self._enforce_rate_limits or self._bad_token_ip.allow(peer_ip):
             return "token_required"
         return "rate_limited"
 

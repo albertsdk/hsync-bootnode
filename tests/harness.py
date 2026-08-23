@@ -49,6 +49,23 @@ def scrub_environment() -> dict[str, str]:
     return {k: v for k, v in os.environ.items() if not k.startswith("HSYNC_")}
 
 
+def run_cli(args: Sequence[str], timeout: float = 30.0) -> subprocess.CompletedProcess[str]:
+    """Run the bootnode CLI once with a scrubbed environment (isolation contract).
+
+    Black-box checks that only inspect the CLI surface (``--version``, fail-fast
+    exit codes) must not spawn a process by hand: this helper resolves the
+    executable with :func:`resolve_bin` and runs it with :func:`scrub_environment`,
+    exactly like :func:`start_bootnode`.
+    """
+    return subprocess.run(
+        [resolve_bin(), *args],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env=scrub_environment(),
+    )
+
+
 def free_udp_port() -> int:
     """A free loopback UDP port (not reserved — the caller binds it)."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

@@ -7,28 +7,19 @@ the wire protocol.
 
 from __future__ import annotations
 
-import subprocess
-
 import pytest
-from harness import register_frame, resolve_bin
+from harness import register_frame, run_cli
 
 
 def test_version_flag_prints_protocol_and_impl() -> None:
-    result = subprocess.run(
-        [resolve_bin(), "--version"], capture_output=True, text=True, timeout=30
-    )
+    result = run_cli(["--version"])
     assert result.returncode == 0
     assert "boot/1" in result.stdout
     assert "hsync-bootnode" in result.stdout
 
 
 def test_protected_bucket_without_key_fails_fast() -> None:
-    result = subprocess.run(
-        [resolve_bin(), "run", "--protected-bucket", "shared"],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
+    result = run_cli(["run", "--protected-bucket", "shared"])
     assert result.returncode == 2
     assert "configuration error" in result.stderr
 

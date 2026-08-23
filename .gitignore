@@ -28,3 +28,10 @@ Cargo.lock
 # Local secrets (never commit)
 *.env
 !*.example.env
+
+# Local operator secret files (never commit)
+group-keys
+*.group-keys
+
+# Benchmark result artifacts
+bench_result.txt

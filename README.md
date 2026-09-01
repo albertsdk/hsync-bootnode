@@ -11,7 +11,7 @@ In-memory, zero-knowledge P2P bootstrap node for HSYNC (API and protocol under a
 | [`protocol-spec/boot-1.md`](protocol-spec/boot-1.md) | Single wire-protocol specification | Draft |
 | [`fixtures/`](fixtures/) | Shared protocol fixtures (single source for all languages) | Draft |
 | [`tests/`](tests/) | **Language-neutral** black-box suite (spawns the binary, wire-only) | v1 |
-| [`bench/`](bench/) | L1/L2/L3 benchmarks; L2/L3 are language-neutral | v1 |
+| [`bench/`](bench/) | L1–L5 benchmarks; L2/L3 language-neutral, L4 profiles the handshake, L5 the CPU saturation | v1 |
 | [`python/`](python/) | v1 implementation — Python + aioquic (QUIC/UDP 443) | v1 (Fase 1) |
 | [`packaging/`](packaging/) | OS service units — systemd / launchd / WinSW | v1 |
 | [`llm-wiki/`](llm-wiki/) | Internal agent knowledge base (architecture) | v1 |

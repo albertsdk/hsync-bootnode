@@ -20,7 +20,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import ssl
 import sys
 import tempfile
 import time
@@ -29,7 +28,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
 
 from aioquic.asyncio import connect  # noqa: E402
-from aioquic.quic.configuration import QuicConfiguration  # noqa: E402
 from common import (  # noqa: E402
     BenchResult,
     add_json_out,
@@ -38,7 +36,7 @@ from common import (  # noqa: E402
     print_table,
 )
 from harness import (  # noqa: E402
-    BOOT_ALPN,
+    client_config,
     query_frame,
     register_frame,
     start_bootnode,
@@ -46,29 +44,34 @@ from harness import (  # noqa: E402
 )
 
 
-def _client_config() -> QuicConfiguration:
-    return QuicConfiguration(is_client=True, alpn_protocols=[BOOT_ALPN], verify_mode=ssl.CERT_NONE)
-
-
 async def _bench_handshakes(port: int, count: int) -> BenchResult:
-    """Time full QUIC handshakes (connect + immediate close), sequential."""
-    config = _client_config()
+    """Time the QUIC handshake only (``connect`` up to handshake completion).
+
+    The teardown is deliberately left OUTSIDE the timed region: the
+    context-manager exit calls ``wait_closed()``, which blocks on the QUIC
+    closing-period drain timer (``_close_at = now + 3 * PTO``) instead of
+    measuring handshake work. Timing the whole ``async with`` therefore reported
+    a ~10x inflated "handshake" (mostly idle timer on loopback) — see
+    ``bench/profile_handshake.py``.
+    """
+    config = client_config()
     for _ in range(5):
         async with connect("127.0.0.1", port, configuration=config):
             pass
     samples: list[float] = []
     for _ in range(count):
+        cm = connect("127.0.0.1", port, configuration=config)
         start = time.perf_counter()
-        async with connect("127.0.0.1", port, configuration=config):
-            pass
+        await cm.__aenter__()
         samples.append(time.perf_counter() - start)
+        await cm.__aexit__(None, None, None)  # closing drain, not handshake work
     return BenchResult("quic-handshake(sequential)", samples, count)
 
 
 async def _bench_frames_on_one_connection(port: int, frames: int, peers: int) -> BenchResult:
     """Register+query round-trips over a single established connection."""
     cids = make_cids(peers, start=5_000_000)
-    config = _client_config()
+    config = client_config()
     async with connect("127.0.0.1", port, configuration=config) as protocol:
         for cid in cids:
             reader, writer = await protocol.create_stream()
@@ -102,7 +105,7 @@ async def _bench_concurrent_queries(port: int, connections: int, per_conn: int) 
     """N concurrent connections each doing per_conn query round-trips."""
 
     async def worker() -> list[float]:
-        config = _client_config()
+        config = client_config()
         samples: list[float] = []
         async with connect("127.0.0.1", port, configuration=config) as c:
             query = (json.dumps(query_frame("shared", limit=20)) + "\n").encode()

@@ -9,6 +9,7 @@ locale data), writing is not.
 from __future__ import annotations
 
 import builtins
+import json
 import os
 from typing import Any
 
@@ -72,8 +73,8 @@ def test_register_query_prune_never_writes(read_only_fs: pytest.MonkeyPatch) -> 
         "version": "1.0.0",
         "endpoints": [{"proto": "tcp", "host": "198.51.100.7", "port": 443}],
     }
-    ack = handler.handle(register, peer_ip="198.51.100.7", peer_port=54321)
-    assert ack is not None and ack["type"] == "ack"
+    ack = handler.handle(json.dumps(register), peer_ip="198.51.100.7", peer_port=54321)
+    assert ack is not None and json.loads(ack)["type"] == "ack"
 
     query = {
         "protocol_version": "boot/1",
@@ -82,8 +83,8 @@ def test_register_query_prune_never_writes(read_only_fs: pytest.MonkeyPatch) -> 
         "group": "home",
         "bucket_token": token,
     }
-    response = handler.handle(query, peer_ip="10.0.0.1", peer_port=54321)
-    assert response is not None and response["count"] == 1
+    response = handler.handle(json.dumps(query), peer_ip="10.0.0.1", peer_port=54321)
+    assert response is not None and json.loads(response)["count"] == 1
     handler.prune()
 
 

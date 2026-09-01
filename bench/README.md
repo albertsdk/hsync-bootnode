@@ -1,17 +1,26 @@
 # Benchmarks — hsync-bootnode
 
-Three tiers, split by language-dependence:
+Five tiers, split by language-dependence:
 
 | Tier | Script | Transport | Language-neutral? |
 |---|---|---|---|
 | L1 | `bench_handler.py` | none (calls `BootHandler.handle`) | **No** — Python-internal micro-benchmark |
 | L2 | `bench_quic.py` | real QUIC/UDP loopback | **Yes** — spawns the binary, wire-only |
 | L3 | `soak.py` | real QUIC/UDP loopback (sustained) | **Yes** — spawns the binary, wire-only |
+| L4 | `profile_handshake.py` | real QUIC/UDP loopback (diagnostic) | **No** — splits the `aioquic` client cost |
+| L5 | `cpu_saturation.py` | real QUIC/UDP loopback (diagnostic) | **No** — sweeps load, reads node CPU from `/proc` |
 
 L2/L3 launch the bootnode executable (`HSYNC_BOOTNODE_BIN`, default Python
 build) and drive it only through the `boot/1` wire protocol, so the same
-benchmark runs unchanged against the future `rust/` and `c/` ports. L1 measures
-the Python handler in isolation and is not meant to be portable.
+benchmark runs unchanged against the future `rust/` and `c/` ports. L1 (handler)
+and the L4/L5 diagnostics are Python-internal; L5's CPU sampling needs Linux
+`/proc` and reports `n/a` elsewhere.
+
+> **The `quic-handshake` metric measures the handshake, not the teardown.**
+> `aioquic`'s connect context manager calls `wait_closed()` on exit, which blocks
+> on the QUIC closing-period drain timer (`3 * PTO` — ~130 ms of idle wait on
+> loopback at ~0% CPU). L2 therefore times only the handshake (`__aenter__`) and
+> lets the drain run outside the measured region; L4 quantifies both halves.
 
 ## Running
 
@@ -27,6 +36,12 @@ python/.venv/bin/python bench/bench_quic.py --connections 50 --frames 200
 # L3 — soak (language-neutral)
 python/.venv/bin/python bench/soak.py --duration 600 --peers 500 --qps 20
 
+# L4 — handshake profiling (Python-internal, diagnostic)
+python/.venv/bin/python bench/profile_handshake.py --count 50 --cprofile 15
+
+# L5 — CPU-saturation sweep (Linux; node CPU% vs load vs p99)
+python/.venv/bin/python bench/cpu_saturation.py --peers 200 --levels 1,2,4,8,16,32
+
 # Against a different implementation
 HSYNC_BOOTNODE_BIN=/path/to/hsync-bootnode python/.venv/bin/python bench/bench_quic.py
 ```
@@ -35,6 +50,8 @@ HSYNC_BOOTNODE_BIN=/path/to/hsync-bootnode python/.venv/bin/python bench/bench_q
 
 ## Shared helpers
 
-- `bench/common.py` — deterministic CIDs + timing/stats (stdlib only).
-- `tests/harness.py` — wire frame builders, process lifecycle, QUIC client
-  (single source shared with the black-box suite).
+- `bench/common.py` — deterministic CIDs, timing/stats and node-process sampling
+  (`proc_cpu_seconds` / `proc_rss_mb` / `cpu_percent`, stdlib only).
+- `tests/harness.py` — wire frame builders, process lifecycle, QUIC client and
+  the shared `client_config()` (single source used by the black-box suite and
+  every L2/L4 benchmark).

@@ -59,6 +59,21 @@ class TokenBucketLimiter:
         self._tokens.clear()
         self._updated.clear()
 
+    def evict_stale(self, now: float | None = None) -> int:
+        """Drop buckets that have fully refilled since their last check.
+
+        A key untouched for ``capacity / rate`` seconds refills to exactly
+        ``capacity`` — the value a first-use key starts from — so evicting it is
+        behaviour-identical to keeping it, and bounds memory under IP churn.
+        """
+        now = now if now is not None else time.monotonic()
+        horizon = self._capacity / self._rate
+        stale = [k for k, ts in self._updated.items() if now - ts >= horizon]
+        for k in stale:
+            del self._tokens[k]
+            del self._updated[k]
+        return len(stale)
+
     def _refill(self, key: RateLimitKey, now: float) -> float:
         """Return the (unconsumed) token count after applying the elapsed refill."""
         updated_at = self._updated.get(key)

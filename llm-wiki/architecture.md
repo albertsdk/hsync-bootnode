@@ -26,33 +26,39 @@ UDP :443
 
 | Module | Responsibility | Key symbols |
 |---|---|---|
-| `python/src/hsync_bootnode/protocol.py` | `boot/1` frames; CID `^[A-Za-z0-9]{21}$`; 64-hex bucket token | `BootRegister`, `BootRefresh`, `BootLeave`, `BootQuery`, `BootAck`, `BootResponse`, `BootPeer`, `Endpoint`, `ObservedEndpoint` |
-| `python/src/hsync_bootnode/routing.py` | RAM-only table, TTL/prune/sample, group-agnostic `leave` | `PeerRecord`, `RoutingTable` (`upsert`, `remove`, `prune`, `sample`, `count`) |
-| `python/src/hsync_bootnode/handler.py` | Request pipeline: validate → authorize (D11) → rate-limit → mutate → reply | `BootHandler.handle`, `BootConfigError`, `OP_IP_BURST`, `WINDOW_SECONDS` |
-| `python/src/hsync_bootnode/ratelimit.py` | Sliding windows | `TokenBucketLimiter` (`allow`, `retry_after`) |
+| `python/src/hsync_bootnode/protocol.py` | `boot/1` frames; CID `^[A-Za-z0-9]{21}$`; 64-hex bucket token; client→server discriminated union; server→client `bytes` serializers | `BootRegister`, `BootRefresh`, `BootLeave`, `BootQuery`, `BootAck`, `BootResponse`, `BootPeer`, `Endpoint`, `ObservedEndpoint`, `BootFrame`, `BOOT_FRAME_ADAPTER`, `BOOT_ACK_ADAPTER`, `BOOT_RESPONSE_ADAPTER` |
+| `python/src/hsync_bootnode/routing.py` | RAM-only table, TTL/prune/sample, group-agnostic `leave`; secondary indexes (`_by_group`/`_by_cid`/`_pos`) + materialized `PeerRecord.wire` projection | `PeerRecord`, `RoutingTable` (`upsert`, `remove`, `prune`, `sample`, `count`) |
+| `python/src/hsync_bootnode/handler.py` | Request pipeline: rate-limit → validate (single pass) → authorize (D11) → mutate → reply | `BootHandler.handle`, `BootConfigError`, `OP_IP_BURST`, `WINDOW_SECONDS` |
+| `python/src/hsync_bootnode/ratelimit.py` | Sliding windows; `evict_stale` bounds memory (evicts fully-refilled buckets, behaviour-identical) | `TokenBucketLimiter` (`allow`, `retry_after`, `evict_stale`) |
 | `python/src/hsync_bootnode/tokens.py` | D11 derivation `HMAC-SHA256(key, "boot/1" || bucket)[:32]` | `derive_bucket_token`, `verify_bucket_token` |
-| `python/src/hsync_bootnode/server.py` | QUIC adapter: in-memory self-signed TLS identity (`hsync_common.ssl_utils`), RETRY, frame IO bound to 8 KiB | `start_server`, `NodeIdentity`, `make_identity`, `BootQuicProtocol` |
+| `python/src/hsync_bootnode/server.py` | QUIC adapter: in-memory self-signed TLS identity (`hsync_common.ssl_utils`), RETRY, frame IO bound to 8 KiB (framing only — parsing/validation lives in `handler.py`) | `start_server`, `NodeIdentity`, `make_identity`, `BootQuicProtocol` |
 | `python/src/hsync_bootnode/upnp.py` | SSDP IGD discovery + SOAP `AddPortMapping`/`DeletePortMapping`; stateless when no IGD | `UpnpManager.run`, `add_port_mapping`, `discover_igd` |
 | `python/src/hsync_bootnode/debug.py` | Opt-in stderr diagnostics (non-PII); off by default (no-log D7) | `configure_debug`, `debug_log` |
 | `python/src/hsync_bootnode/cli.py` | Typer multi-command app; group keys from `--keys-fd` / `HSYNC_BOOTNODE_KEYS_FD` (read once); fail-fast config; `--ttl`/`--debug`/`--ready-file` seams | `run`, `main` (`--version`), `_load_keys` |
 
 ## Request flow (per datagram/stream frame)
 
-1. `server.py` reads one newline-terminated JSON frame (≤ 8 KiB); malformed →
-   silently dropped (no-log, no oracle).
-2. `BootHandler.handle` (`python/src/hsync_bootnode/handler.py:125`) checks the
-   generic per-IP admission (~10 req/s, burst 50).
-3. Frame validated by its pydantic model; `ValidationError` → drop.
-4. Type-specific limits: register/refresh 10/min per bucket; query 5/min per
+1. `server.py` reads one newline-terminated frame (≤ 8 KiB, checked on the frame
+   length itself so an oversized frame always closes the stream); a frame longer
+   than 8 KiB closes the session silently (no-log).
+2. `BootHandler.handle` (`python/src/hsync_bootnode/handler.py:150`) validates the
+   raw frame in a single pass via the `BootFrame` discriminated union
+   (`BOOT_FRAME_ADAPTER.validate_json`). `ValidationError` → silent drop
+   (no-log, no oracle, no admission token consumed); only a *valid* frame then
+   charges the generic per-IP admission (~10 req/s, burst 50), so a garbage
+   sender cannot throttle neighbours behind a shared NAT IP.
+3. Type-specific limits: register/refresh 10/min per bucket; query 5/min per
    (IP, bucket) and 30/min per bucket.
-5. D11: if the bucket is protected, `verify_bucket_token` decides; failures
+4. D11: if the bucket is protected, `verify_bucket_token` decides; failures
    are rate-limited after 5/min per IP and answered uniformly with
    `token_required` / `rate_limited` (+ `retry_after`).
-6. Mutation: `register` upserts (STUN-echo source `ip:port`), `refresh` touches
+5. Mutation: `register` upserts (STUN-echo source `ip:port`), `refresh` touches
    TTL and never creates, `leave` removes every `(cid, bucket)` entry
    regardless of group and returns no frame.
-7. Reply: `ack` (register/refresh, carries `observed_endpoint`) or `response`
-   (query, random sample up to `limit`, prefer advertised endpoints).
+6. Reply: `ack` (register/refresh, carries `observed_endpoint`) or `response`
+   (query, random sample up to `limit`, prefer advertised endpoints); returned
+   as already-serialized JSON **bytes** (Pydantic `TypeAdapter.dump_json`),
+   written verbatim by the transport.
 
 ## Security model
 
@@ -112,12 +118,16 @@ The root `tests/` directory holds the functional black-box suite. It is
 deliberately **independent of any implementation language**: it launches the
 bootnode executable (path via `HSYNC_BOOTNODE_BIN`, defaulting to the Python
 build) as a subprocess, waits for the `HSYNC_BOOTNODE_READY_FILE` readiness
-seam, and drives it **only** through the public CLI + `boot/1` wire protocol
+seam (keyed on the ready file appearing with a PID, not on PID equality with the
+launcher — a onefile-packaged binary runs the app in a child process), and
+drives it **only** through the public CLI + `boot/1` wire protocol
 (QUIC/UDP, NDJSON, ALPN `hsync-boot/1`). It never imports
 `hsync_bootnode`. The same suite will validate the future `rust/` and `c/`
 ports unchanged. Benchmarks (`bench/`) follow the same rule for L2/L3
-(`bench_quic.py`, `soak.py` spawn the binary); only L1 (`bench/bench_handler.py`)
-is Python-internal.
+(`bench_quic.py`, `soak.py` spawn the binary); L1 (`bench/bench_handler.py`) and
+the diagnostics (L4 `bench/profile_handshake.py` — handshake vs `aioquic`
+closing drain; L5 `bench/cpu_saturation.py` — load vs node CPU%) are
+Python-internal.
 
 ## Known gaps / next phases (per `PIANO-hsync-bootnode-p2p.md`)
 

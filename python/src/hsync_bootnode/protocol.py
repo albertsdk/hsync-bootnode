@@ -12,9 +12,9 @@ the frame kind from the payload shape.
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 __all__ = [
     "PROTOCOL_VERSION_BOOT",
@@ -30,6 +30,10 @@ __all__ = [
     "BootAck",
     "BootPeer",
     "BootResponse",
+    "BootFrame",
+    "BOOT_FRAME_ADAPTER",
+    "BOOT_ACK_ADAPTER",
+    "BOOT_RESPONSE_ADAPTER",
 ]
 
 # Per-channel protocol version. Bump the suffix on any breaking change to the
@@ -156,6 +160,21 @@ class BootResponse(_BootFrame):
     ttl: int = Field(ge=1, le=3600)
     error: Literal["token_required", "rate_limited"] | None = None
     retry_after: int | None = Field(default=None, ge=1)
+
+
+# Client→server frames, dispatched on ``type``. ``BootResponse``/``BootAck``/
+# ``BootPeer`` are server→client and deliberately excluded: they are never
+# validated in the input path.
+BootFrame = Annotated[
+    BootRegister | BootRefresh | BootLeave | BootQuery,
+    Field(discriminator="type"),
+]
+BOOT_FRAME_ADAPTER: TypeAdapter[BootFrame] = TypeAdapter(BootFrame)
+
+# Server→client serializers: ``dump_json`` emits ``bytes`` directly, so the
+# transport writes them verbatim instead of decoding to ``str`` and re-encoding.
+BOOT_ACK_ADAPTER: TypeAdapter[BootAck] = TypeAdapter(BootAck)
+BOOT_RESPONSE_ADAPTER: TypeAdapter[BootResponse] = TypeAdapter(BootResponse)
 
 
 assert _CID_RE.fullmatch("A1b2C3d4E5f6G7h8I9j0K")

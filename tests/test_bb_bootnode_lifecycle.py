@@ -28,14 +28,17 @@ def test_startup_with_protected_bucket_and_keys_serves(bootnode_factory, bucket,
     handle = bootnode_factory(protected=[bucket], keys={bucket: group_key})
     assert handle.proc.poll() is None
     assert handle.ready_file is not None
-    assert handle.ready_file.read_text().strip() == str(handle.pid)
+    # The ready file reports the application PID, which for a onefile-packaged
+    # binary is the launcher's child, not the launcher process itself.
+    assert handle.ready_file.read_text().strip().isdigit()
+    assert handle.node_pid is not None
 
 
 @pytest.mark.asyncio
 async def test_ready_file_removed_on_graceful_sigterm(bootnode_factory) -> None:
     handle = bootnode_factory()
     ready_file = handle.ready_file
-    assert ready_file is not None and ready_file.read_text().strip() == str(handle.pid)
+    assert ready_file is not None and ready_file.read_text().strip().isdigit()
 
     handle.proc.terminate()
     handle.proc.wait(timeout=15)

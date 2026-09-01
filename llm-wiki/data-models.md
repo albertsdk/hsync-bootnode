@@ -34,6 +34,13 @@ guesses the frame kind from the payload shape.
 | `ObservedEndpoint` (`protocol.py:61`) | `BootAck.observed_endpoint` | `proto`, `ip`, `port` (STUN-echo of the source) |
 | `BootPeer` (`protocol.py:134`) | `BootResponse.peers[]` | `cid`, `ip`, `port`, `proto`, `cert_fp`, `bucket`, `group?`, `version`, `reachable` |
 
+The client→server frames are dispatched in one pass by the discriminated union
+`BootFrame = Annotated[BootRegister | BootRefresh | BootLeave | BootQuery,
+Field(discriminator="type")]` (`protocol.py:165`) and validated from raw bytes via
+`BOOT_FRAME_ADAPTER` (`protocol.py:168`, a `TypeAdapter[BootFrame]`). The
+server→client frames (`BootAck`/`BootResponse`/`BootPeer`) are deliberately
+excluded from the union: they are never validated on the input path.
+
 ## Shared validators
 
 | Constant | Location | Rule |
@@ -46,9 +53,9 @@ guesses the frame kind from the payload shape.
 
 | Structure | Location | Role |
 |---|---|---|
-| `PeerRecord` | `python/src/hsync_bootnode/routing.py:31` | RAM-only routing entry keyed `(cid, bucket, group)`; carries `expires_at` (TTL) |
-| `RoutingTable` | `python/src/hsync_bootnode/routing.py:55` | In-memory registry (`upsert`/`remove`/`get`/`prune`/`sample`/`count`); never persisted (D7) |
-| `TokenBucketLimiter` | `python/src/hsync_bootnode/ratelimit.py:22` | In-memory token bucket for the per-IP/per-bucket rate limits |
+| `PeerRecord` | `python/src/hsync_bootnode/routing.py:31` | RAM-only routing entry keyed `(cid, bucket, group)`; carries `expires_at` (TTL) and a lazily-built materialized wire projection `wire` (`BootPeer | None`) |
+| `RoutingTable` | `python/src/hsync_bootnode/routing.py:55` | In-memory registry (`upsert`/`remove`/`get`/`prune`/`sample`/`count`); never persisted (D7). Backed by three secondary indexes — `_by_group` (bucket+group → keys, O(1) `sample`), `_by_cid` (cid+bucket → keys, O(1) `remove`), `_pos` (key → list position for O(1) swap-remove). `prune` rebuilds the indexes in bulk when ≥ 50% of records expire, else removes incrementally. |
+| `TokenBucketLimiter` | `python/src/hsync_bootnode/ratelimit.py:22` | In-memory token bucket for the per-IP/per-bucket rate limits; `evict_stale` drops fully-refilled buckets (behaviour-identical, bounds memory) |
 
 ## Relationships
 
@@ -60,6 +67,9 @@ leave           ──► BootLeave                    ──► (no reply frame
 
 `BootPeer` is projected from a `PeerRecord` (handler `_to_peer`,
 `python/src/hsync_bootnode/handler.py:349`): the peer's advertised `endpoints[0]` is
-preferred, falling back to the observed source endpoint. The committed fixtures in
-`fixtures/bootnode-*.json` validate every one of these models via the drift test in
-`python/tests/test_scaffold.py`.
+preferred, falling back to the observed source endpoint. The projection is
+materialized once on `PeerRecord.wire` and reused on later samples — valid for the
+record's lifetime because `register` always builds a fresh `PeerRecord` and
+`refresh` only mutates `connected`/`expires_at` (neither is part of `BootPeer`).
+The committed fixtures in `fixtures/bootnode-*.json` validate every one of these
+models via the drift test in `python/tests/test_scaffold.py`.

@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
-import json
 from collections.abc import Callable
 from typing import Any, cast
 
@@ -144,21 +143,13 @@ class BootQuicProtocol(QuicConnectionProtocol):
                 raw = await _read_frame(reader, pending)
                 if raw is None:
                     return  # EOF: normal stream close, not a protocol drop
-                frame = _decode_frame(raw)
-                if frame is None:
-                    debug_log("drop: malformed frame, keep reading")
-                    continue  # malformed frame: drop, keep reading (no-log)
                 response = self.boot_handler.handle(
-                    frame,
+                    raw,
                     peer_ip=peer_ip,
                     peer_port=peer_port,
                 )
                 if response is not None:
-                    writer.write(
-                        (json.dumps(response, separators=(",", ":"), sort_keys=True) + "\n").encode(
-                            "utf-8"
-                        )
-                    )
+                    writer.write(response + b"\n")
                     await writer.drain()
         except _OversizedFrame:
             debug_log("drop: oversized frame, closing session")
@@ -228,20 +219,17 @@ async def _read_frame(reader: Any, pending: bytearray) -> bytes | None:
     while True:
         newline = pending.find(b"\n")
         if newline != -1:
-            frame = bytes(pending[: newline + 1])
+            if newline > MAX_FRAME_BYTES:
+                raise _OversizedFrame
+            frame = bytes(pending[:newline])
             del pending[: newline + 1]
             return frame
         if len(pending) > MAX_FRAME_BYTES:
+            # No newline within the bound: the frame is already oversized, and a
+            # larger read chunk must not let an oversized frame slip through as a
+            # "malformed" one just because its newline arrived in the same read.
             raise _OversizedFrame
-        chunk = await reader.read(256)
+        chunk = await reader.read(4096)
         if not chunk:
             return None
         pending.extend(chunk)
-
-
-def _decode_frame(raw: bytes) -> dict | None:
-    try:
-        value = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
-        return None
-    return value if isinstance(value, dict) else None

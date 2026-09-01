@@ -43,7 +43,10 @@ HSYNC_BB_BOOTNODE=1 HSYNC_BOOTNODE_BIN=/path/to/hsync-bootnode \
 
 - Readiness is signalled through the `HSYNC_BOOTNODE_READY_FILE` seam: the
   process writes its PID there once the QUIC listener is bound, and removes it
-  on graceful shutdown (`SIGTERM`).
+  on graceful shutdown (`SIGTERM`). The suite keys readiness on the file
+  **appearing with a PID**, not on that PID equalling the launcher's: a
+  onefile-packaged binary (PyInstaller, the `.deb` payload) runs the app in a
+  child process, so the two PIDs differ.
 - Each test starts a fresh subprocess with an environment scrubbed of every
   `HSYNC_*` variable and tears it down in a `finally`/fixture, so there are no
   orphan processes or cross-test contamination.

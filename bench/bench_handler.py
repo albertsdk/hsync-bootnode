@@ -1,21 +1,30 @@
 """L1 — pure-handler micro-benchmark (no sockets, deterministic, Python-only).
 
 This is the ONLY benchmark that is implementation-specific: it measures
-``BootHandler.handle`` throughput/latency directly (pydantic validation, routing
-scan/sample, pydantic replies) with the routing table pre-populated at several
+``BootHandler.handle`` throughput/latency directly (validation, routing
+sample/scan, serialization) with the routing table pre-populated at several
 sizes. The transport cost is isolated in ``bench_quic.py`` (language-neutral).
+
+Methodology (corrected):
+
+* One ``BootHandler(enforce_rate_limits=False)`` per scenario, so every measured
+  operation runs the named branch (an ``ack``/``response``/silent ``leave``),
+  never a ``rate_limited`` refusal. Each measured reply is asserted to be on the
+  intended branch, so a silent drop or refusal can never masquerade as success.
+* One untimed ``prune()`` before warmup, so the periodic O(n) TTL sweep never
+  leaks into a measured sample (production prunes every 15 s, not per request).
+* Input frames are pre-encoded ``bytes`` (the production transport passes
+  ``bytes``), prebuilt outside the timed region.
 
 Usage:
     cd hsync-bootnode && python/.venv/bin/python bench/bench_handler.py \
         [--count N] [--json-out FILE]
-
-A fresh handler per scenario keeps the per-IP/per-bucket token buckets full:
-every scenario measures the steady-state fast path, never the rate limiter.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -25,6 +34,7 @@ sys.path.insert(0, str(_REPO_ROOT / "python" / "src"))
 sys.path.insert(0, str(_REPO_ROOT / "tests"))
 
 from common import (  # noqa: E402
+    BenchResult,
     add_json_out,
     make_cids,
     maybe_write_json,
@@ -41,147 +51,109 @@ from hsync_bootnode.handler import BootHandler  # noqa: E402
 
 _PEER_IP = "198.51.100.7"
 _PEER_PORT = 54321
+_WARMUP = 200
+_ACK_PREFIX = b'{"protocol_version":"boot/1","type":"ack"'
 
 
 def _populate(handler: BootHandler, bucket: str, count: int, start: int = 0) -> list[str]:
-    """Register ``count`` peers into ONE bucket, bypassing the rate limiter.
+    """Register ``count`` peers into ONE bucket and move the records into ``handler``.
 
-    The register limiter is 10/min per bucket on a shared handler, so setup
-    rotates the source IP past the per-IP burst AND clears the limiter state
-    via fresh handler pools per chunk. Population is not what we measure:
-    only the final routing-table contents matter.
+    Setup only, never measured: a single no-rate-limit pool handler registers
+    every CID directly (the register burst would otherwise cap at 10/bucket).
     """
-    from hsync_bootnode.handler import REGISTER_BUCKET_LIMIT
-
     cids = make_cids(count, start=start)
-    chunk = REGISTER_BUCKET_LIMIT  # ledger-safe: never hit the per-bucket cap
-    for base in range(0, count, chunk):
-        pool = BootHandler()
-        for offset in range(min(chunk, count - base)):
-            index = base + offset
-            octet = index % 250 + 1
-            response = pool.handle(
+    pool = BootHandler(enforce_rate_limits=False)
+    for index, cid in enumerate(cids):
+        octet = index % 250 + 1
+        response = pool.handle(
+            json.dumps(
                 register_frame(
-                    cids[index],
+                    cid,
                     bucket=bucket,
                     host=f"10.1.{(index // 250) % 250}.{octet}",
-                ),
-                peer_ip=f"10.9.{(index // 250) % 250}.{octet}",
-                peer_port=_PEER_PORT,
-            )
-            assert response is not None and response.get("type") == "ack", response
-        # move this chunk's records into the target handler's table
-        for record in pool.routing._records.values():
-            handler.routing.upsert(record)
+                )
+            ).encode(),
+            peer_ip=f"10.9.{(index // 250) % 250}.{octet}",
+            peer_port=_PEER_PORT,
+        )
+        assert response is not None and json.loads(response)["type"] == "ack", response
+    for record in pool.routing._records.values():
+        handler.routing.upsert(record)
     assert handler.routing.count(bucket=bucket) == count
     return cids
 
 
-def _bench_register(count: int):  # -> BenchResult
-    # One handler per 40 ops: the per-IP admission bucket holds burst 50, so
-    # rotating handlers keeps every measured op on the unthrottled fast path
-    # (a single handler would rate-limit after 50 registers from one IP).
-    handlers = [BootHandler() for _ in range(max(1, (count + 200 + 39) // 40))]
-    cids = make_cids(count + 200, start=1_000_000)
+def _bench_register(count: int) -> BenchResult:
+    # One handler, no rate limits: every measured op is a real register/ack.
+    handler = BootHandler(enforce_rate_limits=False)
+    cids = make_cids(count + _WARMUP, start=1_000_000)
+    raws = [json.dumps(register_frame(cid, "shared")).encode() for cid in cids]
     state = {"i": 0}
 
     def op() -> None:
         i = state["i"]
         state["i"] += 1
-        handlers[i // 40].handle(
-            register_frame(cids[i], "shared"), peer_ip=_PEER_IP, peer_port=_PEER_PORT
-        )
+        reply = handler.handle(raws[i], peer_ip=_PEER_IP, peer_port=_PEER_PORT)
+        assert reply is not None and reply.startswith(_ACK_PREFIX), reply
 
-    return measure("register", op, count=count)
+    result = measure("register", op, count=count, warmup=_WARMUP)
+    assert handler.routing.count(bucket="shared") == count + _WARMUP
+    return result
 
 
-def _bench_query(table_size: int, limit: int, count: int):  # -> BenchResult
-    # Query limiters are 5/min per (IP, bucket) burst 10 and 30/min per
-    # bucket: one handler serves 8 measured queries, then we rotate to a
-    # fresh handler with the SAME table contents (records are cheap to move).
-    # Every measured op stays on the unthrottled fast path.
-    tables: list[BootHandler] = []
-    for _ in range(max(1, (count + 200 + 7) // 8)):
-        handler = BootHandler()
-        _populate(handler, "shared", table_size)
-        tables.append(handler)
-    query = query_frame("shared", limit=limit)
-    state = {"i": 0}
+def _bench_query(table_size: int, limit: int, count: int) -> BenchResult:
+    # One handler, no rate limits; one untimed prune so the first measured query
+    # never pays an O(n) sweep. Warmup warms the materialized peer cache.
+    handler = BootHandler(enforce_rate_limits=False)
+    _populate(handler, "shared", table_size)
+    handler.prune()
+    query = json.dumps(query_frame("shared", limit=limit)).encode()
 
     def op() -> None:
-        i = state["i"]
-        state["i"] += 1
-        tables[i // 8].handle(query, peer_ip="10.0.0.9", peer_port=1111)
+        reply = handler.handle(query, peer_ip="10.0.0.9", peer_port=1111)
+        assert reply is not None and b'"error":null' in reply, reply
 
     return measure(f"query(table={table_size},limit={limit})", op, count=count)
 
 
-def _bench_refresh(table_size: int, count: int):  # -> BenchResult
-    # Same rotation as query: 8 measured refreshes per handler (the
-    # register/refresh bucket limiter is 10/min), tables shared by moves.
-    tables: list[tuple[BootHandler, list[str]]] = []
-    for _ in range(max(1, (count + 200 + 7) // 8)):
-        handler = BootHandler()
-        cids = _populate(handler, "shared", table_size)
-        tables.append((handler, cids))
-    state = {"i": 0}
+def _bench_refresh(table_size: int, count: int) -> BenchResult:
+    # One handler, no rate limits; refresh always targets the first populated CID.
+    handler = BootHandler(enforce_rate_limits=False)
+    cids = _populate(handler, "shared", table_size)
+    handler.prune()
+    refresh_raw = json.dumps(refresh_frame(cids[0], "shared")).encode()
 
     def op() -> None:
-        i = state["i"]
-        state["i"] += 1
-        handler, cids = tables[i // 8]
-        handler.handle(refresh_frame(cids[0], "shared"), peer_ip=_PEER_IP, peer_port=_PEER_PORT)
+        reply = handler.handle(refresh_raw, peer_ip=_PEER_IP, peer_port=_PEER_PORT)
+        assert reply is not None and reply.startswith(_ACK_PREFIX), reply
 
     return measure(f"refresh(table={table_size})", op, count=count)
 
 
-def _bench_leave(count: int):  # -> BenchResult
-    # leave removes; rebuild the table each cycle so every op removes one row.
-    cids = make_cids(count, start=2_000_000)
+def _bench_leave(count: int) -> BenchResult:
+    # One handler, no rate limits; each op removes one record (leave returns no
+    # frame). No warmup: a warmup would drain the table before measurement.
+    handler = BootHandler(enforce_rate_limits=False)
+    cids = _populate(handler, "shared", count, start=2_000_000)
+    leave_raws = [json.dumps(leave_frame(cid, "shared")).encode() for cid in cids]
     state = {"i": 0}
-    handler = BootHandler()
-    # leave carries no group: populate the exact CIDs into the default group.
-    for cid in cids:
-        handler.routing.upsert(
-            __import__("hsync_bootnode.routing", fromlist=["PeerRecord"]).PeerRecord(
-                cid=cid,
-                bucket="shared",
-                group="home",
-                ip=_PEER_IP,
-                port=_PEER_PORT,
-                proto="udp",
-                cert_fp="FP",
-                version="1.0.0",
-                endpoints=[],
-            )
-        )
 
     def op() -> None:
         i = state["i"]
         state["i"] += 1
-        if i < count:
-            handler.handle(leave_frame(cids[i], "shared"), peer_ip=_PEER_IP, peer_port=1)
+        reply = handler.handle(leave_raws[i], peer_ip=_PEER_IP, peer_port=1)
+        assert reply is None, reply
 
-    # no warmup effect wanted here (each op is one-shot); measure() warmup
-    # would drain the table, so run with warmup=0 via direct call below.
-    samples: list[float] = []
-    for _ in range(count):
-        start = time.perf_counter()
-        op()
-        samples.append(time.perf_counter() - start)
-    from common import BenchResult
-
-    return BenchResult("leave", samples, count)
+    result = measure("leave", op, count=count, warmup=0)
+    assert handler.routing.count() == 0
+    return result
 
 
-def _bench_prune(table_size: int) -> object:  # -> BenchResult
-    # prune cost: expire the whole table once per timing sample is too coarse;
-    # instead time single prune() calls over an expired table of table_size.
-    from common import BenchResult
-
+def _bench_prune(table_size: int) -> BenchResult:
+    # prune cost: expire the whole table once per timing sample; 20 samples.
     samples: list[float] = []
     for _ in range(20):
-        handler = BootHandler()
+        handler = BootHandler(enforce_rate_limits=False)
         _populate(handler, "shared", table_size)
         # force expiry without sleeping: backdate every record.
         now_backdated = time.monotonic() - 61.0
@@ -210,7 +182,7 @@ def main() -> None:
         _bench_leave(min(count, 500)),
         _bench_prune(1_000),
     ]
-    print(f"handler micro-benchmark (ops={count}, open buckets, steady state)")
+    print(f"handler micro-benchmark (ops={count}, no rate limits, steady state)")
     print_table(results)
     maybe_write_json(args.json_out, results)
 

@@ -76,6 +76,19 @@ def free_udp_port() -> int:
         sock.close()
 
 
+def client_config() -> QuicConfiguration:
+    """QUIC client configuration for ``boot/1``.
+
+    The bootnode's TLS identity is self-signed and generated per process, so the
+    client cannot verify it; only ALPN ``hsync-boot/1`` is asserted. Single
+    definition shared by the black-box suite and every benchmark that opens a
+    ``boot/1`` connection.
+    """
+    return QuicConfiguration(
+        is_client=True, alpn_protocols=[BOOT_ALPN], verify_mode=ssl.CERT_NONE
+    )
+
+
 def derive_bucket_token(key: bytes, bucket: str) -> str:
     """Spec §Auth: ``HMAC-SHA256(key, "boot/1" || bucket)[:32]`` hex (64 chars)."""
     return hmac.new(key, b"boot/1" + bucket.encode("utf-8"), hashlib.sha256).digest()[:32].hex()
@@ -186,11 +199,16 @@ class BootnodeProc:
         self.proc = proc
         self.port = port
         self.ready_file = ready_file
+        # PID of the bootnode *application* process, read from the readiness file
+        # by ``wait_ready``. It can differ from ``pid`` (the launcher): a
+        # onefile-packaged binary (PyInstaller) runs the app in a child process.
+        self.node_pid: int | None = None
         self._stdout = log_dir / "stdout.log"
         self._stderr = log_dir / "stderr.log"
 
     @property
     def pid(self) -> int:
+        """PID of the launched process (the packaging launcher, if any)."""
         return int(self.proc.pid)
 
     def stderr_text(self) -> str:
@@ -253,13 +271,39 @@ def start_bootnode(
     return handle
 
 
+def ready_node_pid(ready_file: Path) -> int | None:
+    """Return the bootnode application PID once the ready file holds it, else ``None``.
+
+    Readiness is signalled by the file containing a positive integer — the
+    *application* PID (``os.getpid()``). For a onefile-packaged binary that is
+    the child of the launcher process, so it must not be compared with
+    ``subprocess.Popen.pid``.
+    """
+    try:
+        text = ready_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not text.isdigit():
+        return None
+    pid = int(text)
+    return pid if pid > 0 else None
+
+
 def wait_ready(handle: BootnodeProc, timeout: float = 15.0) -> None:
-    """Wait until the ready file contains exactly the subprocess PID."""
+    """Wait until the bootnode signals readiness through its ready file.
+
+    The file must appear holding the application PID; on success it is stored on
+    ``handle.node_pid``. Readiness is deliberately *not* keyed on the launcher
+    PID: a onefile-packaged binary runs the app in a child process, so its PID
+    differs from ``subprocess.Popen.pid``. The ready-file path is unique per
+    test, so the file appearing is an unambiguous, packaging-independent signal.
+    """
     assert handle.ready_file is not None, "readiness file not configured"
     deadline = time.monotonic() + timeout
-    expected = str(handle.pid)
     while time.monotonic() < deadline:
-        if handle.ready_file.exists() and handle.ready_file.read_text().strip() == expected:
+        node_pid = ready_node_pid(handle.ready_file)
+        if node_pid is not None:
+            handle.node_pid = node_pid
             return
         if handle.proc.poll() is not None:
             raise RuntimeError(
@@ -310,9 +354,7 @@ class BootClient:
         self._stack: contextlib.AsyncExitStack | None = None
 
     async def __aenter__(self) -> BootClient:
-        config = QuicConfiguration(
-            is_client=True, alpn_protocols=[BOOT_ALPN], verify_mode=ssl.CERT_NONE
-        )
+        config = client_config()
         self._stack = contextlib.AsyncExitStack()
         await self._stack.__aenter__()
         self._protocol = await self._stack.enter_async_context(

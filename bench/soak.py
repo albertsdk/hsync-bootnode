@@ -2,8 +2,8 @@
 
 Spawns the bootnode binary (language-neutral) and drives it with
 register/refresh/query/leave traffic for --duration seconds, sampling the
-*node* process RSS and its convergence (a final query must return zero peers
-after the load stops and the TTL drains).
+*node* process RSS and CPU (/proc) and its convergence (a final query must
+return zero peers after the load stops and the TTL drains).
 
 Pass criteria: no exception, convergence (TTL/prune drain the table), RSS delta
 under --max-rss-mb. Nothing is written by the node itself. Rate limiting is
@@ -20,7 +20,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import ssl
 import sys
 import tempfile
 import time
@@ -29,10 +28,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
 
 from aioquic.asyncio import connect  # noqa: E402
-from aioquic.quic.configuration import QuicConfiguration  # noqa: E402
-from common import make_cids  # noqa: E402
+from common import (  # noqa: E402
+    cpu_percent,
+    format_cpu,
+    make_cids,
+    proc_cpu_seconds,
+    proc_rss_mb,
+)
 from harness import (  # noqa: E402
-    BOOT_ALPN,
+    client_config,
     leave_frame,
     query_frame,
     refresh_frame,
@@ -42,25 +46,12 @@ from harness import (  # noqa: E402
 )
 
 
-def _node_rss_mb(pid: int) -> float:
-    """Resident set size of the node subprocess in MiB (Linux /proc)."""
-    try:
-        status = (Path("/proc") / str(pid) / "status").read_text(encoding="utf-8")
-    except OSError:
-        return -1.0
-    for line in status.splitlines():
-        if line.startswith("VmRSS:"):
-            return int(line.split()[1]) / 1024.0
-    return -1.0
-
-
 async def _soak(args: argparse.Namespace, port: int, node_pid: int) -> int:
     t0 = time.monotonic()
     cids = make_cids(args.peers, start=9_000_000)
-    config = QuicConfiguration(
-        is_client=True, alpn_protocols=[BOOT_ALPN], verify_mode=ssl.CERT_NONE
-    )
-    rss_start = _node_rss_mb(node_pid)
+    config = client_config()
+    rss_start = proc_rss_mb(node_pid)
+    cpu_start = proc_cpu_seconds(node_pid)
     errors = 0
     ops = 0
 
@@ -84,6 +75,8 @@ async def _soak(args: argparse.Namespace, port: int, node_pid: int) -> int:
         deadline = time.monotonic() + args.duration
         tick = 0
         next_sample = time.monotonic() + 30.0
+        last_cpu = cpu_start
+        last_sample_t = t0
         while time.monotonic() < deadline:
             tick += 1
             kind = tick % 10
@@ -105,9 +98,15 @@ async def _soak(args: argparse.Namespace, port: int, node_pid: int) -> int:
                 print(f"op error ({type(exc).__name__}): {exc}")
             now = time.monotonic()
             if now >= next_sample:
+                cpu_now = proc_cpu_seconds(node_pid)
+                cpu_pct = cpu_percent(last_cpu, cpu_now, now - last_sample_t)
+                last_cpu, last_sample_t = cpu_now, now
                 next_sample = now + 30.0
-                rss = _node_rss_mb(node_pid)
-                print(f"  t+{now - t0:5.0f}s ops={ops} errors={errors} rss={rss:.0f}MB")
+                rss = proc_rss_mb(node_pid)
+                print(
+                    f"  t+{now - t0:5.0f}s ops={ops} errors={errors} "
+                    f"rss={rss:.0f}MB cpu={format_cpu(cpu_pct)}"
+                )
             await asyncio.sleep(max(0.0, 1.0 / args.qps))
 
     # drain: stop load, wait past TTL, the table must converge to zero peers
@@ -119,8 +118,12 @@ async def _soak(args: argparse.Namespace, port: int, node_pid: int) -> int:
         raw = await asyncio.wait_for(r.readline(), timeout=5.0)
         w.close()
     left = json.loads(raw)["count"]
-    rss_end = _node_rss_mb(node_pid)
-    print(f"drained: peers={left} rss={rss_start:.0f}->{rss_end:.0f}MB ops={ops}")
+    rss_end = proc_rss_mb(node_pid)
+    cpu_avg = cpu_percent(cpu_start, proc_cpu_seconds(node_pid), time.monotonic() - t0)
+    print(
+        f"drained: peers={left} rss={rss_start:.0f}->{rss_end:.0f}MB "
+        f"cpu_avg={format_cpu(cpu_avg)} ops={ops}"
+    )
     ok = errors == 0 and left == 0 and (rss_end - rss_start) <= args.max_rss_mb
     print("SOAK-" + ("PASS" if ok else "FAIL"))
     return 0 if ok else 1
@@ -143,8 +146,11 @@ def main() -> None:
 
     with tempfile.TemporaryDirectory(prefix="bootnode-soak-") as tmp:
         handle = start_bootnode(Path(tmp), ttl=args.ttl, no_rate_limit=True)
+        node_pid = handle.node_pid
+        if node_pid is None:  # pragma: no cover - start_bootnode always awaits readiness
+            raise RuntimeError("bootnode readiness PID was not reported")
         try:
-            code = asyncio.run(_soak(args, handle.port, handle.pid))
+            code = asyncio.run(_soak(args, handle.port, node_pid))
         finally:
             terminate(handle)
     raise SystemExit(code)

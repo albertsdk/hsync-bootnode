@@ -3,8 +3,9 @@
 ``BootHandler`` is the transport-agnostic core of the bootstrap node: it owns
 the in-memory routing table, the D11 protected-bucket enforcement (constant-time
 token check), the per-IP/per-bucket rate limiters and the STUN-echo reply
-building. The QUIC layer (``server.py``) only parses frames, calls
-:meth:`BootHandler.handle` and writes whatever dict comes back.
+building. It receives the raw frame bytes, validates them in a single pass and
+returns the serialized JSON reply (or ``None`` to drop); the QUIC layer
+(``server.py``) only does framing and writes the reply back.
 
 No-log invariant: nothing in this module ever opens a file for writing.
 """
@@ -13,13 +14,15 @@ from __future__ import annotations
 
 import time
 from collections.abc import Iterable, Mapping
-from datetime import UTC, datetime
 from typing import Literal, cast
 
 from pydantic import SecretStr, ValidationError
 
 from hsync_bootnode.debug import debug_log
 from hsync_bootnode.protocol import (
+    BOOT_ACK_ADAPTER,
+    BOOT_FRAME_ADAPTER,
+    BOOT_RESPONSE_ADAPTER,
     PROTOCOL_VERSION_BOOT,
     BootAck,
     BootLeave,
@@ -67,7 +70,7 @@ class BootConfigError(RuntimeError):
 
 def _utc_now_z() -> str:
     """UTC timestamp in the fixture format ``2026-10-09T10:00:00Z``."""
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
 class BootHandler:
@@ -144,50 +147,55 @@ class BootHandler:
 
     def handle(
         self,
-        frame: object,
+        raw: bytes | str,
         *,
         peer_ip: str,
         peer_port: int,
-    ) -> dict | None:
-        """Process one decoded frame; return the response frame or ``None`` to drop.
+    ) -> bytes | None:
+        """Process one raw NDJSON frame; return the serialized response or ``None`` to drop.
 
         Malformed / unknown frames are silently dropped (no-log, no oracle).
         """
-        if not isinstance(frame, dict):
-            debug_log("drop: non-object frame")
+        try:
+            frame = BOOT_FRAME_ADAPTER.validate_json(raw)
+        except ValidationError:
+            debug_log("drop: invalid frame")
             return None
+        # Admission is charged only for VALID frames: malformed/unknown frames
+        # must stay silently dropped and must not drain the per-IP bucket (a
+        # garbage sender behind a shared NAT must not throttle its neighbours).
         if not self._limit_ok(self._ops_ip, peer_ip):
             return self._rate_limited(self._ops_ip, peer_ip)
 
         # Prune expired records periodically (spec: every 15 s) so memory does
         # not grow unbounded under sustained load. Runs on the first handle()
-        # (self._last_prune == 0.0) and then once per prune_interval.
+        # (self._last_prune is None) and then once per prune_interval.
         self._maybe_prune()
 
-        frame_type = frame.get("type")
-        try:
-            if frame_type == "register":
-                register = BootRegister.model_validate(frame)
-                return self._register(register, peer_ip, peer_port)
-            if frame_type == "refresh":
-                refresh = BootRefresh.model_validate(frame)
-                return self._refresh(refresh, peer_ip, peer_port)
-            if frame_type == "leave":
-                leave = BootLeave.model_validate(frame)
-                self._leave(leave)
-                return None
-            if frame_type == "query":
-                query = BootQuery.model_validate(frame)
-                return self._query(query, peer_ip)
-        except ValidationError:
-            debug_log("drop: invalid frame")
+        if isinstance(frame, BootRegister):
+            return self._register(frame, peer_ip, peer_port)
+        if isinstance(frame, BootRefresh):
+            return self._refresh(frame, peer_ip, peer_port)
+        if isinstance(frame, BootLeave):
+            self._leave(frame)
             return None
-        debug_log("drop: unknown frame type")
-        return None
+        return self._query(frame, peer_ip)
 
     def prune(self, now: float | None = None) -> int:
         """Drop expired records (TTL sweep); returns number removed."""
         removed = self.routing.prune(now)
+        if now is None:
+            # Background sweep only: also bound the rate-limiter state. Evicting
+            # fully-refilled buckets is behaviour-identical to keeping them, and
+            # keeping this off the request path avoids adding latency to a frame.
+            for limiter in (
+                self._ops_ip,
+                self._query_pair,
+                self._query_bucket,
+                self._register_bucket,
+                self._bad_token_ip,
+            ):
+                limiter.evict_stale()
         if removed:
             debug_log(f"prune removed {removed} expired record(s)")
         if now is None:
@@ -202,7 +210,7 @@ class BootHandler:
 
     # ------------------------------------------------------------- register
 
-    def _register(self, model: BootRegister, peer_ip: str, peer_port: int) -> dict:
+    def _register(self, model: BootRegister, peer_ip: str, peer_port: int) -> bytes:
         if not self._limit_ok(self._register_bucket, model.bucket):
             debug_log("register rate_limited (bucket)")
             return self._rate_limited(self._register_bucket, model.bucket)
@@ -229,7 +237,7 @@ class BootHandler:
         debug_log("register ack")
         return self._ack(peer_ip, peer_port)
 
-    def _refresh(self, model: BootRefresh, peer_ip: str, peer_port: int) -> dict | None:
+    def _refresh(self, model: BootRefresh, peer_ip: str, peer_port: int) -> bytes | None:
         if not self._limit_ok(self._register_bucket, model.bucket):
             debug_log("refresh rate_limited (bucket)")
             return self._rate_limited(self._register_bucket, model.bucket)
@@ -257,7 +265,7 @@ class BootHandler:
         debug_log("leave removed")
         return None
 
-    def _query(self, model: BootQuery, peer_ip: str) -> dict:
+    def _query(self, model: BootQuery, peer_ip: str) -> bytes:
         pair_key = f"{peer_ip}|{model.bucket}"
         if not self._limit_ok(self._query_pair, pair_key):
             debug_log("query rate_limited (ip,bucket pair)")
@@ -273,13 +281,15 @@ class BootHandler:
         records = self.routing.sample(model.bucket, model.group, model.limit)
         peers = [self._to_peer(record, model) for record in records]
         debug_log(f"query response ({len(peers)} peers)")
-        return BootResponse(
-            protocol_version=PROTOCOL_VERSION_BOOT,
-            type="response",
-            peers=peers,
-            count=len(peers),
-            ttl=int(self.ttl),
-        ).model_dump(mode="json")
+        return BOOT_RESPONSE_ADAPTER.dump_json(
+            BootResponse(
+                protocol_version=PROTOCOL_VERSION_BOOT,
+                type="response",
+                peers=peers,
+                count=len(peers),
+                ttl=int(self.ttl),
+            )
+        )
 
     # -------------------------------------------------------------- helpers
 
@@ -298,7 +308,7 @@ class BootHandler:
             return "token_required"
         return "rate_limited"
 
-    def _refusal(self, result: _AuthResult, peer_ip: str) -> dict:
+    def _refusal(self, result: _AuthResult, peer_ip: str) -> bytes:
         error: Literal["token_required", "rate_limited"] = cast(
             Literal["token_required", "rate_limited"], result
         )
@@ -310,7 +320,7 @@ class BootHandler:
             else None,
         )
 
-    def _rate_limited(self, limiter: TokenBucketLimiter, key: str) -> dict:
+    def _rate_limited(self, limiter: TokenBucketLimiter, key: str) -> bytes:
         return self._response(
             peers=[],
             error="rate_limited",
@@ -323,35 +333,42 @@ class BootHandler:
         peers: list[BootPeer],
         error: Literal["token_required", "rate_limited"] | None,
         retry_after: int | None,
-    ) -> dict:
-        return BootResponse(
-            protocol_version=PROTOCOL_VERSION_BOOT,
-            type="response",
-            peers=peers,
-            count=len(peers),
-            ttl=int(self.ttl),
-            error=error,
-            retry_after=retry_after,
-        ).model_dump(mode="json")
+    ) -> bytes:
+        return BOOT_RESPONSE_ADAPTER.dump_json(
+            BootResponse(
+                protocol_version=PROTOCOL_VERSION_BOOT,
+                type="response",
+                peers=peers,
+                count=len(peers),
+                ttl=int(self.ttl),
+                error=error,
+                retry_after=retry_after,
+            )
+        )
 
-    def _ack(self, peer_ip: str, peer_port: int) -> dict:
+    def _ack(self, peer_ip: str, peer_port: int) -> bytes:
         # STUN-echo: reply with the source endpoint the datagrams actually
         # arrived from (observed port = the NAT-mapped public port, if any).
         observed = ObservedEndpoint(proto="udp", ip=peer_ip, port=peer_port)
-        return BootAck(
-            protocol_version=PROTOCOL_VERSION_BOOT,
-            type="ack",
-            observed_endpoint=observed,
-            ttl=int(self.ttl),
-            server_time=_utc_now_z(),
-        ).model_dump(mode="json")
+        return BOOT_ACK_ADAPTER.dump_json(
+            BootAck(
+                protocol_version=PROTOCOL_VERSION_BOOT,
+                type="ack",
+                observed_endpoint=observed,
+                ttl=int(self.ttl),
+                server_time=_utc_now_z(),
+            )
+        )
 
     @staticmethod
     def _to_peer(record: PeerRecord, model: BootQuery) -> BootPeer:
         """Prefer the peer's advertised listen endpoint over the observed source."""
+        cached = record.wire
+        if cached is not None:
+            return cached
         if record.endpoints:
             ep = record.endpoints[0]
-            return BootPeer(
+            peer = BootPeer(
                 cid=record.cid,
                 ip=ep.host,
                 port=ep.port,
@@ -362,14 +379,17 @@ class BootHandler:
                 version=record.version,
                 reachable=record.reachable,
             )
-        return BootPeer(
-            cid=record.cid,
-            ip=record.ip,
-            port=record.port,
-            proto=record.proto,
-            cert_fp=record.cert_fp,
-            bucket=model.bucket,
-            group=record.group,
-            version=record.version,
-            reachable=record.reachable,
-        )
+        else:
+            peer = BootPeer(
+                cid=record.cid,
+                ip=record.ip,
+                port=record.port,
+                proto=record.proto,
+                cert_fp=record.cert_fp,
+                bucket=model.bucket,
+                group=record.group,
+                version=record.version,
+                reachable=record.reachable,
+            )
+        record.wire = peer
+        return peer

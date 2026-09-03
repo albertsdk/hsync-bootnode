@@ -1,7 +1,7 @@
 Package: hsync-bootnode
 Version: __VERSION__
 Architecture: __ARCH__
-Maintainer: Alberto Basso <17047798+albertobasso@users.noreply.github.com>
+Maintainer: Alberto Basso <17047798+albertsdk@users.noreply.github.com>
 Section: net
 Priority: optional
 Homepage: https://github.com/albertosdk/hsync-bootnode

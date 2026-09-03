@@ -2,7 +2,7 @@
 name = "hsync-bootnode"
 version = "0.1.0"
 description = "HSYNC P2P bootstrap node (no-log, in-memory, zero-knowledge)"
-authors = [{name = "Alberto Basso", email = "17047798+albertobasso@users.noreply.github.com"}]
+authors = [{name = "Alberto Basso", email = "17047798+albertsdk@users.noreply.github.com"}]
 license = "MPL-2.0"
 readme = "README.md"
 requires-python = ">=3.12,<3.15"

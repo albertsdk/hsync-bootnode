@@ -15,7 +15,7 @@
 
 [Unit]
 Description=HSYNC P2P bootstrap node (boot/1, QUIC/UDP 443, no-log)
-Documentation=https://github.com/albertobasso/hsync-bootnode/tree/main/hsync-bootnode
+Documentation=https://github.com/albertosdk/hsync-bootnode/tree/main/hsync-bootnode
 After=network-online.target
 Wants=network-online.target
 

@@ -1,8 +1,14 @@
 # Project Rules & Coding Guidelines (hsync-bootnode — Python + Rust)
 
 This document defines the strict architectural, development, and code-reuse rules
-for the `hsync-bootnode` repository. Claude must strictly adhere to these
+for the `hsync-bootnode` repository. You and any coding agent must strictly adhere to these
 guidelines at all times.
+
+> **Where this file comes from**: portable, self-contained copy of the rules for
+> this repository. The canonical single source of truth for the HSYNC monorepo is
+> the root `AGENTS.md` (which also drives `.clinerules/` via
+> `scripts/dev/gen-clinerules.py`). Keep project-specific rules here; edit the
+> root `AGENTS.md` for anything shared.
 
 `hsync-bootnode` is a **multi-language repository**: one wire protocol
 (`boot/1`) with several implementations of the *same* contract

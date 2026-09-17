@@ -55,14 +55,14 @@ python3 -m venv .venv
 ```
 
 The node prints its effective configuration and the TLS certificate
-fingerprint, then serves forever. For protected buckets, service deployment
-(systemd/launchd/Windows) and the full option list, see the
-[Usage reference](usage.md).
+fingerprint, then serves forever. For protected buckets, a **private node**
+(every frame authenticated), service deployment (systemd/launchd/Windows) and
+the full option list, see the [Usage reference](usage.md).
 
 ## Further reading
 
 | Document | Content |
 |---|---|
-| [usage.md](usage.md) | CLI reference, protected buckets, keys provisioning, OS services |
+| [usage.md](usage.md) | CLI reference, protected buckets and private nodes, keys provisioning, OS services |
 | `protocol-spec/boot-1.md` | Wire protocol specification |
 | `../PIANO-hsync-bootnode-p2p.md` | Roadmap (monorepo root) |

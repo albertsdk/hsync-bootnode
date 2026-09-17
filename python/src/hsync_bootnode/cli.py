@@ -1,9 +1,10 @@
 """Typer CLI for the ``hsync-bootnode`` Python v1 process (Fase 1).
 
 Starts the single QUIC/UDP listener on ``--port`` (default 443), with RETRY +
-address-validation tokens, the D11 protected buckets, per-IP/per-bucket rate
-limits, STUN-echo and optional zero-touch UPnP. No-log: nothing peer-related is
-ever written to disk.
+address-validation tokens, the D11 token policy (the operator's protected
+buckets, or every bucket in node-wide ``--private`` mode), per-IP/per-bucket
+rate limits, STUN-echo and optional zero-touch UPnP. No-log: nothing
+peer-related is ever written to disk.
 """
 
 from __future__ import annotations
@@ -46,6 +47,9 @@ _DEFAULT_READY_FILE_ENV = "HSYNC_BOOTNODE_READY_FILE"
 # Benchmark/test seam: disable rate limiting entirely (opt-in). Never set this
 # in production — it removes the anti-abuse limits the spec requires (D11).
 _DEFAULT_NO_RATE_LIMIT_ENV = "HSYNC_BOOTNODE_NO_RATE_LIMIT"
+# Node-wide private mode: require a valid bucket_token on EVERY frame (D11
+# applied to the whole node). Service wrappers set the envvar form.
+_DEFAULT_PRIVATE_ENV = "HSYNC_BOOTNODE_PRIVATE"
 
 
 @app.callback()
@@ -80,6 +84,12 @@ def run(
         envvar=_DEFAULT_KEYS_FD_ENV,
         help="FD with group keys (one 'bucket=<hex-key>' per line). Env: HSYNC_BOOTNODE_KEYS_FD.",
     ),
+    private: bool = typer.Option(
+        False,
+        "--private",
+        envvar=_DEFAULT_PRIVATE_ENV,
+        help="Require a valid bucket_token on every frame (private node). Env: HSYNC_BOOTNODE_PRIVATE=1.",
+    ),
     no_upnp: bool = typer.Option(False, "--no-upnp", help="Disable UPnP mapping."),
     ttl: int = typer.Option(
         60,
@@ -112,6 +122,7 @@ def run(
         keys = _load_keys(keys_fd)
         handler = BootHandler(
             protected_buckets=protected_bucket,
+            private=private,
             group_keys=keys,
             ttl=float(ttl),
             enforce_rate_limits=not no_rate_limit,
@@ -128,6 +139,7 @@ def run(
         f"hsync-bootnode {__version__} — boot/1, no-log, in-memory\n"
         f"  listener : {host}:{port} (QUIC/UDP, TLS 1.3, RETRY+address-validation)\n"
         f"  protected buckets: {', '.join(protected_bucket) or '(none)'}\n"
+        f"  mode      : {'private (every frame needs a bucket_token)' if private else 'open'}\n"
         f"  group keys loaded: {len(keys)}\n"
         f"  ttl       : {ttl}s\n"
         f"  debug     : {'on' if debug else 'off'}\n"

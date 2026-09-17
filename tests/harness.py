@@ -163,8 +163,12 @@ def refresh_frame(
     return frame
 
 
-def leave_frame(cid: str, bucket: str) -> dict:
-    return {"protocol_version": "boot/1", "type": "leave", "cid": cid, "bucket": bucket}
+def leave_frame(cid: str, bucket: str, *, token: str | None = None) -> dict:
+    """A ``leave`` frame; ``token`` is optional on the wire (required by private nodes)."""
+    frame = {"protocol_version": "boot/1", "type": "leave", "cid": cid, "bucket": bucket}
+    if token is not None:
+        frame["bucket_token"] = token
+    return frame
 
 
 def query_frame(
@@ -216,6 +220,12 @@ class BootnodeProc:
             return self._stderr.read_text(encoding="utf-8", errors="replace")
         return ""
 
+    def stdout_text(self) -> str:
+        """Banner/startup output the CLI printed before serving (non-PII)."""
+        if self._stdout.exists():
+            return self._stdout.read_text(encoding="utf-8", errors="replace")
+        return ""
+
 
 def start_bootnode(
     tmp_path: Path,
@@ -228,8 +238,15 @@ def start_bootnode(
     debug: bool = False,
     ready: bool = True,
     no_rate_limit: bool = False,
+    private: bool = False,
+    env_extra: Mapping[str, str] | None = None,
 ) -> BootnodeProc:
-    """Start a bootnode subprocess; ``keys`` are provisioned via ``--keys-fd``."""
+    """Start a bootnode subprocess; ``keys`` are provisioned via ``--keys-fd``.
+
+    ``private`` appends ``--private``; ``env_extra`` adds environment variables on
+    top of the scrubbed environment (used to exercise the envvar form of a flag,
+    e.g. ``HSYNC_BOOTNODE_PRIVATE=1``, exactly as the service units set it).
+    """
     port = port or free_udp_port()
     ready_file = tmp_path / "ready.pid" if ready else None
 
@@ -242,9 +259,12 @@ def start_bootnode(
         cmd += ["--debug"]
     if no_rate_limit:
         cmd += ["--no-rate-limit"]
+    if private:
+        cmd += ["--private"]
     cmd += list(args)
 
     env = scrub_environment()
+    env.update(env_extra or {})
     if ready_file is not None:
         env["HSYNC_BOOTNODE_READY_FILE"] = str(ready_file)
 

@@ -31,6 +31,11 @@ CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 # (no protected buckets) is used when the file has not been provisioned.
 LoadCredential=group-keys:/etc/hsync-bootnode/group-keys
 ExecStart=/bin/sh -c 'if [ -r "$CREDENTIALS_DIRECTORY/group-keys" ]; then exec /usr/local/bin/hsync-bootnode run --host 0.0.0.0 --port 443 --keys-fd 5 5<"$CREDENTIALS_DIRECTORY/group-keys"; else exec /usr/local/bin/hsync-bootnode run --host 0.0.0.0 --port 443; fi'
+# Private node (D11 node-wide): require a valid bucket_token on every frame.
+# Needs a group key for EVERY bucket served and fails fast at startup (exit 2)
+# without any key. The ExecStart above already passes --keys-fd whenever the
+# credential exists, so uncommenting this line closes an otherwise open node.
+#Environment=HSYNC_BOOTNODE_PRIVATE=1
 Restart=on-failure
 RestartSec=5s
 # No-log: the bootstrap node writes nothing to disk (verified by the

@@ -1,4 +1,4 @@
-.TH HSYNC-BOOTNODE 1 "2026-09-11" "hsync-bootnode 0.1.0" "User Commands"
+.TH HSYNC-BOOTNODE 1 "2026-09-21" "hsync-bootnode 0.1.0" "User Commands"
 .SH NAME
 hsync-bootnode \- HSYNC P2P bootstrap node (no-log, in-memory, zero-knowledge)
 .SH SYNOPSIS
@@ -44,6 +44,17 @@ File descriptor carrying the group keys, one
 line per group; blank lines and
 .I #
 comments are ignored. Read once at startup, never written to disk.
+.TP
+.B run\ \fR--private\fP
+Private node: every frame must carry a valid
+.I bucket_token
+(D11 applied to the whole node, not only to the buckets declared with
+.BR \-\-protected\-bucket ).
+A bucket without a group key is refused exactly like a wrong token, and
+.I leave
+is gated too (an unauthenticated leave is silently dropped). Starting a private
+node with no group key fails fast with exit code 2. Env form:
+.BR HSYNC_BOOTNODE_PRIVATE=1 .
 .TP
 .B run\ \fR--no-upnp\fP
 Disable the zero-touch UPnP UDP port mapping.
@@ -92,6 +103,14 @@ Set to
 to disable rate limiting (benchmark/test seam); same as
 .BR "run \-\-no\-rate\-limit" .
 .TP
+.B HSYNC_BOOTNODE_PRIVATE
+Set to
+.I 1
+to require a valid
+.I bucket_token
+on every frame (private node); same as
+.BR "run \-\-private" .
+.TP
 .B HSYNC_VERSION
 Overrides the version used by
 .BR compile_deb.sh (1)
@@ -119,6 +138,10 @@ Open mode (no protected buckets):
 Protected bucket with keys from a file descriptor:
 .br
 .B hsync-bootnode run --protected-bucket shared --keys-fd 5 5</etc/hsync-bootnode/group-keys
+.TP
+Private node (every bucket needs a key; no anonymous frames):
+.br
+.B hsync-bootnode run --private --keys-fd 5 5</etc/hsync-bootnode/group-keys
 .TP
 Show the certificate fingerprint printed at startup to pin the node on
 clients:

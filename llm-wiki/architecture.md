@@ -13,7 +13,9 @@ UDP :443
                   mandatory RETRY + address-validation tokens, ALPN
                   "hsync-boot/1", NDJSON frames on one bidi stream
        └─ handler.py   BootHandler: transport-agnostic core — routing table,
-                       D11 token authorization, rate limiters, STUN-echo
+                       D11 token authorization (declared protected buckets or
+                       every bucket in node-wide private mode), rate limiters,
+                       STUN-echo
             ├─ routing.py    in-memory table keyed (cid, bucket, group)
             ├─ ratelimit.py  sliding-window limiters (spec §5)
             └─ tokens.py     bucket_token derivation + constant-time compare
@@ -28,7 +30,7 @@ UDP :443
 |---|---|---|
 | `python/src/hsync_bootnode/protocol.py` | `boot/1` frames; CID `^[A-Za-z0-9]{21}$`; 64-hex bucket token; client→server discriminated union; server→client `bytes` serializers | `BootRegister`, `BootRefresh`, `BootLeave`, `BootQuery`, `BootAck`, `BootResponse`, `BootPeer`, `Endpoint`, `ObservedEndpoint`, `BootFrame`, `BOOT_FRAME_ADAPTER`, `BOOT_ACK_ADAPTER`, `BOOT_RESPONSE_ADAPTER` |
 | `python/src/hsync_bootnode/routing.py` | RAM-only table, TTL/prune/sample, group-agnostic `leave`; secondary indexes (`_by_group`/`_by_cid`/`_pos`) + materialized `PeerRecord.wire` projection | `PeerRecord`, `RoutingTable` (`upsert`, `remove`, `prune`, `sample`, `count`) |
-| `python/src/hsync_bootnode/handler.py` | Request pipeline: rate-limit → validate (single pass) → authorize (D11) → mutate → reply | `BootHandler.handle`, `BootConfigError`, `OP_IP_BURST`, `WINDOW_SECONDS` |
+| `python/src/hsync_bootnode/handler.py` | Request pipeline: rate-limit → validate (single pass) → authorize (D11 policy: declared protected buckets, or every bucket when `private=True`) → mutate → reply | `BootHandler.handle`, `BootConfigError`, `OP_IP_BURST`, `WINDOW_SECONDS` |
 | `python/src/hsync_bootnode/ratelimit.py` | Sliding windows; `evict_stale` bounds memory (evicts fully-refilled buckets, behaviour-identical) | `TokenBucketLimiter` (`allow`, `retry_after`, `evict_stale`) |
 | `python/src/hsync_bootnode/tokens.py` | D11 derivation `HMAC-SHA256(key, "boot/1" || bucket)[:32]` | `derive_bucket_token`, `verify_bucket_token` |
 | `python/src/hsync_bootnode/server.py` | QUIC adapter: in-memory self-signed TLS identity (`hsync_common.ssl_utils`), RETRY, frame IO bound to 8 KiB (framing only — parsing/validation lives in `handler.py`) | `start_server`, `NodeIdentity`, `make_identity`, `BootQuicProtocol` |
@@ -49,12 +51,16 @@ UDP :443
    sender cannot throttle neighbours behind a shared NAT IP.
 3. Type-specific limits: register/refresh 10/min per bucket; query 5/min per
    (IP, bucket) and 30/min per bucket.
-4. D11: if the bucket is protected, `verify_bucket_token` decides; failures
+4. D11: if the bucket is gated — declared `--protected-bucket` on an open node,
+   or *any* bucket on a private node — `verify_bucket_token` decides; failures
    are rate-limited after 5/min per IP and answered uniformly with
-   `token_required` / `rate_limited` (+ `retry_after`).
+   `token_required` / `rate_limited` (+ `retry_after`). A private node answers a
+   bucket with no key loaded exactly like a wrong token (no provisioned-set
+   oracle).
 5. Mutation: `register` upserts (STUN-echo source `ip:port`), `refresh` touches
    TTL and never creates, `leave` removes every `(cid, bucket)` entry
-   regardless of group and returns no frame.
+   regardless of group and returns no frame (in private mode it is token-gated
+   too, and a refusal is a silent drop — the spec has no `leave` response).
 6. Reply: `ack` (register/refresh, carries `observed_endpoint`) or `response`
    (query, random sample up to `limit`, prefer advertised endpoints); returned
    as already-serialized JSON **bytes** (Pydantic `TypeAdapter.dump_json`),
@@ -71,6 +77,11 @@ UDP :443
   Protected buckets are declared by the operator (`--protected-bucket`,
   repeatable) and fail fast at startup if declared without a key
   (`BootConfigError`, exit code 2).
+- **Private node** (`--private` / `HSYNC_BOOTNODE_PRIVATE=1`): the D11 check
+  applies to every bucket, `leave` included, and a node started without any
+  group key fails fast (`BootConfigError`, exit code 2). It is a policy on the
+  same wire contract — no new frame field, no protocol bump. Operator-facing
+  procedure (provisioning, rotation, trade-offs) is in `docs/usage.md`.
 - **Sandboxed deployment**: hardened systemd unit
   (`packaging/systemd/hsync-bootnode.service`: DynamicUser, protect*,
   SystemCallFilter), launchd plist (`packaging/launchd/it.hsync.bootnode.plist`),
@@ -104,9 +115,9 @@ UDP :443
 
 | Suite | Scope |
 |---|---|
-| `python/tests/test_handler.py` | Routing, TTL (frozen clock), D11, rate limits, STUN-echo, frame rejection |
+| `python/tests/test_handler.py` | Routing, TTL (frozen clock), D11, private policy (every bucket gated, unkeyed bucket, gated `leave`), rate limits, STUN-echo, frame rejection |
 | `python/tests/test_scaffold.py` | Fixtures / spec contract + frame schema positives/negatives (rigid D3) |
-| `python/tests/test_server.py` | QUIC loopback: register/query/protected refusal, garbage frames, pipelined frames on one stream |
+| `python/tests/test_server.py` | QUIC loopback: register/query/protected refusal, private-node refusal, garbage frames, pipelined frames on one stream |
 | `python/tests/test_nolog.py` | Zero-write invariant under read-only fs |
 | `python/tests/test_upnp.py` | SSDP/SOAP shapes, error downgrade, stateless no-IGD |
 | `python/tests/test_cli.py` | CLI version/fail-fast/keys-fd contract |

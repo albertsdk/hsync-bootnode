@@ -1,9 +1,11 @@
 """``boot/1`` request handling — pure logic, no network transport.
 
 ``BootHandler`` is the transport-agnostic core of the bootstrap node: it owns
-the in-memory routing table, the D11 protected-bucket enforcement (constant-time
-token check), the per-IP/per-bucket rate limiters and the STUN-echo reply
-building. It receives the raw frame bytes, validates them in a single pass and
+the in-memory routing table, the D11 authorization policy (constant-time token
+check for the buckets the operator declares protected, or for **every** bucket
+when the node runs in node-wide private mode), the per-IP/per-bucket rate
+limiters and the STUN-echo reply builder. It receives the raw frame bytes,
+validates them in a single pass and
 returns the serialized JSON reply (or ``None`` to drop); the QUIC layer
 (``server.py``) only does framing and writes the reply back.
 
@@ -74,13 +76,14 @@ def _utc_now_z() -> str:
 
 
 class BootHandler:
-    """Matchmaker core: routing + authorization (D11) + anti-abuse limits."""
+    """Matchmaker core: routing + authorization (D11 / private) + anti-abuse limits."""
 
     def __init__(
         self,
         *,
         ttl: float = DEFAULT_TTL,
         protected_buckets: Iterable[str] = (),
+        private: bool = False,
         group_keys: Mapping[str, SecretStr] | None = None,
         routing: RoutingTable | None = None,
         enforce_rate_limits: bool = True,
@@ -95,6 +98,10 @@ class BootHandler:
         self._enforce_rate_limits = enforce_rate_limits
 
         self._protected: set[str] = set(protected_buckets)
+        # Node-wide policy: with private mode every bucket is token-gated, so
+        # every bucket the operator provisions a key for is authorized (the D11
+        # rule applied to the whole node instead of to a declared subset).
+        self._private = private
         keys = dict(group_keys or {})
         # Derive the expected per-bucket token once at startup: HMAC-SHA256(key,
         # "boot/1" || bucket)[:32], hex. The key itself never enters any record.
@@ -108,6 +115,14 @@ class BootHandler:
             raise BootConfigError(
                 f"protected bucket(s) without a group key: {names} "
                 "(provide the key via HSYNC_BOOTNODE_KEYS_FD / --keys-fd)"
+            )
+        if self._private and not self._tokens:
+            # Fail fast instead of serving a node that refuses every frame:
+            # private mode is only meaningful with at least one group key.
+            raise BootConfigError(
+                "private node without any group key: every bucket would be "
+                "refused (provide at least one 'bucket=<hex-key>' line via "
+                "HSYNC_BOOTNODE_KEYS_FD / --keys-fd)"
             )
 
         # Generic per-IP admission (spec: ~10 req/s, burst 50).
@@ -177,7 +192,7 @@ class BootHandler:
         if isinstance(frame, BootRefresh):
             return self._refresh(frame, peer_ip, peer_port)
         if isinstance(frame, BootLeave):
-            self._leave(frame)
+            self._leave(frame, peer_ip)
             return None
         return self._query(frame, peer_ip)
 
@@ -258,9 +273,20 @@ class BootHandler:
         debug_log("refresh ack")
         return self._ack(peer_ip, peer_port)
 
-    def _leave(self, model: BootLeave) -> None:
-        # Anonymous by design: exposes nothing, no token, no rate limit beyond
-        # the generic per-IP admission. No response frame (spec has none).
+    def _leave(self, model: BootLeave, peer_ip: str) -> None:
+        """Remove the record; a private node also demands a valid token.
+
+        Open mode keeps ``leave`` anonymous by design (it exposes nothing and
+        the generic per-IP admission still applies). On a private node an
+        anonymous leave would let anyone who knows a ``(cid, bucket)`` pair
+        spoof a departure, so the D11 check applies here too. The spec has no
+        response frame for ``leave``, so a refusal stays a silent drop — the
+        same shape as the existing unknown-record drop — while the failed-token
+        budget is charged exactly as for register/refresh/query.
+        """
+        if self._private and self._authorize(model.bucket, model.bucket_token, peer_ip) != "ok":
+            debug_log("leave refused")
+            return None
         self.routing.remove(model.cid, model.bucket)
         debug_log("leave removed")
         return None
@@ -294,16 +320,21 @@ class BootHandler:
     # -------------------------------------------------------------- helpers
 
     def _authorize(self, bucket: str, token: str | None, peer_ip: str) -> _AuthResult:
-        """D11: protected buckets require a valid token, compared in constant time.
+        """D11: token-gated buckets are verified in constant time.
 
-        Open buckets (not declared by the operator) require nothing. The refusal
-        is uniform (`token_required`) — a wrong/missing token never reveals that
-        a bucket exists.
+        Policy: an **open** node gates only the buckets the operator declared
+        ``--protected-bucket``; a **private** node (``--private``) gates every
+        bucket. The refusal is uniform (`token_required`) either way, so neither
+        a wrong/missing token nor an unprovisioned bucket reveals that some
+        other bucket exists or is provisioned.
         """
-        if bucket not in self._protected:
+        if not (self._private or bucket in self._protected):
             return "ok"
-        if verify_bucket_token(self._tokens[bucket], token):
+        expected = self._tokens.get(bucket)
+        if expected is not None and verify_bucket_token(expected, token):
             return "ok"
+        # Failed authorization: same uniform answer, same per-IP budget. On a
+        # private node a bucket with no key loaded lands here as well.
         if not self._enforce_rate_limits or self._bad_token_ip.allow(peer_ip):
             return "token_required"
         return "rate_limited"

@@ -36,7 +36,8 @@ Internal, agent-optimized knowledge base for the `hsync-bootnode` project
 4. **Protected buckets (D11)**: tokens are derived
    `HMAC-SHA256(key, "boot/1" || bucket)[:32]` hex, compared in constant time
    (`hmac.compare_digest`); refusals are uniform (`token_required`) and never
-   reveal bucket existence.
+   reveal bucket existence. `--private` widens the same policy to every bucket
+   (including `leave`): see `decisions.md` #22.
 5. **Zero backward compatibility**: breaking the wire contract means bumping
    the mandatory `protocol_version` (`boot/1`) and updating spec, fixtures,
    implementation and tests atomically.

@@ -137,6 +137,46 @@ async def test_loopback_pipelined_frames_on_one_stream() -> None:
         server.close()
 
 
+@pytest.mark.asyncio
+async def test_loopback_private_node_requires_token_on_every_bucket() -> None:
+    """A private node gates every bucket, not only the declared protected set.
+
+    The handler declares NO protected bucket: the private flag alone must make
+    the refusal uniform on the wire.
+    """
+    handler = BootHandler(private=True, group_keys={"shared": SecretStr("kshared")})
+    server, port, _identity = await start_server("127.0.0.1", 0, handler, retry=True)
+    try:
+        client_config = QuicConfiguration(
+            is_client=True, alpn_protocols=[BOOT_ALPN], verify_mode=ssl.CERT_NONE
+        )
+        token = derive_bucket_token(b"kshared", "shared")
+        async with connect("127.0.0.1", port, configuration=client_config) as protocol:
+            # no token → uniform refusal on register and query
+            response = await _exchange(protocol, _register_frame(None))
+            assert response["type"] == "response"
+            assert response["error"] == "token_required"
+            assert response["count"] == 0
+            response = await _exchange(protocol, _query_frame(None))
+            assert response["error"] == "token_required"
+
+            # valid token → ack (STUN-echo) and peers
+            response = await _exchange(protocol, _register_frame(token))
+            assert response["type"] == "ack"
+            assert response["observed_endpoint"]["proto"] == "udp"
+            response = await _exchange(protocol, _query_frame(token))
+            assert response["error"] is None
+            assert response["count"] == 1
+            assert response["peers"][0]["cid"] == CID
+
+            # an unkeyed bucket on the same node is refused like a wrong token
+            response = await _exchange(protocol, _query_frame(token, bucket="unkeyed"))
+            assert response["error"] == "token_required"
+            assert response["count"] == 0
+    finally:
+        server.close()
+
+
 def _register_frame(token: str | None) -> dict:
     frame = {
         "protocol_version": "boot/1",
@@ -153,11 +193,11 @@ def _register_frame(token: str | None) -> dict:
     return frame
 
 
-def _query_frame(token: str | None) -> dict:
+def _query_frame(token: str | None, bucket: str = "shared") -> dict:
     frame = {
         "protocol_version": "boot/1",
         "type": "query",
-        "bucket": "shared",
+        "bucket": bucket,
         "group": "home",
     }
     if token is not None:

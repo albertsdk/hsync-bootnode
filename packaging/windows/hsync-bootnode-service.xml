@@ -24,6 +24,12 @@ keys are provisioned out of band; see docs/usage.md for the keys-fd contract.
   <startmode>Automatic</startmode>
   <onfailure action="restart" delay="5000"/>
 
+  <!-- Private node (D11 node-wide): require a valid bucket_token on every
+       frame. Uncomment to enable; the node then needs a group key for every
+       bucket it serves and fails fast at startup when it has none.
+  <env name="HSYNC_BOOTNODE_PRIVATE" value="1"/>
+  -->
+
   <serviceaccount>
     <domain>NT AUTHORITY</domain>
     <user>LocalService</user>

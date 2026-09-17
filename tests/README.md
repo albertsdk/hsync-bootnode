@@ -9,7 +9,7 @@ validate the future `rust/` and `c/` ports unchanged.
 The tests spawn the bootnode executable and observe **only** its public
 surface:
 
-- the CLI (`run`, `--version`, fail-fast exit codes);
+- the CLI (`run`, `--version`, `--private`, fail-fast exit codes);
 - the `boot/1` wire protocol over QUIC/UDP (`hsync-boot/1` ALPN, NDJSON frames).
 
 They never import `hsync_bootnode` or touch internal state. If the whole
@@ -62,6 +62,7 @@ HSYNC_BB_BOOTNODE=1 HSYNC_BOOTNODE_BIN=/path/to/hsync-bootnode \
 | `test_bb_bootnode_register.py` | STUN-echo ack, advertised/observed endpoints, refresh, unknown-CID refresh drop |
 | `test_bb_bootnode_query.py` | peer listing, group filter, limit bounds, pipelined frames |
 | `test_bb_bootnode_d11.py` | uniform `token_required`, correct/wrong token, no oracle |
+| `test_bb_bootnode_private.py` | `--private`/envvar: every bucket gated, unkeyed bucket, gated `leave`, fail-fast without keys, banner |
 | `test_bb_bootnode_ratelimit.py` | burst → `rate_limited` + `retry_after` (query/register/bad-token) |
 | `test_bb_bootnode_negative.py` | malformed/unknown/oversized/forbidden frames, leave |
 | `test_bb_bootnode_ttl.py` | TTL expiry convergence, refresh keeps peer alive |

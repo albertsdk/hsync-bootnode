@@ -108,11 +108,17 @@ class BootRefresh(_BootFrame):
 
 
 class BootLeave(_BootFrame):
-    """Client announces departure — anonymous (exposes nothing)."""
+    """Client announces departure.
+
+    ``bucket_token`` is optional on the wire and only *enforced* by a private
+    node (``--private``), where an unauthenticated leave would let anyone who
+    knows a ``(cid, bucket)`` pair spoof a departure.
+    """
 
     type: Literal["leave"]
     cid: str = Field(pattern=CID_PATTERN)
     bucket: str = Field(min_length=1, max_length=128)
+    bucket_token: str | None = None
 
 
 class BootQuery(_BootFrame):

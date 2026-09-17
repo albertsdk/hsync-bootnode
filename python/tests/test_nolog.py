@@ -56,35 +56,81 @@ def read_only_fs(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(os, "open", _no_write_os_open)
 
 
+def _frame(**fields: object) -> str:
+    """Serialize a ``boot/1`` frame dict for the raw-bytes ``handle()`` contract.
+
+    Only ``protocol_version`` is implicit: each frame type carries its own
+    mandatory fields (``cid`` belongs to register/leave, not to query), and the
+    rigid schema rejects anything else.
+    """
+    return json.dumps({"protocol_version": "boot/1", **fields})
+
+
+def _exchange(handler: BootHandler, frame: str) -> bytes | None:
+    """Drive one frame through the handler, charging a fixed peer for the IP."""
+    return handler.handle(frame, peer_ip="198.51.100.7", peer_port=54321)
+
+
 def test_register_query_prune_never_writes(read_only_fs: pytest.MonkeyPatch) -> None:
     handler = BootHandler(
         protected_buckets=("shared",),
         group_keys={"shared": SecretStr("kshared")},
     )
     token = derive_bucket_token(b"kshared", "shared")
-    register = {
-        "protocol_version": "boot/1",
-        "type": "register",
-        "cid": CID,
-        "bucket": "shared",
-        "group": "home",
-        "bucket_token": token,
-        "cert_fp": FP,
-        "version": "1.0.0",
-        "endpoints": [{"proto": "tcp", "host": "198.51.100.7", "port": 443}],
-    }
-    ack = handler.handle(json.dumps(register), peer_ip="198.51.100.7", peer_port=54321)
+    ack = _exchange(
+        handler,
+        _frame(
+            type="register",
+            cid=CID,
+            bucket="shared",
+            group="home",
+            bucket_token=token,
+            cert_fp=FP,
+            version="1.0.0",
+            endpoints=[{"proto": "tcp", "host": "198.51.100.7", "port": 443}],
+        ),
+    )
     assert ack is not None and json.loads(ack)["type"] == "ack"
 
-    query = {
-        "protocol_version": "boot/1",
-        "type": "query",
-        "bucket": "shared",
-        "group": "home",
-        "bucket_token": token,
-    }
-    response = handler.handle(json.dumps(query), peer_ip="10.0.0.1", peer_port=54321)
+    response = _exchange(
+        handler, _frame(type="query", bucket="shared", group="home", bucket_token=token)
+    )
     assert response is not None and json.loads(response)["count"] == 1
+    handler.prune()
+
+
+def test_private_register_query_leave_never_writes(read_only_fs: pytest.MonkeyPatch) -> None:
+    """Private mode adds no disk write either (D7 holds in both policies)."""
+    handler = BootHandler(private=True, group_keys={"shared": SecretStr("kshared")})
+    token = derive_bucket_token(b"kshared", "shared")
+    ack = _exchange(
+        handler,
+        _frame(
+            type="register",
+            cid=CID,
+            bucket="shared",
+            group="home",
+            bucket_token=token,
+            cert_fp=FP,
+            version="1.0.0",
+            endpoints=[{"proto": "tcp", "host": "198.51.100.7", "port": 443}],
+        ),
+    )
+    assert ack is not None and json.loads(ack)["type"] == "ack"
+
+    response = _exchange(
+        handler, _frame(type="query", bucket="shared", group="home", bucket_token=token)
+    )
+    assert response is not None and json.loads(response)["count"] == 1
+
+    # the refusal path (unknown bucket / missing token) must not write either
+    refused = _exchange(handler, _frame(type="query", bucket="unkeyed"))
+    assert refused is not None and json.loads(refused)["error"] == "token_required"
+
+    assert (
+        _exchange(handler, _frame(type="leave", cid=CID, bucket="shared", bucket_token=token))
+        is None
+    )
     handler.prune()
 
 

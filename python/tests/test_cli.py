@@ -60,6 +60,26 @@ def test_ttl_out_of_range_is_rejected() -> None:
         assert result.exit_code == 2
 
 
+def test_private_without_key_fails_fast() -> None:
+    result = runner.invoke(app, ["run", "--private"])
+    assert result.exit_code == 2
+    assert "private node without any group key" in result.output
+
+
+def test_private_envvar_is_equivalent_to_the_flag() -> None:
+    """The service units use the envvar form; it must reach the same fail-fast."""
+    result = runner.invoke(app, ["run"], env={"HSYNC_BOOTNODE_PRIVATE": "1"})
+    assert result.exit_code == 2
+    assert "private node without any group key" in result.output
+
+
+def test_private_option_is_documented_in_help() -> None:
+    result = runner.invoke(app, ["run", "--help"])
+    assert result.exit_code == 0
+    assert "--private" in result.output
+    assert "HSYNC_BOOTNODE_PRIVATE" in result.output
+
+
 def test_ready_file_helpers_write_pid_and_remove(tmp_path) -> None:
     ready = tmp_path / "ready"
     _write_ready_file(str(ready))

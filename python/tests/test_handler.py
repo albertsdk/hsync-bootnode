@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 from unittest.mock import patch
 
+import pytest
 from pydantic import SecretStr
 
 from hsync_bootnode.handler import BootConfigError, BootHandler
@@ -28,9 +29,20 @@ def send(h: BootHandler, frame: object, *, peer_ip: str, peer_port: int) -> byte
     return h.handle(json.dumps(frame), peer_ip=peer_ip, peer_port=peer_port)
 
 
-def make_handler(protected: tuple[str, ...] = ()) -> BootHandler:
-    keys = {bucket: SecretStr("k" + bucket) for bucket in protected} if protected else None
-    return BootHandler(protected_buckets=protected, group_keys=keys)
+def make_handler(
+    protected: tuple[str, ...] = (),
+    *,
+    private: bool = False,
+    keys: dict[str, str] | None = None,
+) -> BootHandler:
+    """Build a handler; ``keys`` defaults to a ``k<bucket>`` secret per bucket."""
+    if keys is None:
+        keys = {bucket: "k" + bucket for bucket in protected}
+    return BootHandler(
+        protected_buckets=protected,
+        private=private,
+        group_keys={bucket: SecretStr(key) for bucket, key in keys.items()},
+    )
 
 
 def register_frame(
@@ -72,6 +84,17 @@ def query_frame(
     }
     if group is not None:
         frame["group"] = group
+    if token is not None:
+        frame["bucket_token"] = token
+    return frame
+
+
+def leave_frame(
+    cid: str = CID,
+    bucket: str = "shared",
+    token: str | None = None,
+) -> dict:
+    frame: dict = {"protocol_version": "boot/1", "type": "leave", "cid": cid, "bucket": bucket}
     if token is not None:
         frame["bucket_token"] = token
     return frame
@@ -180,6 +203,99 @@ def test_open_bucket_needs_no_token() -> None:
     assert resp is not None and resp["error"] is None
 
 
+def test_open_mode_ignores_keys_of_undeclared_buckets() -> None:
+    """A provisioned key must not gate a bucket the operator did not declare.
+
+    Guard for the open-mode contract: ``--private`` is the only way to widen the
+    D11 policy to every bucket, so providing a key without
+    ``--protected-bucket`` keeps the bucket open (byte-identical behavior).
+    """
+    h = make_handler(keys={"shared": "kshared"})
+    resp = decoded(send(h, query_frame(token=None), peer_ip="10.0.0.1", peer_port=1))
+    assert resp is not None and resp["error"] is None
+    ack = decoded(send(h, register_frame(token=None), peer_ip="198.51.100.7", peer_port=1))
+    assert ack is not None and ack["type"] == "ack"
+
+
+def test_private_node_gates_every_bucket() -> None:
+    h = make_handler(private=True, keys={"shared": "kshared"})
+    token = derive_bucket_token(b"kshared", "shared")
+    # no token → uniform refusal and no record created
+    resp = decoded(send(h, register_frame(token=None), peer_ip="10.0.0.1", peer_port=1))
+    assert resp is not None and resp["error"] == "token_required"
+    assert h.routing.count(bucket="shared") == 0
+    # valid token → ack + record
+    ack = decoded(send(h, register_frame(token=token), peer_ip="198.51.100.7", peer_port=1))
+    assert ack is not None and ack["type"] == "ack"
+    assert h.routing.count(bucket="shared") == 1
+    # valid token → peers are returned
+    resp = decoded(send(h, query_frame(token=token), peer_ip="10.0.0.2", peer_port=1))
+    assert resp is not None and resp["error"] is None and resp["count"] == 1
+
+
+def test_private_node_refuses_unkeyed_bucket_like_a_wrong_token() -> None:
+    """A bucket without a key is refused exactly like a wrong token (no oracle)."""
+    h = make_handler(private=True, keys={"shared": "kshared"})
+    unkeyed = decoded(
+        send(h, query_frame(bucket="other", token=None), peer_ip="10.0.0.1", peer_port=1)
+    )
+    unkeyed_token = decoded(
+        send(h, query_frame(bucket="other", token="0" * 64), peer_ip="10.0.0.1", peer_port=1)
+    )
+    keyed_wrong = decoded(
+        send(h, query_frame(bucket="shared", token="0" * 64), peer_ip="10.0.0.1", peer_port=1)
+    )
+    assert unkeyed is not None and unkeyed_token is not None and keyed_wrong is not None
+    for response in (unkeyed, unkeyed_token, keyed_wrong):
+        assert response["type"] == "response"
+        assert response["error"] == "token_required"
+        assert response["peers"] == []
+        assert response["count"] == 0
+
+
+def test_private_node_failed_token_budget_still_applies() -> None:
+    h = make_handler(private=True, keys={"shared": "kshared"})
+    for _ in range(5):  # 5 failed-token attempts/min per IP, same budget
+        resp = decoded(send(h, query_frame(token="0" * 64), peer_ip="10.0.0.7", peer_port=1))
+        assert resp is not None and resp["error"] == "token_required"
+    resp = decoded(send(h, query_frame(token="0" * 64), peer_ip="10.0.0.7", peer_port=1))
+    assert resp is not None
+    assert resp["error"] == "rate_limited"
+    assert resp["retry_after"] >= 1
+
+
+def test_private_leave_requires_a_valid_token() -> None:
+    """Private mode closes the spoofable-leave vector; refusals stay silent."""
+    h = make_handler(private=True, keys={"shared": "kshared"})
+    token = derive_bucket_token(b"kshared", "shared")
+    send(h, register_frame(token=token), peer_ip="198.51.100.7", peer_port=1)
+    assert h.routing.count(bucket="shared") == 1
+    # anonymous leave → silently dropped (the spec has no leave response)
+    assert send(h, leave_frame(token=None), peer_ip="10.0.0.1", peer_port=1) is None
+    assert h.routing.count(bucket="shared") == 1
+    # wrong token → still dropped
+    assert send(h, leave_frame(token="0" * 64), peer_ip="10.0.0.1", peer_port=1) is None
+    assert h.routing.count(bucket="shared") == 1
+    # valid token → record removed, still no response frame
+    assert send(h, leave_frame(token=token), peer_ip="10.0.0.1", peer_port=1) is None
+    assert h.routing.count(bucket="shared") == 0
+
+
+def test_private_leave_on_unkeyed_bucket_is_dropped() -> None:
+    h = make_handler(private=True, keys={"shared": "kshared"})
+    token = derive_bucket_token(b"kshared", "shared")
+    send(h, register_frame(token=token), peer_ip="198.51.100.7", peer_port=1)
+    send(h, leave_frame(bucket="other"), peer_ip="10.0.0.1", peer_port=1)
+    assert h.routing.count(bucket="shared") == 1
+
+
+def test_private_node_without_keys_fails_fast() -> None:
+    with pytest.raises(BootConfigError, match="private node without any group key"):
+        make_handler(private=True)
+    # one key is enough to serve the node
+    assert make_handler(private=True, keys={"shared": "kshared"}) is not None
+
+
 def test_query_rate_limited_per_ip_bucket_pair() -> None:
     h = make_handler()
     results = []
@@ -224,12 +340,7 @@ def test_leave_removes_record_anonymously() -> None:
     ack = decoded(send(h, register_frame(), peer_ip="10.0.0.1", peer_port=1))
     assert ack is not None and ack["type"] == "ack"
     assert h.routing.count(bucket="shared") == 1
-    send(
-        h,
-        {"protocol_version": "boot/1", "type": "leave", "cid": CID, "bucket": "shared"},
-        peer_ip="10.0.0.1",
-        peer_port=1,
-    )
+    send(h, leave_frame(), peer_ip="10.0.0.1", peer_port=1)
     assert h.routing.count(bucket="shared") == 0
 
 
@@ -240,12 +351,7 @@ def test_leave_removes_all_groups() -> None:
     send(h, register_frame(cid=CID, group="work"), peer_ip="10.0.0.2", peer_port=2)
     assert h.routing.count(bucket="shared") == 2
     # leave carries no group: it must remove every (cid, bucket) entry.
-    send(
-        h,
-        {"protocol_version": "boot/1", "type": "leave", "cid": CID, "bucket": "shared"},
-        peer_ip="10.0.0.1",
-        peer_port=1,
-    )
+    send(h, leave_frame(), peer_ip="10.0.0.1", peer_port=1)
     assert h.routing.count(bucket="shared") == 0
     assert h.routing.get(CID, "shared", "home") is None
     assert h.routing.get(CID, "shared", "work") is None

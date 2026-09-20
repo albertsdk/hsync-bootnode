@@ -45,7 +45,7 @@ excluded from the union: they are never validated on the input path.
 
 | Constant | Location | Rule |
 |---|---|---|
-| `CID_PATTERN` | `protocol.py:41` | `^[A-Za-z0-9]{21}$` (local mirror of `hsync_common.models.event.CID_PATTERN`; Fase 2 swaps it for the SSOT import + drift test) |
+| `CID_PATTERN` | `protocol.py:41` | `^[A-Za-z0-9]{21}$` (local mirror of `hsync_common.models.event.CID_PATTERN`; Fase B swaps it for the SSOT import + drift test) |
 | `BUCKET_TOKEN_LEN` | `protocol.py:45` | 64 (lowercase hex = `hex(32 bytes)`), derived as `HMAC-SHA256(key, "boot/1" || bucket)[:32]` |
 | `BucketProto` | `protocol.py:48` | `Literal["tcp", "udp"]` |
 

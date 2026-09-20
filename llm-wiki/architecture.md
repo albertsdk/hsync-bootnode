@@ -142,8 +142,13 @@ Python-internal.
 
 ## Known gaps / next phases (per `PIANO-hsync-bootnode-p2p.md`)
 
-- Fase 2: move `PROTOCOL_VERSION_BOOT`, frame models, token derivation and D11
+- Fase B: move `PROTOCOL_VERSION_BOOT`, frame models, token derivation and D11
   rules into `hsync-common` (`protocol/bootnode.py`) + fixtures drift tests +
-  capabilities v3.
-- Fase 3+: client `hsync p2p`, desktop mode, Android mirror (`quiche`).
-- Rust (quinn) and C implementations: not started.
+  capabilities v3; align the wire with D10/D14 (drop the unused `capacity`
+  field, derive `reachable` from `bool(endpoints)` instead of hardcoding it).
+- Fase C–D: client `hsync p2p` (the bootnode discovery plan) + its black-box
+  suite. The peer data-plane protocol is renamed `lan/1` → `p2p/1` and the
+  `lan` subcommand disappears (plan decision D14).
+- Fase E–F: desktop mode, wd-os5 packaging, Android mirror (`quiche`).
+- Fase G: dual-doc alignment (this wiki + `docs/`).
+- Rust (quinn) and C implementations: not started (v2).

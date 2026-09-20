@@ -43,6 +43,6 @@ Internal, agent-optimized knowledge base for the `hsync-bootnode` project
    implementation and tests atomically.
 6. **SSOT note**: the CID pattern `^[A-Za-z0-9]{21}$` is currently a local
    mirror of `hsync_common.models.event.CID_PATTERN`
-   (`python/src/hsync_bootnode/protocol.py:41`); Fase 2 replaces the mirror
+   (`python/src/hsync_bootnode/protocol.py:41`); Fase B replaces the mirror
    with the `hsync-common` import and adds `protocol/bootnode.py` to
    `hsync-common`.

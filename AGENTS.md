@@ -122,9 +122,8 @@ documentation-engineering rules:
   self-contained pages; a single code fence must contain commands for only one
   environment.
 * **Link integrity, atomically**: when adding, renaming, moving, or removing
-  sections, update every affected intra-doc anchor, every inter-repo link (e.g.
-  the monorepo roadmap `../PIANO-hsync-bootnode-p2p.md`), and the docs index in
-  the same change.
+  sections, update every affected intra-doc anchor, every inter-repo link, and
+  the docs index in the same change.
 
 ### 6. Removal Discipline
 * **Delete With the Code**: When a feature or logic is **removed**, delete or update its documentation in BOTH `llm-wiki/` and `docs/` in the same change. Consistent with the project's *Zero Backward Compatibility* stance, do **NOT** keep documentation describing removed functionality.

@@ -79,6 +79,18 @@ async def test_wrong_protocol_version_is_rejected(bootnode_factory, bucket, rng)
 
 
 @pytest.mark.asyncio
+async def test_capacity_out_of_range_is_dropped(bootnode_factory, bucket, rng) -> None:
+    """The advisory capacity hint domain is 0..32: 33 is an invalid frame (silent drop)."""
+    handle = bootnode_factory()
+    async with BootClient(handle.port) as client:
+        frame = register_frame(random_cid(rng), bucket, capacity=33)
+        result = await client.send_raw((json.dumps(frame) + "\n").encode("utf-8"))
+        assert result.outcome is RawOutcome.SILENT
+        ack = await client.exchange(register_frame(random_cid(rng), bucket))
+    assert ack["type"] == "ack"
+
+
+@pytest.mark.asyncio
 async def test_leave_removes_record_anonymously(bootnode_factory, bucket, rng) -> None:
     handle = bootnode_factory()
     cid = random_cid(rng)

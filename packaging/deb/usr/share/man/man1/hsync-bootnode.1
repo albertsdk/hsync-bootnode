@@ -63,8 +63,10 @@ Disable the zero-touch UPnP UDP port mapping.
 Record TTL in seconds (1\-3600). Default: 60 (peers refresh every 30 s).
 .TP
 .B run\ \fR--debug\fP
-Emit non\-PII diagnostics to stderr (opt\-in; off by default). Never logs
-IPs, CIDs or fingerprints. Env form:
+Emit the full operation log to stderr (opt\-in; off by default): connections,
+frames, decisions, record changes and TTL sweeps, including the peer identity
+(CID, bucket, IP, port) needed for analysis. Stderr only \- it is never
+written to disk, and without it no peer data leaves memory. Env form:
 .BR HSYNC_BOOTNODE_DEBUG=1 .
 .TP
 .BI run\ \fR--ready-file\fP= PATH
@@ -90,7 +92,7 @@ Integer file descriptor carrying the group keys; same as
 .B HSYNC_BOOTNODE_DEBUG
 Set to
 .I 1
-to enable non\-PII stderr diagnostics; same as
+to enable the full operation log on stderr (peer identity included); same as
 .BR "run \-\-debug" .
 .TP
 .B HSYNC_BOOTNODE_READY_FILE

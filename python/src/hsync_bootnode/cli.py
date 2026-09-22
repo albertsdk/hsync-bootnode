@@ -39,7 +39,7 @@ app = typer.Typer(
 # ``HSYNC_BOOTNODE_KEYS_FD`` is the envvar form (plan §4), honoured by
 # systemd/launchd/Windows service wrappers. Read once, never written.
 _DEFAULT_KEYS_FD_ENV = "HSYNC_BOOTNODE_KEYS_FD"
-# Opt-in stderr diagnostics (see debug.py): non-PII only, disabled by default.
+# Opt-in stderr diagnostics (see debug.py): peer-aware, stderr-only, off by default.
 _DEFAULT_DEBUG_ENV = "HSYNC_BOOTNODE_DEBUG"
 # Test/ops readiness seam: write the process PID here once the listener is
 # bound, mirroring the client's HSYNC_READY_FILE. Contains no peer data.
@@ -102,7 +102,11 @@ def run(
         False,
         "--debug",
         envvar=_DEFAULT_DEBUG_ENV,
-        help="Emit non-PII diagnostics to stderr (opt-in; disabled by default).",
+        help=(
+            "Emit the full operation log to stderr (opt-in; disabled by default): "
+            "connections, frames, decisions and TTL sweeps, including the peer "
+            "identity (CID, bucket, IP, port). Never written to disk."
+        ),
     ),
     ready_file: str | None = typer.Option(
         None,
@@ -142,7 +146,7 @@ def run(
         f"  mode      : {'private (every frame needs a bucket_token)' if private else 'open'}\n"
         f"  group keys loaded: {len(keys)}\n"
         f"  ttl       : {ttl}s\n"
-        f"  debug     : {'on' if debug else 'off'}\n"
+        f"  debug     : {'on (full operation log incl. peer identity, stderr only)' if debug else 'off (in-memory only)'}\n"
         f"  rate limit: {'disabled' if no_rate_limit else 'enabled'}\n"
         f"  upnp      : {'disabled' if no_upnp else 'enabled (zero-touch)'}"
     )

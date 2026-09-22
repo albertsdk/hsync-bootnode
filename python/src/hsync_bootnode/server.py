@@ -25,7 +25,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa as rsa_key
 from cryptography.x509.oid import NameOID
 from hsync_common import ssl_utils
 
-from hsync_bootnode.debug import debug_log
+from hsync_bootnode.debug import debug_event
 from hsync_bootnode.handler import BootHandler, CertificateFingerprint
 
 __all__ = [
@@ -131,6 +131,8 @@ class BootQuicProtocol(QuicConnectionProtocol):
         super().datagram_received(data, addr)
 
     def _spawn_stream(self, reader: Any, writer: Any) -> None:
+        peer = self.peer_addr if self.peer_addr is not None else ("0.0.0.0", 0)
+        debug_event("session open", peer=f"{peer[0]}:{peer[1]}")
         asyncio.create_task(self._serve_stream(reader, writer))
 
     async def _serve_stream(self, reader: Any, writer: Any) -> None:
@@ -152,11 +154,12 @@ class BootQuicProtocol(QuicConnectionProtocol):
                     writer.write(response + b"\n")
                     await writer.drain()
         except _OversizedFrame:
-            debug_log("drop: oversized frame, closing session")
+            debug_event("drop oversized-frame", peer=f"{peer_ip}:{peer_port}")
             return  # oversized frame: refuse and close the session silently
         except (asyncio.CancelledError, ConnectionError, TimeoutError):
             return
         finally:
+            debug_event("session close", peer=f"{peer_ip}:{peer_port}")
             if not writer.is_closing():
                 writer.close()
 

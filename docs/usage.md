@@ -24,7 +24,7 @@ hsync-bootnode --version
 | `--private` | *(disabled flag)* | Private node: every frame must carry a valid `bucket_token`, for **every** bucket (not only `--protected-bucket`). Starting it with no group key fails fast (exit code 2). Environment variable form: `HSYNC_BOOTNODE_PRIVATE=1`. |
 | `--no-upnp` | *(disabled flag)* | Disable the zero-touch UPnP UDP mapping. |
 | `--ttl` | `60` | Record TTL in seconds (1–3600). Peers refresh every 30 s, so the default 60 s matches the spec. Lower it for faster convergence in tests. |
-| `--debug` | *(disabled flag)* | Emit non-PII diagnostics to stderr (opt-in). Environment variable form: `HSYNC_BOOTNODE_DEBUG=1`. |
+| `--debug` | *(disabled flag)* | Emit the full operation log to stderr (opt-in): connections, frames, decisions, record changes and TTL sweeps, **including the peer identity** (CID, bucket, IP, port). Stderr only — never written to disk; without it no peer data leaves memory. Environment variable form: `HSYNC_BOOTNODE_DEBUG=1`. |
 | `--ready-file` | *(none)* | Write the process PID to this path once the listener is bound (readiness seam, contains no peer data). Environment variable form: `HSYNC_BOOTNODE_READY_FILE`. |
 | `--no-rate-limit` | *(disabled flag)* | Disable rate limiting entirely (benchmark/test seam). Environment variable form: `HSYNC_BOOTNODE_NO_RATE_LIMIT=1`. Never enable in production — it removes the anti-abuse limits the spec requires (D11). |
 
@@ -39,7 +39,7 @@ Prints the version and the protocol, e.g.
 |---|---|
 | `HSYNC_BOOTNODE_KEYS_FD` | Same as `--keys-fd`; the env-var form is what service wrappers set. |
 | `HSYNC_BOOTNODE_PRIVATE` | Same as `--private`; set to `1` to require a valid `bucket_token` on every frame. |
-| `HSYNC_BOOTNODE_DEBUG` | Same as `--debug`; set to `1` for opt-in stderr diagnostics. |
+| `HSYNC_BOOTNODE_DEBUG` | Same as `--debug`; set to `1` for the full opt-in operation log (peer identity included; stderr only). |
 | `HSYNC_BOOTNODE_READY_FILE` | Same as `--ready-file`; the readiness PID path used by tests/orchestrators. |
 | `HSYNC_BOOTNODE_NO_RATE_LIMIT` | Same as `--no-rate-limit`; benchmark/test seam, never in production. |
 
@@ -132,6 +132,19 @@ Trade-offs (by design, not defects):
 - No account system and no persistence: routing table, keys and limits live in
   RAM only (see "Privacy model").
 
+## Peer capacity hint (`capacity`)
+
+`register` may carry an advisory `capacity` hint (integer `0..32`, default `0`;
+`0` means "not a peer-download seeder"). The node stores it and echoes it in every
+peer of a `query` response, so a client can pre-size its download concurrency.
+
+The hint is **advisory only**: it is not authenticated and not authoritative. The
+authoritative limit is the `serve_slots` value a peer advertises on the
+authenticated data-plane handshake (ADR 0030), so a client must never treat
+`capacity` as a guarantee nor use it to exclude a peer. The node never orders its
+random sample by `capacity`, so a self-declared value buys no priority; `refresh`
+neither carries nor changes it.
+
 ## Privacy model (no-log)
 
 - Peer data (IPs, CIDs, timestamps) lives only in RAM with the configured
@@ -144,10 +157,12 @@ Trade-offs (by design, not defects):
 ## Diagnostics (debug mode)
 
 The node is silent by design. For troubleshooting, `--debug` (or
-`HSYNC_BOOTNODE_DEBUG=1`) enables **non-PII** diagnostics on stderr — frame
-types, outcomes, rate-limit refusals and prune/lifecycle events, never IPs,
-CIDs or fingerprints. It is off by default and does not write anything to
-disk.
+`HSYNC_BOOTNODE_DEBUG=1`) enables the **full operation log** on stderr —
+connections opened/closed, frames received, the decision taken, records
+created/refreshed/removed, TTL sweeps and refusals — **including the peer
+identity** (CID, bucket, IP, port) that makes the log
+usable for analysis. It is off by default, it goes to stderr only, and it never
+writes anything to disk: without `--debug` no peer data leaves memory.
 
 The `--ready-file`/`HSYNC_BOOTNODE_READY_FILE` seam writes the process PID to
 the given path once the QUIC listener is bound (and removes it on graceful
@@ -175,4 +190,4 @@ Edit the executable paths inside each unit to the location of your venv.
 | Client gets `token_required` | The bucket is gated (declared `--protected-bucket`, or every bucket on a private node) and the client's derived token is missing/wrong — check the group key on the client side. |
 | Client gets `rate_limited` | A limit was exceeded (per-IP ~10 req/s, 5/min failed tokens, 5/min queries per (IP, bucket), 10/min registers per bucket); wait for `retry_after` seconds. |
 | No UPnP mapping | Router without IGD, or mapping refused: the node keeps running stateless; publish a public UDP endpoint in another way or use `--no-upnp` to skip discovery entirely. |
-| Need to see what the node is doing | Start with `--debug` (or `HSYNC_BOOTNODE_DEBUG=1`) for non-PII stderr diagnostics. |
+| Need to see what the node is doing | Start with `--debug` (or `HSYNC_BOOTNODE_DEBUG=1`): the full operation log, peer identity included, is written to stderr. |

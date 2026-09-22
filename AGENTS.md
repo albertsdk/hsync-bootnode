@@ -158,8 +158,8 @@ documentation-engineering rules:
 * **No-log invariant (D7)**
   Identical in every language: the process NEVER writes peer data (IPs, CIDs,
   timestamps) to disk. The routing table is RAM-only; the TLS identity is
-  in-memory and regenerated per process; diagnostics are opt-in and non-PII
-  (`--debug` / `HSYNC_BOOTNODE_DEBUG=1`). Enforced for Python by
+  in-memory and regenerated per process; diagnostics are opt-in, peer-aware and
+  stderr-only (`--debug` / `HSYNC_BOOTNODE_DEBUG=1`). Enforced for Python by
   `python/tests/test_nolog.py` (read-only filesystem sandbox): the Rust port must
   ship an equivalent enforcement test.
 

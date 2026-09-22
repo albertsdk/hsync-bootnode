@@ -84,9 +84,7 @@ def client_config() -> QuicConfiguration:
     definition shared by the black-box suite and every benchmark that opens a
     ``boot/1`` connection.
     """
-    return QuicConfiguration(
-        is_client=True, alpn_protocols=[BOOT_ALPN], verify_mode=ssl.CERT_NONE
-    )
+    return QuicConfiguration(is_client=True, alpn_protocols=[BOOT_ALPN], verify_mode=ssl.CERT_NONE)
 
 
 def derive_bucket_token(key: bytes, bucket: str) -> str:
@@ -118,6 +116,7 @@ def register_frame(
     host: str = "198.51.100.7",
     port: int = 443,
     endpoints: bool = True,
+    capacity: int = 20,
     **extra: object,
 ) -> dict:
     frame: dict = {
@@ -127,7 +126,7 @@ def register_frame(
         "bucket": bucket,
         "cert_fp": _FP,
         "version": "1.0.0",
-        "capacity": 20,
+        "capacity": capacity,
         "connected": 3,
     }
     if group is not None:

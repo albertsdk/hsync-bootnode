@@ -65,4 +65,3 @@ the full option list, see the [Usage reference](usage.md).
 |---|---|
 | [usage.md](usage.md) | CLI reference, protected buckets and private nodes, keys provisioning, OS services |
 | `protocol-spec/boot-1.md` | Wire protocol specification |
-| `../PIANO-hsync-bootnode-p2p.md` | Roadmap (monorepo root) |

@@ -58,7 +58,7 @@ HSYNC_BB_BOOTNODE=1 HSYNC_BOOTNODE_BIN=/path/to/hsync-bootnode \
 
 | Module | Scenarios |
 |---|---|
-| `test_bb_bootnode_lifecycle.py` | `--version`, fail-fast config, readiness, graceful shutdown, debug mode (non-PII) |
+| `test_bb_bootnode_lifecycle.py` | `--version`, fail-fast config, readiness, graceful shutdown, debug mode (peer-aware stderr log) |
 | `test_bb_bootnode_register.py` | STUN-echo ack, advertised/observed endpoints, refresh, unknown-CID refresh drop |
 | `test_bb_bootnode_query.py` | peer listing, group filter, limit bounds, pipelined frames |
 | `test_bb_bootnode_d11.py` | uniform `token_required`, correct/wrong token, no oracle |

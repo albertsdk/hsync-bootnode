@@ -20,6 +20,7 @@ __all__ = [
     "PROTOCOL_VERSION_BOOT",
     "CID_PATTERN",
     "BUCKET_TOKEN_LEN",
+    "CAPACITY_MAX",
     "BucketProto",
     "Endpoint",
     "ObservedEndpoint",
@@ -50,6 +51,12 @@ BUCKET_TOKEN_LEN = 64
 _BUCKET_TOKEN_RE = re.compile(rf"^[0-9a-f]{{{BUCKET_TOKEN_LEN}}}$")
 
 BucketProto = Literal["tcp", "udp"]
+
+# Advisory service-capacity hint domain (``0..32``; ``0`` = not a peer-download
+# seeder). Mirrors the authenticated ``serve_slots`` range (1..32); the bootnode
+# relays the value in ``query`` responses but never treats it as authoritative
+# (ADR 0030) — the authoritative value stays on the authenticated WSS handshake.
+CAPACITY_MAX = 32
 
 
 class Endpoint(BaseModel):
@@ -82,7 +89,13 @@ class _BootFrame(BaseModel):
 
 
 class BootRegister(_BootFrame):
-    """Client announces presence in a bucket (first contact)."""
+    """Client announces presence in a bucket (first contact).
+
+    ``capacity`` is the advisory service-capacity hint: the number of
+    concurrent peer-download reads the peer declares it can serve right now
+    (``0`` = not a seeder). The bootnode relays it in ``query`` responses; the
+    authoritative value is the authenticated ``serve_slots`` (ADR 0030).
+    """
 
     type: Literal["register"]
     cid: str = Field(pattern=CID_PATTERN)
@@ -91,7 +104,7 @@ class BootRegister(_BootFrame):
     bucket_token: str | None = None
     cert_fp: str = Field(min_length=1, max_length=256)
     version: str = Field(min_length=1, max_length=64)
-    capacity: int = Field(default=0, ge=0, le=1000)
+    capacity: int = Field(default=0, ge=0, le=CAPACITY_MAX)
     endpoints: list[Endpoint] = Field(default_factory=list, max_length=16)
     connected: int | None = Field(default=None, ge=0)
 
@@ -142,7 +155,13 @@ class BootAck(_BootFrame):
 
 
 class BootPeer(BaseModel):
-    """A single advertised peer in a BootResponse."""
+    """A single advertised peer in a BootResponse.
+
+    ``capacity`` is the peer's advisory service-capacity hint as relayed from
+    its ``register`` (``0`` = not a seeder). It is not authenticated and not
+    authoritative: the requester must treat the authenticated ``serve_slots``
+    as the source of truth (ADR 0030).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -154,6 +173,7 @@ class BootPeer(BaseModel):
     bucket: str = Field(min_length=1, max_length=128)
     group: str | None = None
     version: str = Field(min_length=1, max_length=64)
+    capacity: int = Field(default=0, ge=0, le=CAPACITY_MAX)
     reachable: bool = True
 
 

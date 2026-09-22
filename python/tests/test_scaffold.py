@@ -5,9 +5,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from hsync_bootnode.protocol import (
+    CAPACITY_MAX,
     CID_PATTERN,
     BootAck,
+    BootPeer,
     BootQuery,
     BootRegister,
     BootResponse,
@@ -68,6 +72,35 @@ def test_register_accepts_valid_and_rejects_unknown_fields() -> None:
         pass
     else:  # pragma: no cover - expected to raise
         raise AssertionError("unknown field must be rejected")
+
+
+def test_capacity_hint_domain_bounds() -> None:
+    """The advisory capacity hint is 0..32 (0 = not a seeder); 33 is rejected."""
+    register = {
+        "protocol_version": "boot/1",
+        "type": "register",
+        "cid": CID,
+        "bucket": "shared",
+        "cert_fp": "AA:BB",
+        "version": "1.0.0",
+    }
+    assert BootRegister(**register).capacity == 0  # absent → 0
+    assert BootRegister(**register, capacity=CAPACITY_MAX).capacity == CAPACITY_MAX
+    with pytest.raises(ValueError):
+        BootRegister(**register, capacity=CAPACITY_MAX + 1)
+
+    peer = {
+        "cid": CID,
+        "ip": "198.51.100.7",
+        "port": 443,
+        "cert_fp": "AA:BB",
+        "bucket": "shared",
+        "version": "1.0.0",
+    }
+    assert BootPeer(**peer).capacity == 0  # absent → 0
+    assert BootPeer(**peer, capacity=CAPACITY_MAX).capacity == CAPACITY_MAX
+    with pytest.raises(ValueError):
+        BootPeer(**peer, capacity=CAPACITY_MAX + 1)
 
 
 def test_bucket_token_derivation_and_verify() -> None:

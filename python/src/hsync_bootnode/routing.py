@@ -42,11 +42,14 @@ class PeerRecord:
     endpoints: list[Endpoint]
     connected: int = 0
     reachable: bool = True
+    capacity: int = 0
     expires_at: float = field(default_factory=lambda: time.monotonic() + DEFAULT_TTL)
     # Materialized wire projection, lazily built by BootHandler._to_peer. Valid for
     # this object's lifetime: register always creates a NEW PeerRecord, and refresh
-    # only mutates connected/expires_at (neither is part of BootPeer). Never mutate
-    # the wire-visible fields above in place, or this cache goes stale.
+    # only mutates connected/expires_at (neither is part of BootPeer). capacity and
+    # reachable ARE part of BootPeer, so they must never be mutated in place after
+    # the wire cache is built; a changed value requires a fresh register (new
+    # PeerRecord), or the cache goes stale.
     wire: BootPeer | None = field(default=None, repr=False, compare=False)
 
     def is_expired(self, now: float | None = None) -> bool:

@@ -26,7 +26,9 @@ Internal, agent-optimized knowledge base for the `hsync-bootnode` project
 
 1. **No-log**: the process NEVER writes peer data (IPs, CIDs, timestamps) to
    disk. TLS identity is in-memory, per-process. Enforced by
-   `python/tests/test_nolog.py` (read-only filesystem sandbox).
+   `python/tests/test_nolog.py` (read-only filesystem sandbox). The opt-in
+   `--debug` sink (decision #25) is stderr-only and may include the peer
+   identity; without it nothing peer-related leaves memory.
 2. **RAM only (D7)**: the routing table lives in
    `python/src/hsync_bootnode/routing.py` and is never persisted. TTL 60 s,
    prune every 15 s, client refresh every 30 s.

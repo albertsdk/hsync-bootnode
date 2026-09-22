@@ -25,8 +25,8 @@
 
 | Frame | Payload |
 |---|---|
-| `register` | `{protocol_version:"boot/1", type:"register", cid, bucket, group?, bucket_token?, cert_fp, version, capacity, endpoints:[{proto:"tcp"\|"udp", host, port}], connected?}` |
-| `refresh` | `{protocol_version:"boot/1", type:"refresh", cid, bucket, group, bucket_token?, connected?}` |
+| `register` | `{protocol_version:"boot/1", type:"register", cid, bucket, group?, bucket_token?, cert_fp, version, capacity?, endpoints?:[{proto:"tcp"\|"udp", host, port}], connected?}` |
+| `refresh` | `{protocol_version:"boot/1", type:"refresh", cid, bucket, group?, bucket_token?, connected?}` |
 | `leave` | `{protocol_version:"boot/1", type:"leave", cid, bucket, bucket_token?}` |
 | `query` | `{protocol_version:"boot/1", type:"query", bucket, group?, bucket_token?, limit?}` |
 
@@ -35,7 +35,7 @@
 | Frame | Payload |
 |---|---|
 | `ack` | `{protocol_version:"boot/1", type:"ack", observed_endpoint:{proto:"udp", ip, port}, ttl, server_time, retry_after?}` (STUN-echo) |
-| `response` | `{protocol_version:"boot/1", type:"response", peers:[{cid, ip, port, proto, cert_fp, bucket, group, version, reachable}], count, ttl}` or `{peers: [], count: 0, error:"token_required"\|"rate_limited", retry_after?}` |
+| `response` | `{protocol_version:"boot/1", type:"response", peers:[{cid, ip, port, proto, cert_fp, bucket, group?, version, capacity, reachable}], count, ttl}` or `{peers: [], count: 0, error:"token_required"\|"rate_limited", retry_after?}` |
 
 ## Rules
 
@@ -46,6 +46,8 @@
 - **No-log**: no timestamps/IPs written to disk anywhere in this path.
 - Malformed, unknown-`type` or oversized frames are silently dropped (no oracle, no log).
 - `refresh` never creates a record: an unknown CID is dropped so the client falls back to `register`.
+- **`capacity` (advisory service-capacity hint)**: integer `0..32`, default `0`, carried on `register` and echoed in every `query` peer. It is the number of concurrent peer-download reads the peer declares it can serve right now (`0` = not a seeder). The bootnode copies it onto the record and relays it, but it is **not authenticated** and **not authoritative**: the authoritative value is `serve_slots` on the authenticated data-plane handshake (ADR 0030). The requester may use it only to pre-size concurrency and to skip `capacity=0` peers — never to exclude a live seeder. The bootnode must **not** order the sample by `capacity` (the sample stays random, so a self-declared value cannot buy priority). `refresh` does not carry `capacity` and never mutates it; a changed value requires a new `register`.
+- **`reachable`**: derived from `bool(endpoints)` at `register` time — `true` iff the peer advertised at least one listen endpoint (it can act as a data-plane master). A register that carries no endpoint (e.g. the first STUN register, before the public TCP endpoint is known) is advertised with `reachable=false` and the observed UDP source as the fallback endpoint; a requester must not treat it as a master. `refresh` never changes `reachable`.
 
 ## Auth — bucket tokens: protected buckets and private nodes (D11)
 
@@ -57,6 +59,6 @@
 
 ## In-memory routing table
 
-- Key `(cid, bucket, group)` → `{ip_src, udp_port, cert_fp, version, protocol, endpoints[], connected, reachable, expires_at}`.
+- Key `(cid, bucket, group)` → `{ip_src, udp_port, cert_fp, version, protocol, endpoints[], connected, reachable, capacity, expires_at}`.
 - TTL 60 s; client refresh every 30 s; prune every 15 s; response = random `K` sample.
 - Responses advertise the peer's declared `endpoints[0]` (fallback: the observed source endpoint).

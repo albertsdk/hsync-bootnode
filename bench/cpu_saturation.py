@@ -159,7 +159,9 @@ def _verdict(levels: list[LevelResult]) -> None:
         )
 
 
-async def _amain(port: int, node_pid: int, levels: list[int], step_seconds: float) -> list[LevelResult]:
+async def _amain(
+    port: int, node_pid: int, levels: list[int], step_seconds: float
+) -> list[LevelResult]:
     return [await _level(port, node_pid, n, step_seconds) for n in levels]
 
 

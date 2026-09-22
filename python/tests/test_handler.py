@@ -52,6 +52,7 @@ def register_frame(
     token: str | None = None,
     host: str = "198.51.100.7",
     port: int = 443,
+    capacity: int = 20,
 ) -> dict:
     frame: dict = {
         "protocol_version": "boot/1",
@@ -60,7 +61,7 @@ def register_frame(
         "bucket": bucket,
         "cert_fp": FP,
         "version": "1.0.0",
-        "capacity": 20,
+        "capacity": capacity,
         "endpoints": [{"proto": "tcp", "host": host, "port": port}],
     }
     if group is not None:
@@ -139,6 +140,81 @@ def test_query_returns_advertised_endpoint_random_sample() -> None:
         (CID, "198.51.100.7", 443),
         (CID2, "198.51.100.8", 443),
     }
+
+
+def test_capacity_hint_round_trips_through_query() -> None:
+    """The advisory capacity hint is stored and echoed in the query peer list."""
+    h = make_handler()
+    # endpoint branch: the advertised endpoints[0] is preferred
+    send(h, register_frame(cid=CID, capacity=32), peer_ip="198.51.100.7", peer_port=54321)
+    # fallback branch: no advertised endpoint → the observed source is used
+    no_endpoint = register_frame(cid=CID2, capacity=5, host="198.51.100.8")
+    no_endpoint.pop("endpoints")
+    send(h, no_endpoint, peer_ip="198.51.100.8", peer_port=54322)
+    response = decoded(send(h, query_frame(limit=10), peer_ip="10.0.0.1", peer_port=1111))
+    assert response is not None
+    assert response["count"] == 2
+    capacities = {p["cid"]: p["capacity"] for p in response["peers"]}
+    assert capacities == {CID: 32, CID2: 5}
+
+
+def test_capacity_defaults_to_zero_and_survives_refresh() -> None:
+    """Absent capacity = 0 (not a seeder); refresh never mutates it."""
+    h = make_handler()
+    frame = register_frame(cid=CID, capacity=0)
+    frame.pop("capacity")  # absent on the wire → default 0
+    send(h, frame, peer_ip="198.51.100.7", peer_port=54321)
+    record = h.routing.get(CID, "shared", "home")
+    assert record is not None
+    assert record.capacity == 0
+    send(
+        h,
+        {
+            "protocol_version": "boot/1",
+            "type": "refresh",
+            "cid": CID,
+            "bucket": "shared",
+            "group": "home",
+            "connected": 7,
+        },
+        peer_ip="198.51.100.7",
+        peer_port=54321,
+    )
+    response = decoded(send(h, query_frame(limit=10), peer_ip="10.0.0.1", peer_port=1111))
+    assert response is not None
+    assert response["peers"][0]["capacity"] == 0
+
+
+def test_reachable_is_derived_from_endpoints() -> None:
+    """reachable = bool(endpoints): a peer with no advertised endpoint is not a master."""
+    h = make_handler()
+    send(h, register_frame(cid=CID), peer_ip="198.51.100.7", peer_port=54321)
+    no_endpoint = register_frame(cid=CID2, host="198.51.100.8")
+    no_endpoint.pop("endpoints")
+    send(h, no_endpoint, peer_ip="198.51.100.8", peer_port=54322)
+    response = decoded(send(h, query_frame(limit=10), peer_ip="10.0.0.1", peer_port=1111))
+    assert response is not None
+    reachable = {p["cid"]: p["reachable"] for p in response["peers"]}
+    assert reachable == {CID: True, CID2: False}
+    # the endpoint-less peer falls back to its observed UDP source endpoint
+    fallback = next(p for p in response["peers"] if p["cid"] == CID2)
+    assert (fallback["ip"], fallback["port"], fallback["proto"]) == ("198.51.100.8", 54322, "udp")
+    # refresh never flips reachable (the record still advertises no endpoint)
+    send(
+        h,
+        {
+            "protocol_version": "boot/1",
+            "type": "refresh",
+            "cid": CID2,
+            "bucket": "shared",
+            "group": "home",
+        },
+        peer_ip="198.51.100.8",
+        peer_port=54322,
+    )
+    after = h.routing.get(CID2, "shared", "home")
+    assert after is not None
+    assert after.reachable is False
 
 
 def test_query_group_filter() -> None:
@@ -593,9 +669,11 @@ def test_wire_serialization_is_compact_and_spec_ordered() -> None:
         "bucket",
         "group",
         "version",
+        "capacity",
         "reachable",
     ]
     assert decoded_ok["peers"][0]["ip"] == "198.51.100.7"  # advertised endpoint wins
+    assert decoded_ok["peers"][0]["capacity"] == 20  # relayed advisory hint
     assert decoded_ok["count"] == 1
     assert decoded_ok["error"] is None and decoded_ok["retry_after"] is None
     # compact separators, and valid JSON that round-trips

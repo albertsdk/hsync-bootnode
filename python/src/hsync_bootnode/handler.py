@@ -20,7 +20,7 @@ from typing import Literal, cast
 
 from pydantic import SecretStr, ValidationError
 
-from hsync_bootnode.debug import debug_log
+from hsync_bootnode.debug import debug_event, debug_log
 from hsync_bootnode.protocol import (
     BOOT_ACK_ADAPTER,
     BOOT_FRAME_ADAPTER,
@@ -146,6 +146,14 @@ class BootHandler:
         self._bad_token_ip = TokenBucketLimiter(
             capacity=BAD_TOKEN_IP_LIMIT, refill=BAD_TOKEN_IP_LIMIT, window=WINDOW_SECONDS
         )
+        debug_event(
+            "handler ready",
+            ttl=int(self.ttl),
+            private=self._private,
+            protected_buckets=len(self._protected),
+            group_keys=len(self._tokens),
+            rate_limits=self._enforce_rate_limits,
+        )
 
     # ------------------------------------------------------------------ API
 
@@ -174,12 +182,13 @@ class BootHandler:
         try:
             frame = BOOT_FRAME_ADAPTER.validate_json(raw)
         except ValidationError:
-            debug_log("drop: invalid frame")
+            debug_event("drop invalid-frame", peer=f"{peer_ip}:{peer_port}", bytes=len(raw))
             return None
         # Admission is charged only for VALID frames: malformed/unknown frames
         # must stay silently dropped and must not drain the per-IP bucket (a
         # garbage sender behind a shared NAT must not throttle its neighbours).
         if not self._limit_ok(self._ops_ip, peer_ip):
+            debug_event("rate_limited ip-admission", peer=f"{peer_ip}:{peer_port}")
             return self._rate_limited(self._ops_ip, peer_ip)
 
         # Prune expired records periodically (spec: every 15 s) so memory does
@@ -187,6 +196,13 @@ class BootHandler:
         # (self._last_prune is None) and then once per prune_interval.
         self._maybe_prune()
 
+        debug_event(
+            f"frame {frame.type}",
+            peer=f"{peer_ip}:{peer_port}",
+            cid=getattr(frame, "cid", None),
+            bucket=getattr(frame, "bucket", None),
+            group=getattr(frame, "group", None),
+        )
         if isinstance(frame, BootRegister):
             return self._register(frame, peer_ip, peer_port)
         if isinstance(frame, BootRefresh):
@@ -227,11 +243,22 @@ class BootHandler:
 
     def _register(self, model: BootRegister, peer_ip: str, peer_port: int) -> bytes:
         if not self._limit_ok(self._register_bucket, model.bucket):
-            debug_log("register rate_limited (bucket)")
+            debug_event(
+                "register rate_limited bucket",
+                cid=model.cid,
+                bucket=model.bucket,
+                peer=f"{peer_ip}:{peer_port}",
+            )
             return self._rate_limited(self._register_bucket, model.bucket)
         result = self._authorize(model.bucket, model.bucket_token, peer_ip)
         if result != "ok":
-            debug_log("register refused")
+            debug_event(
+                "register refused",
+                cid=model.cid,
+                bucket=model.bucket,
+                peer=f"{peer_ip}:{peer_port}",
+                reason=result,
+            )
             return self._refusal(result, peer_ip)
 
         record = PeerRecord(
@@ -245,32 +272,65 @@ class BootHandler:
             version=model.version,
             endpoints=list(model.endpoints),
             connected=model.connected or 0,
-            reachable=True,
+            reachable=bool(model.endpoints),
+            capacity=model.capacity,
         )
         record.touch(self.ttl)
         self.routing.upsert(record)
-        debug_log("register ack")
+        debug_event(
+            "register ack",
+            cid=model.cid,
+            bucket=model.bucket,
+            peer=f"{peer_ip}:{peer_port}",
+            endpoints=len(model.endpoints),
+            reachable=record.reachable,
+            capacity=model.capacity,
+            connected=record.connected,
+            ttl=int(self.ttl),
+        )
         return self._ack(peer_ip, peer_port)
 
     def _refresh(self, model: BootRefresh, peer_ip: str, peer_port: int) -> bytes | None:
         if not self._limit_ok(self._register_bucket, model.bucket):
-            debug_log("refresh rate_limited (bucket)")
+            debug_event(
+                "refresh rate_limited bucket",
+                cid=model.cid,
+                bucket=model.bucket,
+                peer=f"{peer_ip}:{peer_port}",
+            )
             return self._rate_limited(self._register_bucket, model.bucket)
         result = self._authorize(model.bucket, model.bucket_token, peer_ip)
         if result != "ok":
-            debug_log("refresh refused")
+            debug_event(
+                "refresh refused",
+                cid=model.cid,
+                bucket=model.bucket,
+                peer=f"{peer_ip}:{peer_port}",
+                reason=result,
+            )
             return self._refusal(result, peer_ip)
 
         record = self.routing.get(model.cid, model.bucket, model.group)
         if record is None:
             # refresh must not create: an unknown CID is silently dropped so the
             # client falls back to a full register. Clean, anti-abuse.
-            debug_log("refresh dropped (unknown record)")
+            debug_event(
+                "refresh dropped unknown-record",
+                cid=model.cid,
+                bucket=model.bucket,
+                peer=f"{peer_ip}:{peer_port}",
+            )
             return None
         record.touch(self.ttl)
         if model.connected is not None:
             record.connected = model.connected
-        debug_log("refresh ack")
+        debug_event(
+            "refresh ack",
+            cid=model.cid,
+            bucket=model.bucket,
+            peer=f"{peer_ip}:{peer_port}",
+            connected=record.connected,
+        )
         return self._ack(peer_ip, peer_port)
 
     def _leave(self, model: BootLeave, peer_ip: str) -> None:
@@ -285,28 +345,35 @@ class BootHandler:
         budget is charged exactly as for register/refresh/query.
         """
         if self._private and self._authorize(model.bucket, model.bucket_token, peer_ip) != "ok":
-            debug_log("leave refused")
+            debug_event("leave refused", cid=model.cid, bucket=model.bucket, peer=peer_ip)
             return None
         self.routing.remove(model.cid, model.bucket)
-        debug_log("leave removed")
+        debug_event("leave removed", cid=model.cid, bucket=model.bucket, peer=peer_ip)
         return None
 
     def _query(self, model: BootQuery, peer_ip: str) -> bytes:
         pair_key = f"{peer_ip}|{model.bucket}"
         if not self._limit_ok(self._query_pair, pair_key):
-            debug_log("query rate_limited (ip,bucket pair)")
+            debug_event("query rate_limited pair", bucket=model.bucket, peer=peer_ip)
             return self._rate_limited(self._query_pair, pair_key)
         if not self._limit_ok(self._query_bucket, model.bucket):
-            debug_log("query rate_limited (bucket)")
+            debug_event("query rate_limited bucket", bucket=model.bucket, peer=peer_ip)
             return self._rate_limited(self._query_bucket, model.bucket)
         result = self._authorize(model.bucket, model.bucket_token, peer_ip)
         if result != "ok":
-            debug_log("query refused")
+            debug_event("query refused", bucket=model.bucket, peer=peer_ip, reason=result)
             return self._refusal(result, peer_ip)
 
         records = self.routing.sample(model.bucket, model.group, model.limit)
         peers = [self._to_peer(record, model) for record in records]
-        debug_log(f"query response ({len(peers)} peers)")
+        debug_event(
+            "query response",
+            bucket=model.bucket,
+            group=model.group,
+            peer=peer_ip,
+            peers=len(peers),
+            cids=[p.cid for p in peers],
+        )
         return BOOT_RESPONSE_ADAPTER.dump_json(
             BootResponse(
                 protocol_version=PROTOCOL_VERSION_BOOT,
@@ -408,6 +475,7 @@ class BootHandler:
                 bucket=model.bucket,
                 group=record.group,
                 version=record.version,
+                capacity=record.capacity,
                 reachable=record.reachable,
             )
         else:
@@ -420,6 +488,7 @@ class BootHandler:
                 bucket=model.bucket,
                 group=record.group,
                 version=record.version,
+                capacity=record.capacity,
                 reachable=record.reachable,
             )
         record.wire = peer

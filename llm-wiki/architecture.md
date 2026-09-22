@@ -35,7 +35,7 @@ UDP :443
 | `python/src/hsync_bootnode/tokens.py` | D11 derivation `HMAC-SHA256(key, "boot/1" || bucket)[:32]` | `derive_bucket_token`, `verify_bucket_token` |
 | `python/src/hsync_bootnode/server.py` | QUIC adapter: in-memory self-signed TLS identity (`hsync_common.ssl_utils`), RETRY, frame IO bound to 8 KiB (framing only — parsing/validation lives in `handler.py`) | `start_server`, `NodeIdentity`, `make_identity`, `BootQuicProtocol` |
 | `python/src/hsync_bootnode/upnp.py` | SSDP IGD discovery + SOAP `AddPortMapping`/`DeletePortMapping`; stateless when no IGD | `UpnpManager.run`, `add_port_mapping`, `discover_igd` |
-| `python/src/hsync_bootnode/debug.py` | Opt-in stderr diagnostics (non-PII); off by default (no-log D7) | `configure_debug`, `debug_log` |
+| `python/src/hsync_bootnode/debug.py` | Opt-in **full operation log** on stderr, peer identity included (decision #25); off by default, never on disk (no-log D7) | `configure_debug`, `debug_enabled`, `debug_log`, `debug_event` |
 | `python/src/hsync_bootnode/cli.py` | Typer multi-command app; group keys from `--keys-fd` / `HSYNC_BOOTNODE_KEYS_FD` (read once); fail-fast config; `--ttl`/`--debug`/`--ready-file` seams | `run`, `main` (`--version`), `_load_keys` |
 
 ## Request flow (per datagram/stream frame)
@@ -140,15 +140,20 @@ the diagnostics (L4 `bench/profile_handshake.py` — handshake vs `aioquic`
 closing drain; L5 `bench/cpu_saturation.py` — load vs node CPU%) are
 Python-internal.
 
-## Known gaps / next phases (per `PIANO-hsync-bootnode-p2p.md`)
+## Known gaps / next phases
 
-- Fase B: move `PROTOCOL_VERSION_BOOT`, frame models, token derivation and D11
-  rules into `hsync-common` (`protocol/bootnode.py`) + fixtures drift tests +
-  capabilities v3; align the wire with D10/D14 (drop the unused `capacity`
-  field, derive `reachable` from `bool(endpoints)` instead of hardcoding it).
-- Fase C–D: client `hsync p2p` (the bootnode discovery plan) + its black-box
-  suite. The peer data-plane protocol is renamed `lan/1` → `p2p/1` and the
-  `lan` subcommand disappears (plan decision D14).
-- Fase E–F: desktop mode, wd-os5 packaging, Android mirror (`quiche`).
-- Fase G: dual-doc alignment (this wiki + `docs/`).
-- Rust (quinn) and C implementations: not started (v2).
+The monorepo `p2p`/bootnode migration is **complete** (the plan document that
+drove it has been removed after closing it):
+
+- **Done**: `hsync-common` mirror (`protocol/bootnode.py`, fixtures, drift test,
+  capabilities v3); the advisory `capacity` hint (`0..32`) and the derived
+  `reachable` flag relayed `register` → record → `query` (decisions 23–24); the
+  bootnode's opt-in **debug operation log** (decision 25); client `hsync p2p`
+  with both discovery plans and its black-box suite; desktop mode, wd-os5
+  packaging; the peer data-plane protocol is `p2p/1`.
+- **Open**: **Android client for `boot/1`** (deferred; Q-05 decided: `quiche` via
+  JNI). Resumption document: the Android project's
+  [`quic-jni`](https://github.com/albertsdk/hsync-android/blob/main/llm-wiki/modules/quic-jni.md)
+  page, plus the workspace-root `PIANO-F2-ANDROID-bootnode.md` (not versioned in
+  this repository).
+- **Not started (v2)**: Rust (`quinn`) and optional C implementations.

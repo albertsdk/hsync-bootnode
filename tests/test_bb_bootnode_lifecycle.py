@@ -8,7 +8,7 @@ the wire protocol.
 from __future__ import annotations
 
 import pytest
-from harness import register_frame, run_cli
+from harness import query_frame, register_frame, run_cli
 
 
 def test_version_flag_prints_protocol_and_impl() -> None:
@@ -47,16 +47,36 @@ async def test_ready_file_removed_on_graceful_sigterm(bootnode_factory) -> None:
 
 
 @pytest.mark.asyncio
-async def test_debug_mode_emits_non_pii_stderr(bootnode_factory, bucket, rng) -> None:
+async def test_debug_mode_emits_the_full_operation_log(bootnode_factory, bucket, rng) -> None:
+    """``--debug`` follows the whole request life cycle, peer identity included."""
     from harness import BootClient, random_cid
 
     handle = bootnode_factory(debug=True)
     cid = random_cid(rng)
     async with BootClient(handle.port) as client:
         await client.exchange(register_frame(cid, bucket))
+        await client.exchange(query_frame(bucket))
 
     stderr = handle.stderr_text()
     assert "[hsync-bootnode][debug]" in stderr
     assert "register ack" in stderr
-    # non-PII: the peer's CID must never appear in diagnostics
+    assert "query response" in stderr
+    # The operator opted in: the log must say WHO connected and what happened.
+    assert cid in stderr
+    assert f"bucket={bucket}" in stderr
+
+
+@pytest.mark.asyncio
+async def test_default_mode_keeps_peer_data_out_of_stderr(bootnode_factory, bucket, rng) -> None:
+    """Without ``--debug`` nothing peer-related leaves memory."""
+    from harness import BootClient, random_cid
+
+    handle = bootnode_factory()
+    cid = random_cid(rng)
+    async with BootClient(handle.port) as client:
+        await client.exchange(register_frame(cid, bucket))
+
+    stderr = handle.stderr_text()
+    assert "[hsync-bootnode][debug]" not in stderr
     assert cid not in stderr
+    assert bucket not in stderr

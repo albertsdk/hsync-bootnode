@@ -80,3 +80,32 @@ async def test_default_mode_keeps_peer_data_out_of_stderr(bootnode_factory, buck
     assert "[hsync-bootnode][debug]" not in stderr
     assert cid not in stderr
     assert bucket not in stderr
+
+
+def test_port_in_use_fails_fast_with_actionable_error() -> None:
+    """A bind failure reports exit code 3 + an actionable message, no traceback."""
+    import socket
+
+    holder = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        holder.bind(("127.0.0.1", 0))
+        port = int(holder.getsockname()[1])
+
+        # Guard: if the OS lets a second plain bind succeed (SO_REUSEPORT
+        # defaults), the node would start and this scenario cannot be reproduced.
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            probe.bind(("127.0.0.1", port))
+        except OSError:
+            probe.close()
+        else:
+            probe.close()
+            pytest.skip("UDP SO_REUSEPORT allows a second bind; cannot reproduce")
+
+        result = run_cli(["run", "--host", "127.0.0.1", "--port", str(port)])
+        assert result.returncode == 3
+        assert "cannot bind" in result.stderr
+        assert "already in use" in result.stderr
+        assert "Traceback" not in result.stderr
+    finally:
+        holder.close()

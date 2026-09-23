@@ -6,7 +6,8 @@
 
 ## Transport
 
-- QUIC/UDP, port **443** (single listener; no TCP fallback — zero legacy).
+- QUIC/UDP, default port **443** (the shared `BOOT_DEFAULT_PORT`; any UDP port is
+  selectable with `--port`). Single listener, no TCP fallback — zero legacy.
 - TLS 1.3 inside QUIC: the exchanged peer list is not readable by ISPs.
 - ALPN `hsync-boot/1`.
 - NDJSON payloads (one JSON object per line) over bidirectional QUIC streams;
@@ -42,6 +43,12 @@
 - **No targeted requests**: schema rejects unknown fields (`extra="forbid"`); there is no field for a file path/hash. Agnostic by construction (D3).
 - `type` is mandatory: the frame kind is declared, never guessed from the payload.
 - **CID**: `^[A-Za-z0-9]{21}$` full-match.
+- **Bucket name**: the canonical HSYNC bucket name shared by client, server and
+  desktop (`hsync-common` SSOT, `hsync_common.path_validation.is_valid_bucket_name`):
+  1–63 characters, alphanumeric with `-` and `_` allowed only in the middle
+  (never leading or trailing). It is the same sync bucket the data plane uses,
+  so a value outside that rule makes the frame invalid and it is silently
+  dropped — the daemon and the client mirror enforce one identical domain.
 - **Anonymous `query`**: on an open node anyone with bucket (+group) can list peers; privacy via optional `bucket_token` (D11). On a private node every query must carry a valid token (see §Auth).
 - **No-log**: no timestamps/IPs written to disk anywhere in this path.
 - Malformed, unknown-`type` or oversized frames are silently dropped (no oracle, no log).

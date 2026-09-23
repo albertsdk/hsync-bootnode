@@ -18,7 +18,7 @@ hsync-bootnode --version
 | Option | Default | Description |
 |---|---|---|
 | `--host` | `0.0.0.0` | Address to bind the QUIC/UDP listener to. |
-| `--port` | `443` | UDP port (1–65535). 443 is the QUIC/HTTP3 default. |
+| `--port` | `443` | UDP port (1–65535). 443 is the QUIC/HTTP3 default; ports below 1024 need root or `CAP_NET_BIND_SERVICE` (the systemd unit grants it). |
 | `--protected-bucket` | *(none)* | Bucket that requires a valid `bucket_token` (D11). Repeatable. Declaring a protected bucket without provisioning its key fails fast at startup (exit code 2). |
 | `--keys-fd` | *(none)* | File descriptor carrying the group keys (see below). Environment variable form: `HSYNC_BOOTNODE_KEYS_FD`. |
 | `--private` | *(disabled flag)* | Private node: every frame must carry a valid `bucket_token`, for **every** bucket (not only `--protected-bucket`). Starting it with no group key fails fast (exit code 2). Environment variable form: `HSYNC_BOOTNODE_PRIVATE=1`. |
@@ -32,6 +32,14 @@ hsync-bootnode --version
 
 Prints the version and the protocol, e.g.
 `hsync-bootnode 0.1.0 (boot/1, Python v1)`, then exits.
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Normal termination (Ctrl+C / SIGTERM). |
+| 2 | Configuration error: missing/duplicate group key, `--private` without a key, out-of-range `--ttl`, etc. The node refuses to start. |
+| 3 | Listener bind failure: the port is privileged, already in use, or `--host` is not a local address. The stderr message explains how to fix it. |
 
 ## Environment variables
 
@@ -187,6 +195,9 @@ Edit the executable paths inside each unit to the location of your venv.
 |---|---|
 | `configuration error: protected bucket(s) without a group key …` | You declared `--protected-bucket` without provisioning its key: pass `--keys-fd`/`HSYNC_BOOTNODE_KEYS_FD` with a matching `bucket=<key>` line. |
 | `configuration error: private node without any group key …` | You started a private node (`--private` / `HSYNC_BOOTNODE_PRIVATE=1`) without provisioning a key: pass `--keys-fd` with at least one `bucket=<key>` line. |
+| `error: cannot bind the QUIC/UDP listener … — permission denied` | You bound a privileged port (< 1024, e.g. the 443 default) without root: use `--port 8443` (any port ≥ 1024), run as root, or grant the capability (`sudo setcap cap_net_bind_service=+ep <hsync-bootnode>`). The systemd unit already grants it. |
+| `error: cannot bind the QUIC/UDP listener … — address already in use` | Another process (or another node instance) is using that UDP port: stop it, or pick a free port with `--port`. |
+| `error: cannot bind the QUIC/UDP listener … — the address is not available` | `--host` is not a local interface address: use a local IP, or `0.0.0.0` to listen on all of them. |
 | Client gets `token_required` | The bucket is gated (declared `--protected-bucket`, or every bucket on a private node) and the client's derived token is missing/wrong — check the group key on the client side. |
 | Client gets `rate_limited` | A limit was exceeded (per-IP ~10 req/s, 5/min failed tokens, 5/min queries per (IP, bucket), 10/min registers per bucket); wait for `retry_after` seconds. |
 | No UPnP mapping | Router without IGD, or mapping refused: the node keeps running stateless; publish a public UDP endpoint in another way or use `--no-upnp` to skip discovery entirely. |

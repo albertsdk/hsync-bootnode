@@ -10,23 +10,23 @@ attributes; do not fork the shapes here.
 ## Common header
 
 Every frame carries `{protocol_version, type, ...}`. `_BootFrame`
-(`python/src/hsync_bootnode/protocol.py:82`) is the shared base: mandatory `type`
+(`python/src/hsync_bootnode/protocol.py:104`) is the shared base: mandatory `type`
 discriminator plus `protocol_version` pinned to `boot/1`
-(`PROTOCOL_VERSION_BOOT`, `protocol.py:42`). The server routes on `type` and never
+(`PROTOCOL_VERSION_BOOT`, `protocol.py:45`). The server routes on `type` and never
 guesses the frame kind from the payload shape.
 
 ## Frame inventory
 
 | Frame | Direction | Model | Fields (beyond the header) |
 |---|---|---|---|
-| `register` | client → server | `BootRegister` (`protocol.py:91`) | `cid`, `bucket`, `group?`, `bucket_token?`, `cert_fp`, `version`, `capacity`, `endpoints[]`, `connected?` |
-| `refresh` | client → server | `BootRefresh` (`protocol.py:112`) | `cid`, `bucket`, `group?`, `bucket_token?`, `connected?` |
-| `leave` | client → server | `BootLeave` (`protocol.py:123`) | `cid`, `bucket`, `bucket_token?` |
-| `query` | client → server | `BootQuery` (`protocol.py:137`) | `bucket`, `group?`, `bucket_token?`, `limit` (1–50, default 20) |
-| `ack` | server → client | `BootAck` (`protocol.py:147`) | `observed_endpoint`, `ttl`, `server_time`, `retry_after?` |
-| `response` | server → client | `BootResponse` (`protocol.py:180`) | `peers[]`, `count`, `ttl`, `error?` (`token_required`/`rate_limited`), `retry_after?` |
+| `register` | client → server | `BootRegister` (`protocol.py:113`) | `cid`, `bucket`, `group?`, `bucket_token?`, `cert_fp`, `version`, `capacity`, `endpoints[]`, `connected?` |
+| `refresh` | client → server | `BootRefresh` (`protocol.py:134`) | `cid`, `bucket`, `group?`, `bucket_token?`, `connected?` |
+| `leave` | client → server | `BootLeave` (`protocol.py:145`) | `cid`, `bucket`, `bucket_token?` |
+| `query` | client → server | `BootQuery` (`protocol.py:159`) | `bucket`, `group?`, `bucket_token?`, `limit` (1–50, default 20) |
+| `ack` | server → client | `BootAck` (`protocol.py:169`) | `observed_endpoint`, `ttl`, `server_time`, `retry_after?` |
+| `response` | server → client | `BootResponse` (`protocol.py:202`) | `peers[]`, `count`, `ttl`, `error?` (`token_required`/`rate_limited`), `retry_after?` |
 
-`capacity` (domain `0..32`, default `0`; `CAPACITY_MAX` at `protocol.py:59`) is the
+`capacity` (domain `0..32`, default `0`; `CAPACITY_MAX` at `protocol.py:63`) is the
 **advisory service-capacity hint**: the number of concurrent peer-download reads the
 peer declares it can serve (`0` = not a seeder). The handler copies it from
 `register` onto the record and relays it in every `query` peer, but it is **not
@@ -44,14 +44,14 @@ never changes it; a change requires a new `register`.
 
 | Model | Owner | Fields |
 |---|---|---|
-| `Endpoint` (`protocol.py:62`) | `BootRegister.endpoints[]` | `proto` (`tcp`/`udp`), `host`, `port` |
-| `ObservedEndpoint` (`protocol.py:72`) | `BootAck.observed_endpoint` | `proto`, `ip`, `port` (STUN-echo of the source) |
-| `BootPeer` (`protocol.py:157`) | `BootResponse.peers[]` | `cid`, `ip`, `port`, `proto`, `cert_fp`, `bucket`, `group?`, `version`, `capacity`, `reachable` |
+| `Endpoint` (`protocol.py:84`) | `BootRegister.endpoints[]` | `proto` (`tcp`/`udp`), `host`, `port` |
+| `ObservedEndpoint` (`protocol.py:94`) | `BootAck.observed_endpoint` | `proto`, `ip`, `port` (STUN-echo of the source) |
+| `BootPeer` (`protocol.py:179`) | `BootResponse.peers[]` | `cid`, `ip`, `port`, `proto`, `cert_fp`, `bucket`, `group?`, `version`, `capacity`, `reachable` |
 
 The client→server frames are dispatched in one pass by the discriminated union
 `BootFrame = Annotated[BootRegister | BootRefresh | BootLeave | BootQuery,
-Field(discriminator="type")]` (`protocol.py:194`) and validated from raw bytes via
-`BOOT_FRAME_ADAPTER` (`protocol.py:198`, a `TypeAdapter[BootFrame]`). The
+Field(discriminator="type")]` (`protocol.py:216`) and validated from raw bytes via
+`BOOT_FRAME_ADAPTER` (`protocol.py:220`, a `TypeAdapter[BootFrame]`). The
 server→client frames (`BootAck`/`BootResponse`/`BootPeer`) are deliberately
 excluded from the union: they are never validated on the input path.
 
@@ -59,10 +59,12 @@ excluded from the union: they are never validated on the input path.
 
 | Constant | Location | Rule |
 |---|---|---|
-| `CID_PATTERN` | `protocol.py:46` | `^[A-Za-z0-9]{21}$` (local mirror of `hsync_common.models.event.CID_PATTERN`; Fase B swaps it for the SSOT import + drift test) |
-| `BUCKET_TOKEN_LEN` | `protocol.py:50` | 64 (lowercase hex = `hex(32 bytes)`), derived as `HMAC-SHA256(key, "boot/1" || bucket)[:32]` |
-| `BucketProto` | `protocol.py:53` | `Literal["tcp", "udp"]` |
-| `CAPACITY_MAX` | `protocol.py:59` | 32 — upper bound of the advisory `capacity` hint (`0` = not a seeder); mirrors `serve_slots` |
+| `CID_PATTERN` | imported from `hsync_common.models.event` (`protocol.py:17`) and re-exported | `^[A-Za-z0-9]{21}$` — **SSOT import** (hsync-common), pinned to the boot/1 spec value by `test_cid_pattern_matches_boot1_spec` |
+| `BucketName` | `protocol.py:81` | canonical HSYNC bucket name via `hsync_common.path_validation.is_valid_bucket_name` (`[A-Za-z0-9]` with `-`/`_` in the middle, 1..63) — applied to every wire `bucket` |
+| `BUCKET_TOKEN_LEN` | `protocol.py:54` | 64 (lowercase hex = `hex(32 bytes)`), derived as `HMAC-SHA256(key, "boot/1" || bucket)[:32]` |
+| `BucketProto` | `protocol.py:57` | `Literal["tcp", "udp"]` |
+| `CAPACITY_MAX` | `protocol.py:63` | 32 — upper bound of the advisory `capacity` hint (`0` = not a seeder); mirrors `serve_slots` |
+| `BOOT_DEFAULT_PORT` | imported from `hsync_common.constants` (`cli.py`, `--port` default) | `443` — default UDP listener port (spec §Transport); single SSOT shared with `hsync-client` |
 
 ## Runtime (non-wire) structures
 

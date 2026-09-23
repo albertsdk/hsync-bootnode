@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import os
 
 from typer.testing import CliRunner
@@ -88,3 +89,72 @@ def test_ready_file_helpers_write_pid_and_remove(tmp_path) -> None:
     assert not ready.exists()
     # removing a missing file is a no-op, not an error
     _remove_ready_file(str(ready))
+
+
+def _combined(result) -> str:
+    return result.output + getattr(result, "stderr", "") or result.output
+
+
+def _patch_run_no_side_effects(monkeypatch, start_server) -> None:
+    """Stub the listener start and the two process-global installers.
+
+    ``run`` reaches ``_install_uvloop``/``_install_sigterm_handler`` before the
+    bind; stubbing them keeps the test process free of a global event-loop policy
+    swap and a SIGTERM handler.
+    """
+    monkeypatch.setattr("hsync_bootnode.cli.start_server", start_server)
+    monkeypatch.setattr("hsync_bootnode.cli._install_uvloop", lambda: None)
+    monkeypatch.setattr("hsync_bootnode.cli._install_sigterm_handler", lambda: None)
+
+
+def test_bind_permission_denied_is_actionable(monkeypatch) -> None:
+    async def _boom(*args, **kwargs):  # noqa: ANN002, ANN003
+        # aioquic wraps the real error: no errno on the outer OSError.
+        raise OSError("could not bind to local_addr ('0.0.0.0', 443)") from PermissionError(
+            errno.EACCES, "Permission denied"
+        )
+
+    _patch_run_no_side_effects(monkeypatch, _boom)
+    result = runner.invoke(app, ["run", "--port", "443"])
+    assert result.exit_code == 3
+    out = _combined(result)
+    assert "permission denied" in out
+    assert "CAP_NET_BIND_SERVICE" in out
+    assert "--port 8443" in out
+    assert "Traceback" not in out
+
+
+def test_bind_address_in_use_is_actionable(monkeypatch) -> None:
+    async def _boom(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise OSError(errno.EADDRINUSE, "Address already in use")
+
+    _patch_run_no_side_effects(monkeypatch, _boom)
+    result = runner.invoke(app, ["run", "--port", "443"])
+    assert result.exit_code == 3
+    out = _combined(result)
+    assert "already in use" in out
+    assert "--port <PORT>" in out
+    assert "Traceback" not in out
+
+
+def test_bind_bad_host_is_actionable(monkeypatch) -> None:
+    async def _boom(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise OSError(errno.EADDRNOTAVAIL, "Cannot assign requested address")
+
+    _patch_run_no_side_effects(monkeypatch, _boom)
+    result = runner.invoke(app, ["run", "--host", "127.0.0.1", "--port", "443"])
+    assert result.exit_code == 3
+    out = _combined(result)
+    assert "not available" in out
+    assert "--host" in out
+    assert "0.0.0.0" in out
+
+
+def test_run_port_default_uses_the_shared_ssot() -> None:
+    """The CLI ``--port`` default is the shared ``BOOT_DEFAULT_PORT`` (spec §Transport)."""
+    from hsync_common.constants import BOOT_DEFAULT_PORT
+    from typer.main import get_command
+
+    run_command = get_command(app).commands["run"]
+    port_default = next(param.default for param in run_command.params if param.name == "port")
+    assert port_default == BOOT_DEFAULT_PORT == 443

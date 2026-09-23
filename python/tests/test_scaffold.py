@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -39,8 +40,48 @@ from hsync_bootnode.tokens import derive_bucket_token, verify_bucket_token
 CID = "A1b2C3d4E5f6G7h8I9j0K"
 
 
-def test_cid_pattern() -> None:
-    assert __import__("re").fullmatch(CID_PATTERN, CID)
+def test_cid_pattern_matches_boot1_spec() -> None:
+    """CID shape is the hsync-common SSOT, pinned to the documented boot/1 value.
+
+    ``CID_PATTERN`` is imported from ``hsync_common.models.event`` (Fase B): this
+    test fails if an upstream change silently alters the documented wire shape.
+    """
+    assert CID_PATTERN == r"^[A-Za-z0-9]{21}$"
+    assert re.fullmatch(CID_PATTERN, CID)
+    assert re.fullmatch(CID_PATTERN, "A" * 20) is None
+    assert re.fullmatch(CID_PATTERN, "A" * 22) is None
+
+
+def test_bucket_uses_canonical_hsync_name_rule() -> None:
+    """``bucket`` accepts the canonical HSYNC name and rejects everything else."""
+    register = {
+        "protocol_version": "boot/1",
+        "type": "register",
+        "cid": CID,
+        "cert_fp": "AA:BB",
+        "version": "1.0.0",
+    }
+    for good in ("shared", "a", "my-bucket_1", "b" * 63):
+        assert BootRegister(**register, bucket=good).bucket == good
+    for bad in ("", "-lead", "trail-", "has space", "dot.name", "a" * 64):
+        with pytest.raises(ValueError):
+            BootRegister(**register, bucket=bad)
+
+    # query carries the same domain (no cid / cert_fp)
+    assert BootQuery(protocol_version="boot/1", type="query", bucket="shared").bucket == "shared"
+    with pytest.raises(ValueError):
+        BootQuery(protocol_version="boot/1", type="query", bucket="has space")
+
+    # BootPeer is validated on the same rule
+    with pytest.raises(ValueError):
+        BootPeer(
+            cid=CID,
+            ip="198.51.100.7",
+            port=443,
+            cert_fp="AA:BB",
+            bucket="has space",
+            version="1.0.0",
+        )
 
 
 def test_register_accepts_valid_and_rejects_unknown_fields() -> None:

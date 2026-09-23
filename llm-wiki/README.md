@@ -43,8 +43,9 @@ Internal, agent-optimized knowledge base for the `hsync-bootnode` project
 5. **Zero backward compatibility**: breaking the wire contract means bumping
    the mandatory `protocol_version` (`boot/1`) and updating spec, fixtures,
    implementation and tests atomically.
-6. **SSOT note**: the CID pattern `^[A-Za-z0-9]{21}$` is currently a local
-   mirror of `hsync_common.models.event.CID_PATTERN`
-   (`python/src/hsync_bootnode/protocol.py:41`); Fase B replaces the mirror
-   with the `hsync-common` import and adds `protocol/bootnode.py` to
-   `hsync-common`.
+6. **SSOT note**: the CID shape and the bucket-name rule are **imported** from
+   `hsync-common` (`hsync_common.models.event.CID_PATTERN`,
+   `hsync_common.path_validation.is_valid_bucket_name`), not re-declared locally;
+   the boot/1 spec + fixtures stay the cross-language contract. The daemon also
+   reuses `hsync_common.ssl_utils` for its in-memory TLS identity (see
+   `decisions.md` #26 and hsync-common ADR-0033).

@@ -1,4 +1,4 @@
-.TH HSYNC-BOOTNODE 1 "2026-09-21" "hsync-bootnode 0.1.0" "User Commands"
+.TH HSYNC-BOOTNODE 1 "2026-09-23" "hsync-bootnode 0.1.0" "User Commands"
 .SH NAME
 hsync-bootnode \- HSYNC P2P bootstrap node (no-log, in-memory, zero-knowledge)
 .SH SYNOPSIS
@@ -30,7 +30,8 @@ Address to bind the QUIC/UDP listener to. Default:
 .IR 0.0.0.0 .
 .TP
 .BI run\ \fR--port\fP= PORT
-UDP port (1\-65535). Default: 443 (QUIC/HTTP3).
+UDP port (1\-65535). Default: 443 (QUIC/HTTP3). Ports below 1024 need root or
+.BR CAP_NET_BIND_SERVICE .
 .TP
 .BI run\ \fR--protected-bucket\fP= NAME
 Bucket requiring a valid
@@ -149,6 +150,23 @@ Show the certificate fingerprint printed at startup to pin the node on
 clients:
 .br
 .B hsync-bootnode run --port 443
+.TP
+Unprivileged port (no root or capability needed):
+.br
+.B hsync-bootnode run --port 8443
+.SH EXIT STATUS
+.TP
+.B 0
+Normal termination (Ctrl+C or SIGTERM).
+.TP
+.B 2
+Configuration error (missing/duplicate group key, private node without a key,
+out-of-range value): the node refuses to start.
+.TP
+.B 3
+Listener bind failure: the QUIC/UDP port is privileged, already in use, or
+.B --host
+is not a local address. The message on stderr explains the remediation.
 .SH SEE ALSO
 .BR systemctl (1),
 .BR systemd.exec (5)

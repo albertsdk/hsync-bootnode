@@ -24,8 +24,9 @@
 #   -h, --help              Show this help message
 #
 # Requirements:
-#   - committed virtualenv .venv with PyInstaller (pip install pyinstaller;
-#     also declared as the Poetry build dependency in pyproject.toml). In the
+#   - Python virtual environment (.venv) with dependencies installed; run
+#     'poetry install' in python/ before the first build (PyInstaller is
+#     declared as the Poetry build dependency in pyproject.toml). In the
 #     Docker deb build this script runs under `poetry run`, so a pyinstaller
 #     found on PATH is accepted as fallback.
 #
@@ -76,7 +77,7 @@ readonly OUTPUT_DIR="${OUTPUT_BASE}/${PLATFORM}"
 readonly ONEDIR_DEFAULT_DIR="${OUTPUT_BASE}/onedir"
 readonly BUILD_DIR="build"
 readonly VENV_DIR=".venv"
-# PyInstaller binary: the committed venv wins; a pyinstaller found on PATH is
+# PyInstaller binary: the in-project venv wins; a pyinstaller found on PATH is
 # the fallback (see _resolve_pyinstaller). NOT readonly: it can be re-pointed.
 PYINSTALLER="${VENV_DIR}/bin/pyinstaller"
 # --strip needs binutils and is unreliable on Windows; omit it there.
@@ -152,7 +153,7 @@ clean_artifacts() {
     fi
 }
 
-# Resolve the PyInstaller executable: committed venv first, PATH fallback
+# Resolve the PyInstaller executable: in-project venv first, PATH fallback
 # (the Docker deb build runs this script under `poetry run`, where the poetry
 # venv is outside the project and is already first on PATH).
 _resolve_pyinstaller() {

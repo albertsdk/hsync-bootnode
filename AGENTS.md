@@ -263,20 +263,23 @@ After the first implementation pass, and before finalizing:
 
 Diff inspection and executed checks are required; stating that the implementation was reviewed is insufficient.
 
-#### Commands — Python (v1, committed virtualenv)
+#### Commands — Python (v1, in-project virtualenv)
 
-`poetry` is **not** installed and `ruff` is **not** on `PATH`: always invoke the
-tools through the committed virtualenv, prefixing every command with
-`cd hsync-bootnode/python &&`, one command per shell invocation.
+Dependencies are installed with `poetry install`, which creates the in-project
+`.venv` (the virtualenv is local and is **not** committed). `ruff` is **not** on
+`PATH`: always invoke the tools through that virtualenv, prefixing every command
+with `cd hsync-bootnode/python &&`, one command per shell invocation.
 
 ```
+# create/refresh the in-project virtualenv from pyproject.toml + poetry.lock
+cd hsync-bootnode/python && poetry install
 # targeted unit test, then the full unit suite
 cd hsync-bootnode/python && .venv/bin/python -m pytest -q tests/test_handler.py::test_name
 cd hsync-bootnode/python && .venv/bin/python -m pytest -q
 # lint + format check + types
 cd hsync-bootnode/python && .venv/bin/python -m ruff check .
 cd hsync-bootnode/python && .venv/bin/python -m ruff format --check .
-cd hsync-bootnode/python && .venv/bin/python -m mypy hsync_bootnode
+cd hsync-bootnode/python && .venv/bin/python -m mypy src/hsync_bootnode
 ```
 
 #### Commands — language-neutral code at the repository root (`tests/`, `bench/`)
@@ -387,7 +390,7 @@ replace self-verification or tests.
 ### 2. Typing & Data Models
 * **Centralized Models**: Strictly use type hints. For data structures, **ALWAYS** reuse the existing pydantic frame models in `python/src/hsync_bootnode/protocol.py` (or the `hsync-common` models when the contract lives there).
 * **No Manual Parsing**: **DO NOT** perform manual parsing or complex dictionary navigation (e.g., `dict.get()`) if a pydantic class already exists to validate and instantiate that specific frame.
-* **SSOT discipline**: shared contracts come from `hsync-common`, not from a local re-definition. Known local mirrors (e.g. the CID pattern in `protocol.py`) are temporary and must be replaced by the `hsync-common` import with a drift test as soon as the dependency exposes it.
+* **SSOT discipline**: shared contracts come from `hsync-common`, not from a local re-definition. The CID pattern and the bucket-name rule are imported from `hsync-common`; any future local mirror is temporary and must be replaced by the `hsync-common` import with a drift test as soon as the dependency exposes it.
 
 ### 3. Modularity & Maintainability
 * **File Responsibility Control**: Split a file when it contains multiple independently changing responsibilities (as `server.py`/`handler.py`/`routing.py` already do), not merely because of line count. Do not perform unrelated structural refactoring as part of a narrowly scoped fix.

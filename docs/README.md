@@ -19,7 +19,9 @@ every trace of your network is gone.
 ## Requirements
 
 - Python 3.12+ (Linux, macOS, Windows)
-- UDP port 443 (or any other UDP port) reachable from the Internet
+- UDP port 443 (or any other UDP port) reachable from the Internet — the 443
+  default is privileged: run as root, grant `CAP_NET_BIND_SERVICE` (the systemd
+  unit does), or use a port ≥ 1024 (e.g. `--port 8443`)
 - Optional: a UPnP-capable router for zero-touch UDP port mapping
 
 ## Install (Debian/Ubuntu — `.deb`)

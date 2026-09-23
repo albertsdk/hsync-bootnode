@@ -10,11 +10,13 @@ peer-related is ever written to disk.
 from __future__ import annotations
 
 import asyncio
+import errno
 import os
 import signal
 import sys
 
 import typer
+from hsync_common.constants import BOOT_DEFAULT_PORT
 from pydantic import SecretStr
 
 from hsync_bootnode import __version__
@@ -66,11 +68,14 @@ def main(
 def run(
     host: str = typer.Option("0.0.0.0", "--host", help="Address to bind the QUIC/UDP listener to."),
     port: int = typer.Option(
-        443,
+        BOOT_DEFAULT_PORT,
         "--port",
         min=1,
         max=65535,
-        help="UDP port (default 443 for QUIC/HTTP3).",
+        help=(
+            f"UDP port (default {BOOT_DEFAULT_PORT} for QUIC/HTTP3). "
+            "Ports below 1024 need root or CAP_NET_BIND_SERVICE."
+        ),
     ),
     protected_bucket: list[str] = typer.Option(
         [],
@@ -155,6 +160,65 @@ def run(
         asyncio.run(_async_main(host, port, handler, no_upnp, ready_file))
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass  # graceful shutdown: transport closed in _async_main's finally
+    except ListenerBindError as exc:
+        typer.echo(_bind_error_message(exc), err=True)
+        raise typer.Exit(code=3) from exc
+
+
+class ListenerBindError(Exception):
+    """The QUIC/UDP listener could not bind (privileged port, port in use, bad host)."""
+
+    def __init__(self, host: str, port: int, errno_value: int | None) -> None:
+        self.host = host
+        self.port = port
+        self.errno_value = errno_value
+        super().__init__(f"cannot bind {host}:{port}")
+
+
+def _errno_from(exc: BaseException) -> int | None:
+    """Return the OS errno behind a bind failure, from ``exc`` or its cause.
+
+    ``aioquic`` wraps the underlying ``create_datagram_endpoint`` error in a bare
+    ``OSError("could not bind to local_addr …")`` without an ``errno``; the real
+    ``PermissionError``/``OSError`` (carrying the errno) is chained as
+    ``__cause__``.
+    """
+    if isinstance(exc, OSError) and exc.errno is not None:
+        return exc.errno
+    cause = exc.__cause__
+    if isinstance(cause, OSError):
+        return cause.errno
+    return None
+
+
+def _bind_error_message(exc: ListenerBindError) -> str:
+    """Actionable stderr message for a failed listener bind (exit code 3)."""
+    target = f"{exc.host}:{exc.port}"
+    if exc.errno_value in (errno.EACCES, errno.EPERM):
+        return (
+            f"error: cannot bind the QUIC/UDP listener on {target} — permission denied.\n"
+            "       Ports below 1024 (the 443 default) need root or CAP_NET_BIND_SERVICE.\n"
+            "       Fix: use an unprivileged port (hsync-bootnode run --port 8443), run as\n"
+            "       root, or grant the capability to the binary:\n"
+            "         sudo setcap cap_net_bind_service=+ep <hsync-bootnode>\n"
+            "       The packaged systemd unit already grants CAP_NET_BIND_SERVICE."
+        )
+    if exc.errno_value == errno.EADDRINUSE:
+        return (
+            f"error: cannot bind the QUIC/UDP listener on {target} — address already in use.\n"
+            "       Another process or another node instance is using that UDP port.\n"
+            "       Stop it, or pick a free port: hsync-bootnode run --port <PORT>"
+        )
+    if exc.errno_value in (errno.EADDRNOTAVAIL, errno.EINVAL):
+        return (
+            f"error: cannot bind the QUIC/UDP listener on {target} — the address is not available.\n"
+            "       --host must be a local interface address, or 0.0.0.0 to listen on all of them."
+        )
+    reason = os.strerror(exc.errno_value) if exc.errno_value is not None else "bind failed"
+    return (
+        f"error: cannot bind the QUIC/UDP listener on {target}: {reason}.\n"
+        "       Check --host/--port; ports below 1024 need root or CAP_NET_BIND_SERVICE."
+    )
 
 
 async def _async_main(
@@ -164,7 +228,10 @@ async def _async_main(
     no_upnp: bool,
     ready_file: str | None = None,
 ) -> None:
-    server, bound_port, identity = await start_server(host, port, handler, retry=True)
+    try:
+        server, bound_port, identity = await start_server(host, port, handler, retry=True)
+    except OSError as exc:
+        raise ListenerBindError(host, port, _errno_from(exc)) from exc
     typer.echo(f"  running   : {host}:{bound_port} — cert fingerprint {identity.fingerprint}")
     debug_log(f"listener bound {host}:{bound_port} (retry+address-validation)")
 

@@ -14,7 +14,9 @@ from __future__ import annotations
 import re
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from hsync_common.models.event import CID_PATTERN
+from hsync_common.path_validation import is_valid_bucket_name
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter
 
 __all__ = [
     "PROTOCOL_VERSION_BOOT",
@@ -22,6 +24,7 @@ __all__ = [
     "BUCKET_TOKEN_LEN",
     "CAPACITY_MAX",
     "BucketProto",
+    "BucketName",
     "Endpoint",
     "ObservedEndpoint",
     "BootRegister",
@@ -41,9 +44,10 @@ __all__ = [
 # bootstrap channel's wire shape; peers then hard-fail instead of drifting.
 PROTOCOL_VERSION_BOOT: Literal["boot/1"] = "boot/1"
 
-# CID shape mirrors hsync_common.models.event.CID_PATTERN (``^[A-Za-z0-9]{21}$``).
-# Fase 2 (SSOT sync) replaces this local mirror with the hsync-common import.
-CID_PATTERN = r"^[A-Za-z0-9]{21}$"
+# CID shape is the hsync-common SSOT (``hsync_common.models.event.CID_PATTERN``,
+# ``^[A-Za-z0-9]{21}$``), re-exported here so ``from hsync_bootnode.protocol
+# import CID_PATTERN`` keeps working. The ``boot/1`` spec documents the same
+# value; ``test_cid_pattern_matches_boot1_spec`` pins the two together.
 _CID_RE = re.compile(CID_PATTERN)
 
 # hex(32 bytes) = 64 chars. Absent = open bucket (D11).
@@ -57,6 +61,24 @@ BucketProto = Literal["tcp", "udp"]
 # relays the value in ``query`` responses but never treats it as authoritative
 # (ADR 0030) — the authoritative value stays on the authenticated WSS handshake.
 CAPACITY_MAX = 32
+
+
+def _validate_bucket_name(value: str) -> str:
+    """Reject any value that is not a canonical HSYNC bucket name.
+
+    The ``boot/1`` ``bucket`` field is the same sync bucket the client, server
+    and desktop use, so the daemon validates it with the shared hsync-common
+    predicate instead of an ad-hoc length bound: ``[A-Za-z0-9]`` with ``-``/``_``
+    only in the middle, 1..63 characters. A non-canonical value makes the frame
+    invalid (silently dropped, like every other malformed frame).
+    """
+    if not is_valid_bucket_name(value):
+        raise ValueError("invalid bucket name (canonical HSYNC bucket name required)")
+    return value
+
+
+# Canonical bucket-name field type, applied to every ``bucket`` on the wire.
+BucketName = Annotated[str, AfterValidator(_validate_bucket_name)]
 
 
 class Endpoint(BaseModel):
@@ -99,7 +121,7 @@ class BootRegister(_BootFrame):
 
     type: Literal["register"]
     cid: str = Field(pattern=CID_PATTERN)
-    bucket: str = Field(min_length=1, max_length=128)
+    bucket: BucketName
     group: str | None = Field(default=None, max_length=128)
     bucket_token: str | None = None
     cert_fp: str = Field(min_length=1, max_length=256)
@@ -114,7 +136,7 @@ class BootRefresh(_BootFrame):
 
     type: Literal["refresh"]
     cid: str = Field(pattern=CID_PATTERN)
-    bucket: str = Field(min_length=1, max_length=128)
+    bucket: BucketName
     group: str | None = Field(default=None, max_length=128)
     bucket_token: str | None = None
     connected: int | None = Field(default=None, ge=0)
@@ -130,7 +152,7 @@ class BootLeave(_BootFrame):
 
     type: Literal["leave"]
     cid: str = Field(pattern=CID_PATTERN)
-    bucket: str = Field(min_length=1, max_length=128)
+    bucket: BucketName
     bucket_token: str | None = None
 
 
@@ -138,7 +160,7 @@ class BootQuery(_BootFrame):
     """Client asks for a random sample of peers. Only generic — no file targeting."""
 
     type: Literal["query"]
-    bucket: str = Field(min_length=1, max_length=128)
+    bucket: BucketName
     group: str | None = Field(default=None, max_length=128)
     bucket_token: str | None = None
     limit: int = Field(default=20, ge=1, le=50)
@@ -170,7 +192,7 @@ class BootPeer(BaseModel):
     port: int = Field(ge=1, le=65535)
     proto: BucketProto = "tcp"
     cert_fp: str = Field(min_length=1, max_length=256)
-    bucket: str = Field(min_length=1, max_length=128)
+    bucket: BucketName
     group: str | None = None
     version: str = Field(min_length=1, max_length=64)
     capacity: int = Field(default=0, ge=0, le=CAPACITY_MAX)

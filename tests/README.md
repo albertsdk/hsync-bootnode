@@ -26,6 +26,28 @@ cd hsync-bootnode
 HSYNC_BB_BOOTNODE=1 python/.venv/bin/python -m pytest -q tests/
 ```
 
+### Stress suite (opt-in)
+
+`tests/test_bb_bootnode_stress.py` is gated **in addition** by `HSYNC_BB_STRESS=1`
+and proves the node stays correct and alive under sustained concurrent load,
+bursts, churn, a garbage storm and a TTL sweep under load. Scale is bounded by
+environment knobs (read at import time):
+
+```bash
+cd hsync-bootnode
+HSYNC_BB_BOOTNODE=1 HSYNC_BB_STRESS=1 python/.venv/bin/python -m pytest -q tests/test_bb_bootnode_stress.py
+```
+
+| Knob | Default | Meaning |
+|---|---|---|
+| `HSYNC_BB_BOOTNODE_STRESS_CONNECTIONS` | 4 | concurrent QUIC clients |
+| `HSYNC_BB_BOOTNODE_STRESS_ROUNDS` | 4 | register/query/refresh/leave rounds per client |
+| `HSYNC_BB_BOOTNODE_STRESS_PEERS` | 50 | peers registered for the discovery/TTL/garbage scenarios |
+| `HSYNC_BB_BOOTNODE_STRESS_MAX_P99_MS` | 1000 | p99 latency budget for the mixed-load scenario |
+
+Without `HSYNC_BB_STRESS=1` the module is skipped, so the default suite stays
+fast.
+
 ## Language selection
 
 The executable under test is resolved from `HSYNC_BOOTNODE_BIN` (a path to the
@@ -66,6 +88,7 @@ HSYNC_BB_BOOTNODE=1 HSYNC_BOOTNODE_BIN=/path/to/hsync-bootnode \
 | `test_bb_bootnode_ratelimit.py` | burst → `rate_limited` + `retry_after` (query/register/bad-token) |
 | `test_bb_bootnode_negative.py` | malformed/unknown/oversized/forbidden frames, leave |
 | `test_bb_bootnode_ttl.py` | TTL expiry convergence, refresh keeps peer alive |
+| `test_bb_bootnode_stress.py` | **opt-in** (`HSYNC_BB_STRESS=1`): sustained mixed load, full-bucket discovery, rate-limit burst + recovery, garbage storm, TTL sweep under query load |
 
 Per-IP rate-limit isolation between *distinct* source IPs is not exercised here
 (loopback forces a single source address); it is covered by the white-box unit

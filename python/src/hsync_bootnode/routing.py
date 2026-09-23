@@ -136,7 +136,10 @@ class RoutingTable:
     def prune(self, now: float | None = None) -> int:
         """Drop expired records; returns the number of removed entries."""
         now = now if now is not None else time.monotonic()
-        expired = [k for k, r in self._records.items() if r.is_expired(now)]
+        # Inlined PeerRecord.is_expired(now) — now is already resolved, so the
+        # method would just evaluate ``now >= r.expires_at``. Inlining removes
+        # one Python call per record from the TTL sweep (behaviour identical).
+        expired = [k for k, r in self._records.items() if now >= r.expires_at]
         if not expired:
             return 0
         total = len(self._records)

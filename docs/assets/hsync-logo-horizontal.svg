@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- HSYNC horizontal logo: unified monoline "HSYNC" string.
+     The H carries the double-headed sync arrow on its crossbar; the chevron
+     wing ends terminate on the stem centerlines so their round caps stay
+     hidden inside the letterform. Flat, single color (#16A34A), transparent. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1136" height="512" viewBox="0 0 1136 512">
+  <title>HSYNC logo</title>
+  <g transform="translate(8,0)" fill="none" stroke="#16A34A" stroke-width="40" stroke-linecap="round" stroke-linejoin="round">
+    <!-- H stems -->
+    <path d="M64,168 V344 M208,168 V344"/>
+    <!-- Left arrowhead: wings end on the left stem centerline -->
+    <path d="M64,228 L32,256 L64,284"/>
+    <!-- Arrow shaft (crossbar) -->
+    <path d="M32,256 H240"/>
+    <!-- Right arrowhead: wings end on the right stem centerline -->
+    <path d="M208,228 L240,256 L208,284"/>
+    <!-- S -->
+    <path d="M440,168 L296,168 L296,256 L440,256 L440,344 L296,344"/>
+    <!-- Y -->
+    <path d="M512,168 L584,256 L656,168 M584,256 L584,344"/>
+    <!-- N -->
+    <path d="M728,344 L728,168 L872,344 L872,168"/>
+    <!-- C -->
+    <path d="M1088,168 L944,168 L944,344 L1088,344"/>
+  </g>
+</svg>

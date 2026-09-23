@@ -17,13 +17,11 @@ __all__ = [
     "PeerRecord",
     "RoutingTable",
     "DEFAULT_TTL",
-    "DEFAULT_PRUNE_INTERVAL",
     "DEFAULT_SAMPLE_LIMIT",
 ]
 
 # Seconds (spec: client refresh every 30 s, prune every 15 s, TTL 60 s).
 DEFAULT_TTL = 60.0
-DEFAULT_PRUNE_INTERVAL = 15.0
 DEFAULT_SAMPLE_LIMIT = 20
 
 
@@ -62,8 +60,7 @@ class PeerRecord:
 class RoutingTable:
     """Thread-safe in-memory registry of active peers (per ``boot/1``)."""
 
-    def __init__(self, ttl: float = DEFAULT_TTL) -> None:
-        self._ttl = ttl
+    def __init__(self) -> None:
         self._records: dict[tuple[str, str, str | None], PeerRecord] = {}
         self._by_group: dict[tuple[str, str | None], list[tuple[str, str, str | None]]] = {}
         self._by_cid: dict[tuple[str, str], set[tuple[str, str, str | None]]] = {}

@@ -116,7 +116,7 @@ def test_bucket_token_derivation_and_verify() -> None:
 
 
 def test_routing_table_upsert_prune_sample() -> None:
-    table = RoutingTable(ttl=60.0)
+    table = RoutingTable()
     # deterministic: record A expires at 2000, record B at 3000
     table.upsert(
         PeerRecord(

@@ -100,7 +100,6 @@ def build_quic_configuration(
     )
     config.certificate = identity.certificate
     config.private_key = identity.private_key
-    config.certificate_chain = []
     return config
 
 
@@ -130,15 +129,17 @@ class BootQuicProtocol(QuicConnectionProtocol):
         self.peer_addr = (str(addr[0]), int(addr[1]))
         super().datagram_received(data, addr)
 
+    def _observed_peer(self) -> tuple[str, int]:
+        """Observed source endpoint, or a placeholder before the first datagram."""
+        return self.peer_addr if self.peer_addr is not None else ("0.0.0.0", 0)
+
     def _spawn_stream(self, reader: Any, writer: Any) -> None:
-        peer = self.peer_addr if self.peer_addr is not None else ("0.0.0.0", 0)
+        peer = self._observed_peer()
         debug_event("session open", peer=f"{peer[0]}:{peer[1]}")
         asyncio.create_task(self._serve_stream(reader, writer))
 
     async def _serve_stream(self, reader: Any, writer: Any) -> None:
-        peer = self.peer_addr if self.peer_addr is not None else ("0.0.0.0", 0)
-        peer_ip: str = str(peer[0])
-        peer_port: int = int(peer[1])
+        peer_ip, peer_port = self._observed_peer()
         try:
             pending = bytearray()
             while True:
@@ -162,10 +163,6 @@ class BootQuicProtocol(QuicConnectionProtocol):
             debug_event("session close", peer=f"{peer_ip}:{peer_port}")
             if not writer.is_closing():
                 writer.close()
-
-    def close_connection(self, error_code: int = 0, reason: str = "") -> None:
-        """Close the whole QUIC connection (idle/termination path)."""
-        self.close(error_code=error_code, reason_phrase=reason)
 
 
 async def start_server(

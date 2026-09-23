@@ -55,10 +55,6 @@ class TokenBucketLimiter:
         seconds = (1.0 - tokens) / self._rate
         return max(1, int(seconds) + 1)
 
-    def clear(self) -> None:
-        self._tokens.clear()
-        self._updated.clear()
-
     def evict_stale(self, now: float | None = None) -> int:
         """Drop buckets that have fully refilled since their last check.
 

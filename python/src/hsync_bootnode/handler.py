@@ -89,7 +89,7 @@ class BootHandler:
         enforce_rate_limits: bool = True,
     ) -> None:
         self.ttl = ttl
-        self.routing = routing if routing is not None else RoutingTable(ttl=ttl)
+        self.routing = routing if routing is not None else RoutingTable()
         # ``None`` sentinel forces the first handle() to sweep; a 0.0 seed would
         # skip the first sweep when monotonic() < prune_interval (recent boot).
         self._last_prune: float | None = None
@@ -227,12 +227,11 @@ class BootHandler:
                 self._bad_token_ip,
             ):
                 limiter.evict_stale()
+            # Keep the request-side gating in sync so handle() does not
+            # redundantly re-sweep right after this one.
+            self._last_prune = time.monotonic()
         if removed:
             debug_log(f"prune removed {removed} expired record(s)")
-        if now is None:
-            # Background sweep: keep the request-side gating in sync so handle()
-            # does not redundantly re-sweep right after this one.
-            self._last_prune = time.monotonic()
         return removed
 
     @property

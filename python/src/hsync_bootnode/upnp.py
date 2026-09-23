@@ -48,7 +48,7 @@ _SERVICE_TYPES = (
 )
 _MSEARCH = (
     "M-SEARCH * HTTP/1.1\r\n"
-    "HOST: 239.255.255.250:1900\r\n"
+    f"HOST: {UPNP_SSDP_ADDR[0]}:{UPNP_SSDP_ADDR[1]}\r\n"
     'MAN: "ssdp:discover"\r\n'
     f"ST: {_SSDP_SEARCH_TARGET}\r\n"
     "MX: 1\r\n"
@@ -72,22 +72,15 @@ class IgdService:
     service_type: str = _SERVICE_NS
 
 
-def discover_igd(
-    timeout: float = 2.0,
-    *,
-    ssdp_sock: socket.socket | None = None,
-) -> IgdService | None:
+def discover_igd(timeout: float = 2.0) -> IgdService | None:
     """Discover the LAN's IGD via SSDP M-SEARCH; return its WAN service.
 
     ``local_ip`` is captured from the sending socket (the LAN address a
     port mapping must target) — no extra route lookups, no packets beyond
     the obligatory M-SEARCH.
     """
-    own: socket.socket | None = None
-    sock = ssdp_sock if ssdp_sock is not None else socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    if ssdp_sock is None:
-        own = sock
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         sock.sendto(_MSEARCH, UPNP_SSDP_ADDR)
         local_ip = sock.getsockname()[0]
@@ -95,8 +88,7 @@ def discover_igd(
     except OSError as exc:
         raise UpnpError(f"SSDP discovery failed: {exc}") from exc
     finally:
-        if own is not None:
-            own.close()
+        sock.close()
 
 
 def _first_igd_location(sock: socket.socket, timeout: float, local_ip: str) -> IgdService | None:
@@ -166,6 +158,20 @@ def _igd_service_from_location(location: str, local_ip: str) -> IgdService | Non
     return None
 
 
+def _soap_envelope(inner: str) -> bytes:
+    """Wrap *inner* in the SOAP 1.1 envelope shared by both builders."""
+    body = (
+        '<?xml version="1.0"?>\n'
+        '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" '
+        's:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">\n'
+        "  <s:Body>\n"
+        f"{inner}"
+        "  </s:Body>\n"
+        "</s:Envelope>\n"
+    )
+    return body.encode("utf-8")
+
+
 def build_add_mapping_soap(
     *,
     service_type: str,
@@ -177,11 +183,7 @@ def build_add_mapping_soap(
     lease_duration: int = 0,
 ) -> bytes:
     """Build the AddPortMapping SOAP envelope (pure builder, unit-testable)."""
-    body = (
-        '<?xml version="1.0"?>\n'
-        '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" '
-        's:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">\n'
-        "  <s:Body>\n"
+    inner = (
         f'    <u:AddPortMapping xmlns:u="{service_type}">\n'
         "      <NewRemoteHost></NewRemoteHost>\n"
         f"      <NewExternalPort>{external_port}</NewExternalPort>\n"
@@ -192,10 +194,8 @@ def build_add_mapping_soap(
         f"      <NewPortMappingDescription>{description}</NewPortMappingDescription>\n"
         f"      <NewLeaseDuration>{lease_duration}</NewLeaseDuration>\n"
         "    </u:AddPortMapping>\n"
-        "  </s:Body>\n"
-        "</s:Envelope>\n"
     )
-    return body.encode("utf-8")
+    return _soap_envelope(inner)
 
 
 def build_delete_mapping_soap(
@@ -205,20 +205,14 @@ def build_delete_mapping_soap(
     protocol: str = "UDP",
 ) -> bytes:
     """Build the DeletePortMapping SOAP envelope (pure builder)."""
-    body = (
-        '<?xml version="1.0"?>\n'
-        '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" '
-        's:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">\n'
-        "  <s:Body>\n"
+    inner = (
         f'    <u:DeletePortMapping xmlns:u="{service_type}">\n'
         "      <NewRemoteHost></NewRemoteHost>\n"
         f"      <NewExternalPort>{external_port}</NewExternalPort>\n"
         f"      <NewProtocol>{protocol}</NewProtocol>\n"
         "    </u:DeletePortMapping>\n"
-        "  </s:Body>\n"
-        "</s:Envelope>\n"
     )
-    return body.encode("utf-8")
+    return _soap_envelope(inner)
 
 
 def parse_soap_error(response_body: bytes) -> int | None:
@@ -241,7 +235,7 @@ def _soap_post(
     *,
     http_post: Callable[[str, str, bytes], None] | None = None,
 ) -> None:
-    action_name = action.rsplit("}", 1)[-1]
+    action_name = action
     soap_action = f"{service.service_type}#{action_name}"
     request = urllib.request.Request(
         service.control_url,

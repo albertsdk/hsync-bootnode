@@ -1,7 +1,7 @@
 """``boot/1`` request handling — pure logic, no network transport.
 
 ``BootHandler`` is the transport-agnostic core of the bootstrap node: it owns
-the in-memory routing table, the D11 authorization policy (constant-time token
+the in-memory routing table, the token-authorization policy (constant-time token
 check for the buckets the operator declares protected, or for **every** bucket
 when the node runs in node-wide private mode), the per-IP/per-bucket rate
 limiters and the STUN-echo reply builder. It receives the raw frame bytes,
@@ -45,7 +45,7 @@ __all__ = [
     "BootConfigError",
 ]
 
-# D11 / spec rate limits (in-memory sliding windows).
+# Token authorization / spec rate limits (in-memory sliding windows).
 OP_IP_RATE_PER_SECOND = 10.0  # per-IP admission: ~10 req/s, burst 50
 OP_IP_BURST = 50
 QUERY_PAIR_LIMIT = 5  # per (IP, bucket)
@@ -76,7 +76,7 @@ def _utc_now_z() -> str:
 
 
 class BootHandler:
-    """Matchmaker core: routing + authorization (D11 / private) + anti-abuse limits."""
+    """Matchmaker core: routing + authorization (token policy / private) + anti-abuse limits."""
 
     def __init__(
         self,
@@ -99,7 +99,7 @@ class BootHandler:
 
         self._protected: set[str] = set(protected_buckets)
         # Node-wide policy: with private mode every bucket is token-gated, so
-        # every bucket the operator provisions a key for is authorized (the D11
+        # every bucket the operator provisions a key for is authorized (the protected-bucket
         # rule applied to the whole node instead of to a declared subset).
         self._private = private
         keys = dict(group_keys or {})
@@ -338,7 +338,7 @@ class BootHandler:
         Open mode keeps ``leave`` anonymous by design (it exposes nothing and
         the generic per-IP admission still applies). On a private node an
         anonymous leave would let anyone who knows a ``(cid, bucket)`` pair
-        spoof a departure, so the D11 check applies here too. The spec has no
+        spoof a departure, so the protected-bucket check applies here too. The spec has no
         response frame for ``leave``, so a refusal stays a silent drop — the
         same shape as the existing unknown-record drop — while the failed-token
         budget is charged exactly as for register/refresh/query.
@@ -386,7 +386,7 @@ class BootHandler:
     # -------------------------------------------------------------- helpers
 
     def _authorize(self, bucket: str, token: str | None, peer_ip: str) -> _AuthResult:
-        """D11: token-gated buckets are verified in constant time.
+        """Token-gated buckets are verified in constant time.
 
         Policy: an **open** node gates only the buckets the operator declared
         ``--protected-bucket``; a **private** node (``--private``) gates every

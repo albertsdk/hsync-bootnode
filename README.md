@@ -59,12 +59,12 @@ flows directly between peers. See [How it works](docs/README.md#how-it-works-in-
 
 ## Design invariants
 
-- **No-log (D7)** — the process never writes peer data (IPs, CIDs, timestamps)
+- **No-log** — the process never writes peer data (IPs, CIDs, timestamps)
   to disk. The TLS identity is in-memory and regenerated per process.
-- **Zero-knowledge / protected buckets (D11)** — group tokens are HMAC-SHA256
+- **Zero-knowledge / protected buckets** — group tokens are HMAC-SHA256
   capabilities compared in constant time; refusals are uniform and never reveal
   whether a bucket exists.
-- **Rigid schema (D3)** — every `boot/1` frame rejects unknown fields; malformed
+- **Rigid schema** — every `boot/1` frame rejects unknown fields; malformed
   frames are silently dropped, never reinterpreted.
 - **One wire protocol** — `protocol-spec/boot-1.md` is the single source of
   truth; every implementation must be byte-identical on the wire.
@@ -77,7 +77,7 @@ flows directly between peers. See [How it works](docs/README.md#how-it-works-in-
 | [`fixtures/`](fixtures/) | Shared protocol fixtures (single source for all languages) | Draft |
 | [`tests/`](tests/) | **Language-neutral** black-box suite (spawns the binary, wire-only) | v1 |
 | [`bench/`](bench/) | L1–L5 benchmarks; L2/L3 language-neutral, L4 profiles the handshake, L5 the CPU saturation | v1 |
-| [`python/`](python/) | v1 implementation — Python + aioquic (QUIC/UDP 443) | v1 (Fase 1) |
+| [`python/`](python/) | v1 implementation — Python + aioquic (QUIC/UDP 443) | v1 |
 | [`packaging/`](packaging/) | OS service units — systemd / launchd / WinSW | v1 |
 | [`llm-wiki/`](llm-wiki/) | Internal agent knowledge base (architecture) | v1 |
 | [`docs/`](docs/) | End-user documentation (install, usage reference) | v1 |

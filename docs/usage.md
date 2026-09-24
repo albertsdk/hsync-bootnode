@@ -19,14 +19,14 @@ hsync-bootnode --version
 |---|---|---|
 | `--host` | `0.0.0.0` | Address to bind the QUIC/UDP listener to. |
 | `--port` | `443` | UDP port (1–65535). 443 is the QUIC/HTTP3 default; ports below 1024 need root or `CAP_NET_BIND_SERVICE` (the systemd unit grants it). |
-| `--protected-bucket` | *(none)* | Bucket that requires a valid `bucket_token` (D11). Repeatable. Declaring a protected bucket without provisioning its key fails fast at startup (exit code 2). |
+| `--protected-bucket` | *(none)* | Bucket that requires a valid `bucket_token`. Repeatable. Declaring a protected bucket without provisioning its key fails fast at startup (exit code 2). |
 | `--keys-fd` | *(none)* | File descriptor carrying the group keys (see below). Environment variable form: `HSYNC_BOOTNODE_KEYS_FD`. |
 | `--private` | *(disabled flag)* | Private node: every frame must carry a valid `bucket_token`, for **every** bucket (not only `--protected-bucket`). Starting it with no group key fails fast (exit code 2). Environment variable form: `HSYNC_BOOTNODE_PRIVATE=1`. |
 | `--no-upnp` | *(disabled flag)* | Disable the zero-touch UPnP UDP mapping. |
 | `--ttl` | `60` | Record TTL in seconds (1–3600). Peers refresh every 30 s, so the default 60 s matches the spec. Lower it for faster convergence in tests. |
 | `--debug` | *(disabled flag)* | Emit the full operation log to stderr (opt-in): connections, frames, decisions, record changes and TTL sweeps, **including the peer identity** (CID, bucket, IP, port). Stderr only — never written to disk; without it no peer data leaves memory. Environment variable form: `HSYNC_BOOTNODE_DEBUG=1`. |
 | `--ready-file` | *(none)* | Write the process PID to this path once the listener is bound (readiness seam, contains no peer data). Environment variable form: `HSYNC_BOOTNODE_READY_FILE`. |
-| `--no-rate-limit` | *(disabled flag)* | Disable rate limiting entirely (benchmark/test seam). Environment variable form: `HSYNC_BOOTNODE_NO_RATE_LIMIT=1`. Never enable in production — it removes the anti-abuse limits the spec requires (D11). |
+| `--no-rate-limit` | *(disabled flag)* | Disable rate limiting entirely (benchmark/test seam). Environment variable form: `HSYNC_BOOTNODE_NO_RATE_LIMIT=1`. Never enable in production — it removes the anti-abuse limits the spec requires. |
 
 ### `--version`
 
@@ -53,7 +53,7 @@ Prints the version and the protocol, e.g.
 
 ## Group keys (`--keys-fd` / `HSYNC_BOOTNODE_KEYS_FD`)
 
-Group keys provision **protected buckets** (D11). The process reads them ONCE
+Group keys provision **protected buckets**. The process reads them ONCE
 at startup from the given file descriptor — the key payload never touches a
 path inside the node's sandbox and is never written to disk.
 
@@ -107,7 +107,7 @@ What `--private` changes:
 Notes:
 
 - The wire format does not change: `bucket_token` is the same optional field the
-  D11 protected buckets already use, so a client only needs the group key — no
+  protected buckets already use, so a client only needs the group key — no
   new protocol version and no client-side mode switch.
 - Refusals stay uniform (`token_required`, then `rate_limited` with
   `retry_after`): a client cannot tell which buckets exist or are provisioned.

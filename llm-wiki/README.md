@@ -9,9 +9,9 @@ Internal, agent-optimized knowledge base for the `hsync-bootnode` project
 |---|---|
 | [architecture.md](architecture.md) | High-level system overview: layers, data flow, security model, target matrix |
 | [data-models.md](data-models.md) | The `boot/1` frame models, nested types, shared validators and their relationships |
-| [decisions.md](decisions.md) | Implementation decisions and deviations from the plan |
+| [decisions.md](decisions.md) | Implementation decisions |
 
-## Project snapshot (v1 — Python, Fase 1 complete)
+## Project snapshot (v1 — Python, complete)
 
 | Artifact | Path |
 |---|---|
@@ -29,13 +29,13 @@ Internal, agent-optimized knowledge base for the `hsync-bootnode` project
    `python/tests/test_nolog.py` (read-only filesystem sandbox). The opt-in
    `--debug` sink (decision #25) is stderr-only and may include the peer
    identity; without it nothing peer-related leaves memory.
-2. **RAM only (D7)**: the routing table lives in
+2. **RAM only**: the routing table lives in
    `python/src/hsync_bootnode/routing.py` and is never persisted. TTL 60 s,
    prune every 15 s, client refresh every 30 s.
-3. **Rigid schema (D3)**: every `boot/1` frame model uses pydantic
+3. **Rigid schema**: every `boot/1` frame model uses pydantic
    `extra="forbid"` — unknown/targeted fields make the frame invalid and it is
    silently dropped.
-4. **Protected buckets (D11)**: tokens are derived
+4. **Protected buckets**: tokens are derived
    `HMAC-SHA256(key, "boot/1" || bucket)[:32]` hex, compared in constant time
    (`hmac.compare_digest`); refusals are uniform (`token_required`) and never
    reveal bucket existence. `--private` widens the same policy to every bucket

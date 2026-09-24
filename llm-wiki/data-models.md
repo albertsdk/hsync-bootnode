@@ -3,7 +3,7 @@
 The `boot/1` wire contract is defined once in `protocol-spec/boot-1.md` and mirrored
 by typed models in every implementation. The Python v1 models live in
 `python/src/hsync_bootnode/protocol.py` (pydantic v2, all with `extra="forbid"` so
-any unknown/targeted field makes the frame invalid — D3). The future Rust crate
+any unknown/targeted field makes the frame invalid — rigid schema). The future Rust crate
 mirrors the same frames with `struct`s/`enum`s and deny-unknown-fields serde
 attributes; do not fork the shapes here.
 
@@ -71,7 +71,7 @@ excluded from the union: they are never validated on the input path.
 | Structure | Location | Role |
 |---|---|---|
 | `PeerRecord` | `python/src/hsync_bootnode/routing.py:31` | RAM-only routing entry keyed `(cid, bucket, group)`; carries `capacity` (advisory hint), `expires_at` (TTL) and a lazily-built materialized wire projection `wire` (`BootPeer | None`) |
-| `RoutingTable` | `python/src/hsync_bootnode/routing.py:55` | In-memory registry (`upsert`/`remove`/`get`/`prune`/`sample`/`count`); never persisted (D7). Backed by three secondary indexes — `_by_group` (bucket+group → keys, O(1) `sample`), `_by_cid` (cid+bucket → keys, O(1) `remove`), `_pos` (key → list position for O(1) swap-remove). `prune` rebuilds the indexes in bulk when ≥ 50% of records expire, else removes incrementally. |
+| `RoutingTable` | `python/src/hsync_bootnode/routing.py:55` | In-memory registry (`upsert`/`remove`/`get`/`prune`/`sample`/`count`); never persisted. Backed by three secondary indexes — `_by_group` (bucket+group → keys, O(1) `sample`), `_by_cid` (cid+bucket → keys, O(1) `remove`), `_pos` (key → list position for O(1) swap-remove). `prune` rebuilds the indexes in bulk when ≥ 50% of records expire, else removes incrementally. |
 | `TokenBucketLimiter` | `python/src/hsync_bootnode/ratelimit.py:22` | In-memory token bucket for the per-IP/per-bucket rate limits; `evict_stale` drops fully-refilled buckets (behaviour-identical, bounds memory) |
 
 ## Relationships

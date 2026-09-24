@@ -1,4 +1,4 @@
-"""In-memory routing table for ``boot/1`` — RAM only, no persistence (D7).
+"""In-memory routing table for ``boot/1`` — RAM only, no persistence.
 
 Keyed by ``(cid, bucket, group)``; entries carry a TTL and are pruned by a
 background sweep. Queries return a random sample (``K``). Nothing is ever

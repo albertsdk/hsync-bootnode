@@ -1,4 +1,4 @@
-"""``boot/1`` token derivation and constant-time comparison (D11).
+"""``boot/1`` token derivation and constant-time comparison.
 
 The bucket token is derived from the existing group key ``HSYNC_P2P_KEY``:
 ``HMAC-SHA256(key, "boot/1" || bucket)[:32]``, hex-encoded (64 chars). The key

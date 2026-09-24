@@ -1,4 +1,4 @@
-"""BootHandler behavioural tests: routing, D11 protected buckets, rate limits,
+"""BootHandler behavioural tests: routing, protected buckets, rate limits,
 STUN-echo and frame rejection. Pure logic — no sockets involved.
 """
 
@@ -283,7 +283,7 @@ def test_open_mode_ignores_keys_of_undeclared_buckets() -> None:
     """A provisioned key must not gate a bucket the operator did not declare.
 
     Guard for the open-mode contract: ``--private`` is the only way to widen the
-    D11 policy to every bucket, so providing a key without
+    protected-bucket policy to every bucket, so providing a key without
     ``--protected-bucket`` keeps the bucket open (byte-identical behavior).
     """
     h = make_handler(keys={"shared": "kshared"})
@@ -510,13 +510,13 @@ def test_unknown_and_malformed_frames_are_dropped() -> None:
     assert h.handle(b"null", peer_ip="10.0.0.1", peer_port=1) is None
     assert h.handle(b'"not a dict"', peer_ip="10.0.0.1", peer_port=1) is None
     assert h.handle(b"[1,2]", peer_ip="10.0.0.1", peer_port=1) is None
-    # Missing / unknown discriminator: dropped by the rigid schema (D3).
+    # Missing / unknown discriminator: dropped by the rigid schema.
     assert h.handle(b'{"protocol_version":"boot/1"}', peer_ip="10.0.0.1", peer_port=1) is None
     assert (
         h.handle(b'{"protocol_version":"boot/1","type":"pwn"}', peer_ip="10.0.0.1", peer_port=1)
         is None
     )
-    # named targeted fields are rejected by the rigid schema (D3)
+    # named targeted fields are rejected by the rigid schema
     bad = register_frame()
     bad["file_search"] = "photo.jpg"
     assert h.handle(json.dumps(bad), peer_ip="10.0.0.1", peer_port=1) is None

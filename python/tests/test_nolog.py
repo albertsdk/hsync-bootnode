@@ -1,6 +1,6 @@
 """No-log property tests: the boot/1 hot path never opens a file for writing.
 
-The bootnode is no-log by design (D7): the register→query handler path, the
+The bootnode is no-log by design: the register→query handler path, the
 in-memory identity and the QUIC configuration must be able to run under a filesystem
 guard that makes any write-mode open explode. Reading is allowed (libraries,
 locale data), writing is not.
@@ -100,7 +100,7 @@ def test_register_query_prune_never_writes(read_only_fs: pytest.MonkeyPatch) -> 
 
 
 def test_private_register_query_leave_never_writes(read_only_fs: pytest.MonkeyPatch) -> None:
-    """Private mode adds no disk write either (D7 holds in both policies)."""
+    """Private mode adds no disk write either (holds in both policies)."""
     handler = BootHandler(private=True, group_keys={"shared": SecretStr("kshared")})
     token = derive_bucket_token(b"kshared", "shared")
     ack = _exchange(

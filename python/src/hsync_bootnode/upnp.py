@@ -3,7 +3,7 @@
 Replaces the planned ``miniupnpc`` binding: that C extension cannot be built
 without Python development headers (unavailable in this environment), and a
 pure-Python IGD client keeps the v1 footprint dependency-free and byte-identical
-on Linux/macOS/Windows (D12). The IGD protocol itself (SSDP + SOAP over HTTP)
+on Linux/macOS/Windows. The IGD protocol itself (SSDP + SOAP over HTTP)
 is platform-independent.
 
 Only the services a matchmaker needs are implemented: ``AddPortMapping`` /

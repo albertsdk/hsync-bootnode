@@ -29,7 +29,7 @@ fi
 
 echo "hsync-bootnode installed (service NOT enabled — no-log node, opt-in start)."
 echo "  Enable with:   sudo systemctl enable --now hsync-bootnode.service"
-echo "  Group keys (optional, D11 protected buckets):"
+echo "  Group keys (optional, protected buckets):"
 echo "    sudo install -m 0640 /path/to/group-keys ${KEYS_DIR}/group-keys"
 
 exit 0

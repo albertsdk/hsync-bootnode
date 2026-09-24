@@ -12,6 +12,6 @@ Description: HSYNC - P2P bootstrap node (no-log, in-memory)
  boot/1 protocol over QUIC/UDP 443 (TLS 1.3, RETRY + address validation).
  .
  Everything lives in RAM with a 60-second TTL: no persistence, no logs,
- no PII on disk. Protected buckets (D11) authenticate queries with
+ no PII on disk. Protected buckets authenticate queries with
  HMAC-derived tokens compared in constant time.
 Depends: systemd

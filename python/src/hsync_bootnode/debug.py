@@ -1,6 +1,6 @@
 """Opt-in stderr diagnostics for the bootstrap node (disabled by default).
 
-The node is **no-log by design** (D7): nothing peer-related is ever written to
+The node is **no-log by design**: nothing peer-related is ever written to
 **disk**. The routing table is RAM-only, the TLS identity is regenerated per
 process, and without ``--debug`` no peer data leaves memory at all.
 

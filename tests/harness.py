@@ -1,6 +1,6 @@
 """Language-neutral black-box harness for the ``boot/1`` bootstrap node.
 
-The black-box suite must stay independent of any implementation language (D13):
+The black-box suite must stay independent of any implementation language:
 it spawns the bootnode executable (path via ``HSYNC_BOOTNODE_BIN``, defaulting
 to the Python build), waits for the ``HSYNC_BOOTNODE_READY_FILE`` readiness
 seam, and drives it **only** through the public CLI and the ``boot/1`` wire

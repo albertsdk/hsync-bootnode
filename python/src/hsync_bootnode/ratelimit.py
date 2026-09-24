@@ -1,4 +1,4 @@
-"""In-memory token-bucket rate limiters (D11) — RAM only, no persistence.
+"""In-memory token-bucket rate limiters — RAM only, no persistence.
 
 A token bucket expresses the spec's ``N/min (burst B)`` semantics exactly:
 the bucket holds at most ``capacity`` tokens (the burst) and is refilled at

@@ -78,7 +78,7 @@ to the project's nature (multi-language network daemon) and keep each index
   * `llm-wiki/architecture.md` — high-level system overview and component interactions.
   * `llm-wiki/modules/<module>.md` — internal responsibilities, key functions (add, rename, split or omit as the project requires; a doc is justified only when it maps to real code).
   * `llm-wiki/data-models.md` — the `boot/1` frame models of every implementation and their relationships (pydantic models in `python/`, structs/enums in `rust/`); add it as soon as the models are worth mapping.
-  * `llm-wiki/decisions.md` — log of design decisions and deviations from the plan (already present; keep the numbering stable).
+  * `llm-wiki/decisions.md` — log of design decisions (already present; keep the numbering stable).
 * **User Docs (`docs/`) - Human Optimized** (only the subset that applies):
   * `docs/README.md` — welcome page, installation, and quickstart for the user.
   * `docs/usage.md` — how to use the software (CLI reference, group keys, OS services).
@@ -155,7 +155,7 @@ documentation-engineering rules:
   directory. Readiness is signalled through the `HSYNC_BOOTNODE_READY_FILE`
   seam; the suite is gated by `HSYNC_BB_BOOTNODE=1`.
 
-* **No-log invariant (D7)**
+* **No-log invariant**
   Identical in every language: the process NEVER writes peer data (IPs, CIDs,
   timestamps) to disk. The routing table is RAM-only; the TLS identity is
   in-memory and regenerated per process; diagnostics are opt-in, peer-aware and
@@ -163,13 +163,13 @@ documentation-engineering rules:
   `python/tests/test_nolog.py` (read-only filesystem sandbox): the Rust port must
   ship an equivalent enforcement test.
 
-* **Rigid schema (D3)**
+* **Rigid schema**
   Every `boot/1` frame model rejects unknown fields (pydantic
   `extra="forbid"` in Python; equivalent deny-unknown-fields serde attribute in
   Rust). Unknown or targeted fields make the frame invalid and it is silently
   dropped — never reinterpreted, never partially applied.
 
-* **Protected buckets (D11)**
+* **Protected buckets**
   Tokens are derived as `HMAC-SHA256(key, "boot/1" || bucket)[:32]` hex and
   compared in constant time; refusals are uniform (`token_required`) and never
   reveal whether a bucket exists. Group keys enter the process **only** through

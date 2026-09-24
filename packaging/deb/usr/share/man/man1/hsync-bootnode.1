@@ -36,7 +36,7 @@ UDP port (1\-65535). Default: 443 (QUIC/HTTP3). Ports below 1024 need root or
 .BI run\ \fR--protected-bucket\fP= NAME
 Bucket requiring a valid
 .I bucket_token
-(D11). Repeatable for multiple buckets. Declaring a protected bucket without
+Repeatable for multiple buckets. Declaring a protected bucket without
 provisioning its key fails fast at startup with exit code 2.
 .TP
 .BI run\ \fR--keys-fd\fP= FD
@@ -49,7 +49,7 @@ comments are ignored. Read once at startup, never written to disk.
 .B run\ \fR--private\fP
 Private node: every frame must carry a valid
 .I bucket_token
-(D11 applied to the whole node, not only to the buckets declared with
+(applied to the whole node, not only to the buckets declared with
 .BR \-\-protected\-bucket ).
 A bucket without a group key is refused exactly like a wrong token, and
 .I leave
@@ -79,7 +79,7 @@ no peer data). Env form:
 .TP
 .B run\ \fR--no-rate-limit\fP
 Disable rate limiting entirely (benchmark/test seam; never in production — it
-removes the anti\-abuse limits D11 requires). Env form:
+removes the anti\-abuse limits the spec requires). Env form:
 .BR HSYNC_BOOTNODE_NO_RATE_LIMIT=1 .
 .TP
 .B \fR--version\fP

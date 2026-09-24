@@ -22,7 +22,7 @@ via HSYNC_BOOTNODE_KEYS_FD); nothing is ever written to disk (no-log).
         <string>exec /usr/local/bin/hsync-bootnode run --host 0.0.0.0 --port 443 --keys-fd 3 3&lt;/etc/hsync-bootnode/group-keys</string>
     </array>
 
-    <!-- Private node (D11 node-wide): require a valid bucket_token on every
+    <!-- Private node (protected-bucket policy node-wide): require a valid bucket_token on every
          frame. Uncomment to enable; the node then needs a group key for every
          bucket it serves and fails fast at startup when it has none. -->
     <!--

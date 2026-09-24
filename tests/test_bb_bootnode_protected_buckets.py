@@ -1,4 +1,4 @@
-"""Black-box D11 protected-bucket tests: uniform refusal, token auth, no oracle."""
+"""Black-box protected-bucket tests: uniform refusal, token auth, no oracle."""
 
 from __future__ import annotations
 

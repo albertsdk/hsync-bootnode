@@ -1,7 +1,7 @@
 # Black-box tests — hsync-bootnode
 
 Language-neutral functional tests for the `boot/1` bootstrap node. They are
-**independent of the implementation language** (D13): the same suite will
+**independent of the implementation language**: the same suite will
 validate the future `rust/` and `c/` ports unchanged.
 
 ## Contract
@@ -84,7 +84,7 @@ HSYNC_BB_BOOTNODE=1 HSYNC_BOOTNODE_BIN=/path/to/hsync-bootnode \
 | `test_bb_bootnode_lifecycle.py` | `--version`, fail-fast config, readiness, graceful shutdown, debug mode (peer-aware stderr log), port-in-use bind failure (exit 3) |
 | `test_bb_bootnode_register.py` | STUN-echo ack, advertised/observed endpoints, refresh, unknown-CID refresh drop |
 | `test_bb_bootnode_query.py` | peer listing, group filter, limit bounds, pipelined frames |
-| `test_bb_bootnode_d11.py` | uniform `token_required`, correct/wrong token, no oracle |
+| `test_bb_bootnode_protected_buckets.py` | uniform `token_required`, correct/wrong token, no oracle |
 | `test_bb_bootnode_private.py` | `--private`/envvar: every bucket gated, unkeyed bucket, gated `leave`, fail-fast without keys, banner |
 | `test_bb_bootnode_ratelimit.py` | burst → `rate_limited` + `retry_after` (query/register/bad-token) |
 | `test_bb_bootnode_negative.py` | malformed/unknown/oversized/forbidden frames, leave |

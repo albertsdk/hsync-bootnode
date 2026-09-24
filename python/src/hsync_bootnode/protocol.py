@@ -50,7 +50,7 @@ PROTOCOL_VERSION_BOOT: Literal["boot/1"] = "boot/1"
 # value; ``test_cid_pattern_matches_boot1_spec`` pins the two together.
 _CID_RE = re.compile(CID_PATTERN)
 
-# hex(32 bytes) = 64 chars. Absent = open bucket (D11).
+# hex(32 bytes) = 64 chars. Absent = open bucket.
 BUCKET_TOKEN_LEN = 64
 _BUCKET_TOKEN_RE = re.compile(rf"^[0-9a-f]{{{BUCKET_TOKEN_LEN}}}$")
 

@@ -6,7 +6,7 @@
 
 """Black-box **stress** tests for the ``boot/1`` bootstrap node.
 
-Same language-neutral contract as the rest of ``tests/`` (D13): the node is
+Same language-neutral contract as the rest of ``tests/``: the node is
 spawned from ``HSYNC_BOOTNODE_BIN`` and driven only through the public CLI and
 the ``boot/1`` wire protocol. Nothing here imports ``hsync_bootnode``; the same
 suite must pass against the future ``rust/`` / ``c/`` ports unchanged.

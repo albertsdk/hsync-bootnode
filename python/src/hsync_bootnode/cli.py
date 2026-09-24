@@ -1,7 +1,7 @@
-"""Typer CLI for the ``hsync-bootnode`` Python v1 process (Fase 1).
+"""Typer CLI for the ``hsync-bootnode`` Python v1 process.
 
 Starts the single QUIC/UDP listener on ``--port`` (default 443), with RETRY +
-address-validation tokens, the D11 token policy (the operator's protected
+address-validation tokens, the token policy (the operator's protected
 buckets, or every bucket in node-wide ``--private`` mode), per-IP/per-bucket
 rate limits, STUN-echo and optional zero-touch UPnP. No-log: nothing
 peer-related is ever written to disk.
@@ -47,9 +47,9 @@ _DEFAULT_DEBUG_ENV = "HSYNC_BOOTNODE_DEBUG"
 # bound, mirroring the client's HSYNC_READY_FILE. Contains no peer data.
 _DEFAULT_READY_FILE_ENV = "HSYNC_BOOTNODE_READY_FILE"
 # Benchmark/test seam: disable rate limiting entirely (opt-in). Never set this
-# in production — it removes the anti-abuse limits the spec requires (D11).
+# in production — it removes the anti-abuse limits the spec requires.
 _DEFAULT_NO_RATE_LIMIT_ENV = "HSYNC_BOOTNODE_NO_RATE_LIMIT"
-# Node-wide private mode: require a valid bucket_token on EVERY frame (D11
+# Node-wide private mode: require a valid bucket_token on EVERY frame (
 # applied to the whole node). Service wrappers set the envvar form.
 _DEFAULT_PRIVATE_ENV = "HSYNC_BOOTNODE_PRIVATE"
 
@@ -80,7 +80,7 @@ def run(
     protected_bucket: list[str] = typer.Option(
         [],
         "--protected-bucket",
-        help="Bucket requiring a valid bucket_token (repeatable). D11.",
+        help="Bucket requiring a valid bucket_token (repeatable).",
     ),
     keys_fd: int | None = typer.Option(
         None,

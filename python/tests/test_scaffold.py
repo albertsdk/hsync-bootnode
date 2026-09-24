@@ -1,4 +1,4 @@
-"""Boot/1 protocol model + routing + token tests (Fase 0 scaffold)."""
+"""Boot/1 protocol model + routing + token tests."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ CID = "A1b2C3d4E5f6G7h8I9j0K"
 def test_cid_pattern_matches_boot1_spec() -> None:
     """CID shape is the hsync-common SSOT, pinned to the documented boot/1 value.
 
-    ``CID_PATTERN`` is imported from ``hsync_common.models.event`` (Fase B): this
+    ``CID_PATTERN`` is imported from ``hsync_common.models.event`` : this
     test fails if an upstream change silently alters the documented wire shape.
     """
     assert CID_PATTERN == r"^[A-Za-z0-9]{21}$"
@@ -98,7 +98,7 @@ def test_register_accepts_valid_and_rejects_unknown_fields() -> None:
     assert ok.cid == CID
     assert ok.type == "register"
 
-    # The schema must reject any targeted/unknown field (D3, agnostic).
+    # The schema must reject any targeted/unknown field (agnostic).
     try:
         BootRegister(
             protocol_version="boot/1",

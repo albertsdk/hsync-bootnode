@@ -58,12 +58,16 @@ UDP :443
    `token_required` / `rate_limited` (+ `retry_after`). A private node answers a
    bucket with no key loaded exactly like a wrong token (no provisioned-set
    oracle).
-5. Mutation: `register` upserts (STUN-echo source `ip:port`), `refresh` touches
-   TTL and never creates, `leave` removes every `(cid, bucket)` entry
+5. Mutation: `register` upserts (STUN-echo source `ip:port`) and copies the
+   advisory fields onto the record (`capacity`, `reachable`, and the election
+   advertisement `server_ready`/`force_master`/`never_master`/`startup_time`/
+   `sync_direction` — decision 31); `refresh` touches TTL only and never creates
+   or mutates them; `leave` removes every `(cid, bucket)` entry
    regardless of group and returns no frame (in private mode it is token-gated
    too, and a refusal is a silent drop — the spec has no `leave` response).
 6. Reply: `ack` (register/refresh, carries `observed_endpoint`) or `response`
-   (query, random sample up to `limit`, prefer advertised endpoints); returned
+   (query, random sample up to `limit`, prefer advertised endpoints, every
+   advisory field relayed verbatim); returned
    as already-serialized JSON **bytes** (Pydantic `TypeAdapter.dump_json`),
    written verbatim by the transport.
 
@@ -153,6 +157,10 @@ The monorepo `p2p`/bootnode migration is **complete**:
 - **Done**: `hsync-common` mirror (`protocol/bootnode.py`, fixtures, drift test,
   capabilities v3); the advisory `capacity` hint (`0..32`) and the derived
   `reachable` flag relayed `register` → record → `query` (decisions 23–24); the
+  **election advertisement** (`server_ready`/`force_master`/`never_master`/
+  `startup_time`/`sync_direction`) relayed the same way so a bootnode-discovered
+  peer ranks in the client's master election exactly like a LAN-discovered one
+  (decision 31); the
   bootnode's opt-in **debug operation log** (decision 25); client `hsync p2p`
   with both discovery plans and its black-box suite; desktop mode, wd-os5
   packaging; the peer data-plane protocol is `p2p/1`.

@@ -53,6 +53,7 @@ def register_frame(
     host: str = "198.51.100.7",
     port: int = 443,
     capacity: int = 20,
+    **extra: object,
 ) -> dict:
     frame: dict = {
         "protocol_version": "boot/1",
@@ -68,6 +69,7 @@ def register_frame(
         frame["group"] = group
     if token is not None:
         frame["bucket_token"] = token
+    frame.update(extra)
     return frame
 
 
@@ -183,6 +185,84 @@ def test_capacity_defaults_to_zero_and_survives_refresh() -> None:
     response = decoded(send(h, query_frame(limit=10), peer_ip="10.0.0.1", peer_port=1111))
     assert response is not None
     assert response["peers"][0]["capacity"] == 0
+
+
+def test_election_advertisement_round_trips_through_query() -> None:
+    """The election advertisement is stored and echoed verbatim in the peer list.
+
+    A requester's master election ranks candidates on exactly these values, so
+    the relay must not drop or rewrite them: a serving incumbent
+    (``server_ready``) and a never-master seeder must stay distinguishable.
+    """
+    h = make_handler()
+    # endpoint branch: the advertised endpoints[0] is preferred
+    send(
+        h,
+        register_frame(
+            cid=CID,
+            server_ready=True,
+            force_master=True,
+            startup_time=1760000000.5,
+            sync_direction="download-only",
+        ),
+        peer_ip="198.51.100.7",
+        peer_port=54321,
+    )
+    # fallback branch: no advertised endpoint → the observed source is used
+    no_endpoint = register_frame(cid=CID2, host="198.51.100.8", never_master=True)
+    no_endpoint.pop("endpoints")
+    send(h, no_endpoint, peer_ip="198.51.100.8", peer_port=54322)
+    response = decoded(send(h, query_frame(limit=10), peer_ip="10.0.0.1", peer_port=1111))
+    assert response is not None
+    assert response["count"] == 2
+    relayed = {p["cid"]: p for p in response["peers"]}
+    assert relayed[CID]["server_ready"] is True
+    assert relayed[CID]["force_master"] is True
+    assert relayed[CID]["never_master"] is False
+    assert relayed[CID]["startup_time"] == 1760000000.5
+    assert relayed[CID]["sync_direction"] == "download-only"
+    assert relayed[CID2]["server_ready"] is False
+    assert relayed[CID2]["force_master"] is False
+    assert relayed[CID2]["never_master"] is True
+    assert relayed[CID2]["startup_time"] == 0.0
+    assert relayed[CID2]["sync_direction"] == "bidirectional"
+
+
+def test_election_advertisement_defaults_and_survives_refresh() -> None:
+    """Absent advertisement keys default; ``refresh`` never mutates them.
+
+    A role change (a seeder becoming master, a master yielding) requires a new
+    ``register``: the record's wire projection is materialized once, exactly
+    like ``capacity`` and ``reachable``.
+    """
+    h = make_handler()
+    send(h, register_frame(cid=CID), peer_ip="198.51.100.7", peer_port=54321)
+    record = h.routing.get(CID, "shared", "home")
+    assert record is not None
+    assert record.server_ready is False
+    assert record.force_master is False
+    assert record.never_master is False
+    assert record.startup_time == 0.0
+    assert record.sync_direction == "bidirectional"
+    send(
+        h,
+        {
+            "protocol_version": "boot/1",
+            "type": "refresh",
+            "cid": CID,
+            "bucket": "shared",
+            "group": "home",
+            "connected": 7,
+        },
+        peer_ip="198.51.100.7",
+        peer_port=54321,
+    )
+    response = decoded(send(h, query_frame(limit=10), peer_ip="10.0.0.1", peer_port=1111))
+    assert response is not None
+    peer = response["peers"][0]
+    assert peer["server_ready"] is False
+    assert peer["startup_time"] == 0.0
+    assert peer["sync_direction"] == "bidirectional"
 
 
 def test_reachable_is_derived_from_endpoints() -> None:
@@ -671,9 +751,16 @@ def test_wire_serialization_is_compact_and_spec_ordered() -> None:
         "version",
         "capacity",
         "reachable",
+        "server_ready",
+        "force_master",
+        "never_master",
+        "startup_time",
+        "sync_direction",
     ]
     assert decoded_ok["peers"][0]["ip"] == "198.51.100.7"  # advertised endpoint wins
     assert decoded_ok["peers"][0]["capacity"] == 20  # relayed advisory hint
+    assert decoded_ok["peers"][0]["server_ready"] is False  # relayed election advert
+    assert decoded_ok["peers"][0]["sync_direction"] == "bidirectional"
     assert decoded_ok["count"] == 1
     assert decoded_ok["error"] is None and decoded_ok["retry_after"] is None
     # compact separators, and valid JSON that round-trips

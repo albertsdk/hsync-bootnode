@@ -273,6 +273,11 @@ class BootHandler:
             connected=model.connected or 0,
             reachable=bool(model.endpoints),
             capacity=model.capacity,
+            server_ready=model.server_ready,
+            force_master=model.force_master,
+            never_master=model.never_master,
+            startup_time=model.startup_time,
+            sync_direction=model.sync_direction,
         )
         record.touch(self.ttl)
         self.routing.upsert(record)
@@ -459,36 +464,37 @@ class BootHandler:
 
     @staticmethod
     def _to_peer(record: PeerRecord, model: BootQuery) -> BootPeer:
-        """Prefer the peer's advertised listen endpoint over the observed source."""
+        """Prefer the peer's advertised listen endpoint over the observed source.
+
+        Both endpoint sources share one projection so the relayed advisory
+        fields (``capacity``, ``reachable`` and the election advertisement)
+        cannot drift between the two branches; the whole record is relayed
+        verbatim and never interpreted.
+        """
         cached = record.wire
         if cached is not None:
             return cached
         if record.endpoints:
-            ep = record.endpoints[0]
-            peer = BootPeer(
-                cid=record.cid,
-                ip=ep.host,
-                port=ep.port,
-                proto=ep.proto,
-                cert_fp=record.cert_fp,
-                bucket=model.bucket,
-                group=record.group,
-                version=record.version,
-                capacity=record.capacity,
-                reachable=record.reachable,
-            )
+            endpoint = record.endpoints[0]
+            host, port, proto = endpoint.host, endpoint.port, endpoint.proto
         else:
-            peer = BootPeer(
-                cid=record.cid,
-                ip=record.ip,
-                port=record.port,
-                proto=record.proto,
-                cert_fp=record.cert_fp,
-                bucket=model.bucket,
-                group=record.group,
-                version=record.version,
-                capacity=record.capacity,
-                reachable=record.reachable,
-            )
+            host, port, proto = record.ip, record.port, record.proto
+        peer = BootPeer(
+            cid=record.cid,
+            ip=host,
+            port=port,
+            proto=proto,
+            cert_fp=record.cert_fp,
+            bucket=model.bucket,
+            group=record.group,
+            version=record.version,
+            capacity=record.capacity,
+            reachable=record.reachable,
+            server_ready=record.server_ready,
+            force_master=record.force_master,
+            never_master=record.never_master,
+            startup_time=record.startup_time,
+            sync_direction=record.sync_direction,
+        )
         record.wire = peer
         return peer

@@ -19,12 +19,12 @@ guesses the frame kind from the payload shape.
 
 | Frame | Direction | Model | Fields (beyond the header) |
 |---|---|---|---|
-| `register` | client → server | `BootRegister` (`protocol.py:113`) | `cid`, `bucket`, `group?`, `bucket_token?`, `cert_fp`, `version`, `capacity`, `endpoints[]`, `connected?` |
-| `refresh` | client → server | `BootRefresh` (`protocol.py:134`) | `cid`, `bucket`, `group?`, `bucket_token?`, `connected?` |
-| `leave` | client → server | `BootLeave` (`protocol.py:145`) | `cid`, `bucket`, `bucket_token?` |
-| `query` | client → server | `BootQuery` (`protocol.py:159`) | `bucket`, `group?`, `bucket_token?`, `limit` (1–50, default 20) |
-| `ack` | server → client | `BootAck` (`protocol.py:169`) | `observed_endpoint`, `ttl`, `server_time`, `retry_after?` |
-| `response` | server → client | `BootResponse` (`protocol.py:202`) | `peers[]`, `count`, `ttl`, `error?` (`token_required`/`rate_limited`), `retry_after?` |
+| `register` | client → server | `BootRegister` (`protocol.py:125`) | `cid`, `bucket`, `group?`, `bucket_token?`, `cert_fp`, `version`, `capacity`, `endpoints[]`, `connected?`, `server_ready?`, `force_master?`, `never_master?`, `startup_time?`, `sync_direction?` |
+| `refresh` | client → server | `BootRefresh` (`protocol.py:159`) | `cid`, `bucket`, `group?`, `bucket_token?`, `connected?` |
+| `leave` | client → server | `BootLeave` (`protocol.py:170`) | `cid`, `bucket`, `bucket_token?` |
+| `query` | client → server | `BootQuery` (`protocol.py:184`) | `bucket`, `group?`, `bucket_token?`, `limit` (1–50, default 20) |
+| `ack` | server → client | `BootAck` (`protocol.py:194`) | `observed_endpoint`, `ttl`, `server_time`, `retry_after?` |
+| `response` | server → client | `BootResponse` (`protocol.py:238`) | `peers[]`, `count`, `ttl`, `error?` (`token_required`/`rate_limited`), `retry_after?` |
 
 `capacity` (domain `0..32`, default `0`; `CAPACITY_MAX` at `protocol.py:63`) is the
 **advisory service-capacity hint**: the number of concurrent peer-download reads the
@@ -34,24 +34,37 @@ authenticated and not authoritative** — the authoritative value is `serve_slot
 on the authenticated data-plane handshake (ADR 0030). `refresh` neither carries nor
 mutates it, and the sample is never ordered by it.
 
+`server_ready`/`force_master`/`never_master`/`startup_time`/`sync_direction` are the
+**election advertisement** (decision #31): the same values the client's mDNS TXT
+record carries (SSOT: `hsync-common` `protocol.p2p`/`protocol.pairing`), copied from
+`register` onto the record and echoed on every `query` peer so a bootnode-discovered
+peer ranks in the client's master election exactly like a LAN-discovered one.
+Defaults when a peer advertises none: `false`, `false`, `false`, `0.0` (unknown;
+bounded by `STARTUP_TIME_MAX`, `protocol.py:71`) and `bidirectional`
+(`SyncDirection`, `protocol.py:69`). The node never interprets them, never orders the
+sample by them, and they are **not authenticated** (the data plane authenticates
+identity by certificate pinning). Like `capacity`, a changed value requires a new
+`register` — `refresh` never mutates them.
+
 `reachable` is derived from `bool(endpoints)` at `register` time: it is `true` only
-for a peer that advertised at least one listen endpoint (a data-plane master). An
-endpoint-less register (the first STUN register) is advertised with
-`reachable=false` and its observed UDP source as the fallback endpoint. `refresh`
-never changes it; a change requires a new `register`.
+for a peer that advertised at least one listen endpoint (it can act as a data-plane
+server — a master **or** a read-only seeder). An endpoint-less register (the first
+STUN register) is advertised with `reachable=false` and its observed UDP source as
+the fallback endpoint. `refresh` never changes it; a change requires a new
+`register`.
 
 ## Nested models
 
 | Model | Owner | Fields |
 |---|---|---|
-| `Endpoint` (`protocol.py:84`) | `BootRegister.endpoints[]` | `proto` (`tcp`/`udp`), `host`, `port` |
-| `ObservedEndpoint` (`protocol.py:94`) | `BootAck.observed_endpoint` | `proto`, `ip`, `port` (STUN-echo of the source) |
-| `BootPeer` (`protocol.py:179`) | `BootResponse.peers[]` | `cid`, `ip`, `port`, `proto`, `cert_fp`, `bucket`, `group?`, `version`, `capacity`, `reachable` |
+| `Endpoint` (`protocol.py:96`) | `BootRegister.endpoints[]` | `proto` (`tcp`/`udp`), `host`, `port` |
+| `ObservedEndpoint` (`protocol.py:106`) | `BootAck.observed_endpoint` | `proto`, `ip`, `port` (STUN-echo of the source) |
+| `BootPeer` (`protocol.py:204`) | `BootResponse.peers[]` | `cid`, `ip`, `port`, `proto`, `cert_fp`, `bucket`, `group?`, `version`, `capacity`, `reachable`, `server_ready`, `force_master`, `never_master`, `startup_time`, `sync_direction` |
 
 The client→server frames are dispatched in one pass by the discriminated union
 `BootFrame = Annotated[BootRegister | BootRefresh | BootLeave | BootQuery,
-Field(discriminator="type")]` (`protocol.py:216`) and validated from raw bytes via
-`BOOT_FRAME_ADAPTER` (`protocol.py:220`, a `TypeAdapter[BootFrame]`). The
+Field(discriminator="type")]` (`protocol.py:251`) and validated from raw bytes via
+`BOOT_FRAME_ADAPTER` (`protocol.py:256`, a `TypeAdapter[BootFrame]`). The
 server→client frames (`BootAck`/`BootResponse`/`BootPeer`) are deliberately
 excluded from the union: they are never validated on the input path.
 

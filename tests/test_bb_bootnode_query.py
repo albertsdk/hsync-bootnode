@@ -40,6 +40,49 @@ async def test_query_relays_capacity_hint(bootnode_factory, bucket, rng) -> None
 
 
 @pytest.mark.asyncio
+async def test_query_relays_the_election_advertisement(bootnode_factory, bucket, rng) -> None:
+    """The master-election advertisement is relayed verbatim on the public wire.
+
+    A requester ranks candidates on these values (a serving incumbent outranks a
+    newcomer; a ``never_master`` peer is not electable, and the advertised
+    early-startup value breaks ties), so the node must echo them unchanged for
+    both peer endpoint branches.
+    """
+    handle = bootnode_factory()
+    cid_master = random_cid(rng)
+    cid_never = random_cid(rng)
+    async with BootClient(handle.port) as client:
+        await client.exchange(
+            register_frame(
+                cid_master,
+                bucket,
+                server_ready=True,
+                force_master=True,
+                startup_time=1760000000.5,
+                sync_direction="download-only",
+            )
+        )
+        await client.exchange(
+            register_frame(cid_never, bucket, never_master=True, capacity=0, endpoints=False)
+        )
+        response = await client.exchange(query_frame(bucket))
+    assert response["type"] == "response"
+    assert response["error"] is None
+    assert response["count"] == 2
+    relayed = {p["cid"]: p for p in response["peers"]}
+    assert relayed[cid_master]["server_ready"] is True
+    assert relayed[cid_master]["force_master"] is True
+    assert relayed[cid_master]["never_master"] is False
+    assert relayed[cid_master]["startup_time"] == 1760000000.5
+    assert relayed[cid_master]["sync_direction"] == "download-only"
+    assert relayed[cid_never]["server_ready"] is False
+    assert relayed[cid_never]["force_master"] is False
+    assert relayed[cid_never]["never_master"] is True
+    assert relayed[cid_never]["startup_time"] == 0.0
+    assert relayed[cid_never]["sync_direction"] == "bidirectional"
+
+
+@pytest.mark.asyncio
 async def test_query_marks_reachability_by_advertised_endpoint(
     bootnode_factory, bucket, rng
 ) -> None:

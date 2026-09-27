@@ -11,6 +11,7 @@ import pytest
 from hsync_bootnode.protocol import (
     CAPACITY_MAX,
     CID_PATTERN,
+    STARTUP_TIME_MAX,
     BootAck,
     BootPeer,
     BootQuery,
@@ -142,6 +143,72 @@ def test_capacity_hint_domain_bounds() -> None:
     assert BootPeer(**peer, capacity=CAPACITY_MAX).capacity == CAPACITY_MAX
     with pytest.raises(ValueError):
         BootPeer(**peer, capacity=CAPACITY_MAX + 1)
+
+
+def test_election_advertisement_domain_bounds() -> None:
+    """The advertised election values are validated, never silently coerced.
+
+    Defaults (absent keys): not serving, no pin, unknown startup and
+    bidirectional. ``startup_time`` must be a finite non-negative JSON number
+    inside the exact-integer range; ``sync_direction`` must be one of the three
+    canonical tokens the client uses.
+    """
+    register = {
+        "protocol_version": "boot/1",
+        "type": "register",
+        "cid": CID,
+        "bucket": "shared",
+        "cert_fp": "AA:BB",
+        "version": "1.0.0",
+    }
+    default = BootRegister(**register)
+    assert default.server_ready is False
+    assert default.force_master is False
+    assert default.never_master is False
+    assert default.startup_time == 0.0
+    assert default.sync_direction == "bidirectional"
+
+    advertised = BootRegister(
+        **register,
+        server_ready=True,
+        force_master=True,
+        startup_time=1760000000.5,
+        sync_direction="upload-only",
+    )
+    assert advertised.server_ready is True
+    assert advertised.force_master is True
+    assert advertised.startup_time == 1760000000.5
+    assert advertised.sync_direction == "upload-only"
+
+    # pydantic's lax mode coerces 1/0 to bool and numeric strings to float; the
+    # client mirror is the strict side of the contract (it rejects both before
+    # sending), so a value that reaches the node is either valid or rejected.
+    assert BootRegister(**register, server_ready=1).server_ready is True
+    assert BootRegister(**register, startup_time="1760000000").startup_time == 1760000000.0
+
+    for bad in (
+        {"server_ready": None},
+        {"startup_time": -1},
+        {"startup_time": STARTUP_TIME_MAX * 2},
+        {"sync_direction": "sideways"},
+    ):
+        with pytest.raises(ValueError):
+            BootRegister(**register, **bad)
+
+    peer = {
+        "cid": CID,
+        "ip": "198.51.100.7",
+        "port": 443,
+        "cert_fp": "AA:BB",
+        "bucket": "shared",
+        "version": "1.0.0",
+    }
+    assert BootPeer(**peer).never_master is False
+    assert BootPeer(**peer, never_master=True).never_master is True
+    with pytest.raises(ValueError):
+        BootPeer(**peer, sync_direction="sideways")
+    with pytest.raises(ValueError):
+        BootPeer(**peer, startup_time=-1)
 
 
 def test_bucket_token_derivation_and_verify() -> None:

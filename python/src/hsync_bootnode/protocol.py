@@ -26,6 +26,7 @@ __all__ = [
     "CAPACITY_MAX",
     "CID_PATTERN",
     "PROTOCOL_VERSION_BOOT",
+    "STARTUP_TIME_MAX",
     "BootAck",
     "BootFrame",
     "BootLeave",
@@ -38,6 +39,7 @@ __all__ = [
     "BucketProto",
     "Endpoint",
     "ObservedEndpoint",
+    "SyncDirection",
 ]
 
 # Per-channel protocol version. Bump the suffix on any breaking change to the
@@ -61,6 +63,16 @@ BucketProto = Literal["tcp", "udp"]
 # relays the value in ``query`` responses but never treats it as authoritative
 # (ADR 0030) — the authoritative value stays on the authenticated WSS handshake.
 CAPACITY_MAX = 32
+
+# Canonical sync-direction vocabulary, mirrored from the client SSOT
+# (``hsync_common.protocol.pairing`` + ``p2p``). The election advertisement
+# below reuses the same tokens the mDNS TXT record carries so a bootnode-relayed
+# peer ranks exactly like a LAN-discovered one.
+SyncDirection = Literal["bidirectional", "upload-only", "download-only"]
+
+# Bound on the advertised unix ``startup_time`` (kept inside the
+# exactly-representable integer range of a JSON number). ``0.0`` = unknown.
+STARTUP_TIME_MAX = float(2**53)
 
 
 def _validate_bucket_name(value: str) -> str:
@@ -117,6 +129,14 @@ class BootRegister(_BootFrame):
     concurrent peer-download reads the peer declares it can serve right now
     (``0`` = not a seeder). The bootnode relays it in ``query`` responses; the
     authoritative value is the authenticated ``serve_slots`` (ADR 0030).
+
+    ``server_ready``/``force_master``/``never_master``/``startup_time``/
+    ``sync_direction`` are the **election advertisement**: the same values the
+    mDNS TXT record carries, relayed verbatim in ``query`` peers so a
+    bootnode-discovered peer ranks exactly like a LAN-discovered one. The node
+    never interprets them; they are not authenticated and not authoritative
+    (the data plane authenticates identity by certificate pinning). A changed
+    advertisement requires a new ``register`` — ``refresh`` never mutates them.
     """
 
     type: Literal["register"]
@@ -129,6 +149,11 @@ class BootRegister(_BootFrame):
     capacity: int = Field(default=0, ge=0, le=CAPACITY_MAX)
     endpoints: list[Endpoint] = Field(default_factory=list, max_length=16)
     connected: int | None = Field(default=None, ge=0)
+    server_ready: bool = False
+    force_master: bool = False
+    never_master: bool = False
+    startup_time: float = Field(default=0.0, ge=0, le=STARTUP_TIME_MAX)
+    sync_direction: SyncDirection = "bidirectional"
 
 
 class BootRefresh(_BootFrame):
@@ -183,6 +208,12 @@ class BootPeer(BaseModel):
     its ``register`` (``0`` = not a seeder). It is not authenticated and not
     authoritative: the requester must treat the authenticated ``serve_slots``
     as the source of truth (ADR 0030).
+
+    The election-advertisement fields are the peer's own ``register`` values
+    (documented defaults when it advertised none), relayed verbatim so the
+    requester's master election sees the same inputs a mDNS-discovered peer
+    would provide. They are unauthenticated claims — the data plane
+    authenticates identity by certificate pinning.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -197,6 +228,11 @@ class BootPeer(BaseModel):
     version: str = Field(min_length=1, max_length=64)
     capacity: int = Field(default=0, ge=0, le=CAPACITY_MAX)
     reachable: bool = True
+    server_ready: bool = False
+    force_master: bool = False
+    never_master: bool = False
+    startup_time: float = Field(default=0.0, ge=0, le=STARTUP_TIME_MAX)
+    sync_direction: SyncDirection = "bidirectional"
 
 
 class BootResponse(_BootFrame):

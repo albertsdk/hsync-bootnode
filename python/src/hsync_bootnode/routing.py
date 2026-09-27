@@ -11,7 +11,7 @@ import random
 import time
 from dataclasses import dataclass, field
 
-from hsync_bootnode.protocol import BootPeer, BucketProto, Endpoint
+from hsync_bootnode.protocol import BootPeer, BucketProto, Endpoint, SyncDirection
 
 __all__ = [
     "DEFAULT_SAMPLE_LIMIT",
@@ -41,12 +41,20 @@ class PeerRecord:
     connected: int = 0
     reachable: bool = True
     capacity: int = 0
+    # Election advertisement relayed verbatim from ``register`` (defaults when
+    # the peer advertised none). The node never interprets these values.
+    server_ready: bool = False
+    force_master: bool = False
+    never_master: bool = False
+    startup_time: float = 0.0
+    sync_direction: SyncDirection = "bidirectional"
     expires_at: float = field(default_factory=lambda: time.monotonic() + DEFAULT_TTL)
     # Materialized wire projection, lazily built by BootHandler._to_peer. Valid for
     # this object's lifetime: register always creates a NEW PeerRecord, and refresh
-    # only mutates connected/expires_at (neither is part of BootPeer). capacity and
-    # reachable ARE part of BootPeer, so they must never be mutated in place after
-    # the wire cache is built; a changed value requires a fresh register (new
+    # only mutates connected/expires_at (neither is part of BootPeer). Every other
+    # field IS part of BootPeer (capacity, reachable and the election
+    # advertisement), so none of them may be mutated in place after the wire
+    # cache is built; a changed value requires a fresh register (new
     # PeerRecord), or the cache goes stale.
     wire: BootPeer | None = field(default=None, repr=False, compare=False)
 

@@ -35,7 +35,7 @@ sudo systemctl enable --now hsync-bootnode.service
 `./compile_deb.sh -t deb-all` cross-builds amd64/arm64/armhf via Docker +
 `qemu-user-static`. The `-l/--language` flag (default `python`,
 also `DEB_LANGUAGE`) selects which implementation the package embeds;
-`rust`/`c` are rejected until those ports exist. Protected buckets need a
+`rust` is rejected until that port exists. Protected buckets need a
 group-keys file (never shipped in the package):
 
 ```bash

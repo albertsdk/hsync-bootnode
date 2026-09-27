@@ -9,7 +9,6 @@
 #
 #   python → python/compile.sh -t onedir -o <distpath>   (implemented)
 #   rust   → planned v2 port of the same boot/1 protocol (not yet available)
-#   c      → optional future port                        (not yet available)
 #
 # Usage:
 #   ./compile_deb.sh [options]
@@ -25,8 +24,6 @@
 #                           (default: python). Values:
 #                               python    current bootnode (implemented)
 #                               rust      planned v2 port — not yet available
-#                               c         optional future port — not yet
-#                                         available
 #                           Also settable via the DEB_LANGUAGE environment
 #                           variable (the CLI flag takes precedence).
 #   -v, --version VERSION   Override the version used for packages (default:
@@ -174,7 +171,7 @@ ${BOLD}Options:${RESET}
     -t, --target TARGET      Build target (default: deb)
                              Supported: deb, deb-all
     -l, --language LANGUAGE  Implementation language of the executable
-                             (default: python). Supported: python, rust, c
+                             (default: python). Supported: python, rust
     -v, --version VERSION    Override the package version (default: the
                              selected language's project file; python reads
                              python/pyproject.toml). Also settable via
@@ -250,7 +247,7 @@ _arch_to_deb() {
 }
 
 # Fail fast if the selected implementation language has no packaging path yet.
-# When the Rust/C ports land, extend this function and the two dispatchers
+# When the Rust port lands, extend this function and the two dispatchers
 # (_build_binary / _container_build_cmd).
 validate_language() {
     case "${DEB_LANGUAGE}" in
@@ -260,14 +257,9 @@ validate_language() {
             log_info "Use --language python (or unset DEB_LANGUAGE) for now."
             exit 1
             ;;
-        c)
-            log_error "language 'c' is not yet available (optional future port)."
-            log_info "Use --language python (or unset DEB_LANGUAGE) for now."
-            exit 1
-            ;;
         *)
             log_error "unknown language: ${DEB_LANGUAGE}"
-            echo "Supported languages: python (rust and c are planned)"
+            echo "Supported languages: python (rust is planned)"
             exit 1
             ;;
     esac

@@ -1,7 +1,7 @@
 # hsync-bootnode — wire protocol `boot/1`
 
 > Single source of truth for the bootstrap wire protocol, shared by **all** language
-> implementations (`python/`, future `rust/`, future `c/`). Do not fork this spec into
+> implementations (`python/`, future `rust/`). Do not fork this spec into
 > any implementation directory.
 
 ## Transport

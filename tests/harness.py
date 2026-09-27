@@ -5,8 +5,8 @@ it spawns the bootnode executable (path via ``HSYNC_BOOTNODE_BIN``, defaulting
 to the Python build), waits for the ``HSYNC_BOOTNODE_READY_FILE`` readiness
 seam, and drives it **only** through the public CLI and the ``boot/1`` wire
 protocol (QUIC/UDP, NDJSON, ALPN ``hsync-boot/1``). Nothing in here imports
-``hsync_bootnode`` — the same module will validate the future ``rust/`` and
-``c/`` ports unchanged.
+``hsync_bootnode`` — the same module will validate the future ``rust/`` port
+unchanged.
 """
 
 from __future__ import annotations

@@ -12,7 +12,7 @@ Five tiers, split by language-dependence:
 
 L2/L3 launch the bootnode executable (`HSYNC_BOOTNODE_BIN`, default Python
 build) and drive it only through the `boot/1` wire protocol, so the same
-benchmark runs unchanged against the future `rust/` and `c/` ports. L1 (handler)
+benchmark runs unchanged against the future `rust/` port. L1 (handler)
 and the L4/L5 diagnostics are Python-internal; L5's CPU sampling needs Linux
 `/proc` and reports `n/a` elsewhere.
 

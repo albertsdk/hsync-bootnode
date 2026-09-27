@@ -9,7 +9,7 @@
 Same language-neutral contract as the rest of ``tests/``: the node is
 spawned from ``HSYNC_BOOTNODE_BIN`` and driven only through the public CLI and
 the ``boot/1`` wire protocol. Nothing here imports ``hsync_bootnode``; the same
-suite must pass against the future ``rust/`` / ``c/`` ports unchanged.
+suite must pass against the future ``rust/`` port unchanged.
 
 Where the functional suite proves each branch once, these tests prove the node
 stays **correct and alive under sustained concurrent load, bursts, churn and a

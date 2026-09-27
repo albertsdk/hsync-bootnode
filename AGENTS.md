@@ -12,7 +12,7 @@ guidelines at all times.
 
 `hsync-bootnode` is a **multi-language repository**: one wire protocol
 (`boot/1`) with several implementations of the *same* contract
-(`python/` today, `rust/` next, optional `c/` later). This file mirrors the
+(`python/` today, `rust/` next). This file mirrors the
 Python project guidelines used by the other HSYNC projects and adds the rules
 that apply to the Rust implementation.
 
@@ -28,7 +28,6 @@ that apply to the Rust implementation.
 | `bench/` | L1/L2/L3 benchmarks; L2/L3 are language-neutral |
 | `python/` | Python + aioquic implementation (v1) and its white-box unit suite |
 | `rust/` | Rust + quinn implementation (planned, v2) |
-| `c/` | Optional C implementation (not started) |
 | `packaging/` | OS service units (`systemd`/`launchd`/`windows`) and the `.deb` payload |
 | `compile_deb.sh` | Root `.deb` assembler (`-l/--language`, `deb`/`deb-all`) |
 | `llm-wiki/` | Internal agent knowledge base |
@@ -136,7 +135,7 @@ documentation-engineering rules:
   `protocol-spec/boot-1.md` is the SSOT for the `boot/1` wire protocol, shared by
   **every** implementation. Before modifying any frame, field, ALPN, framing rule
   or refusal semantic you **MUST** read it and follow it. **Never fork the spec**
-  into `python/`, `rust/` or `c/`: the same frames must be byte-identical across
+  into `python/` or `rust/`: the same frames must be byte-identical across
   languages.
 
 * **Shared fixtures**
@@ -150,7 +149,7 @@ documentation-engineering rules:
   binary resolved from `HSYNC_BOOTNODE_BIN` and observes only the public CLI and
   the `boot/1` wire protocol: it **never** imports `hsync_bootnode` (or any Rust
   crate) and never touches internal state. The identical suite must pass against
-  `python/`, `rust/` and `c/`. Frame builders live in `tests/harness.py` (single
+  `python/` and `rust/`. Frame builders live in `tests/harness.py` (single
   source, language-neutral) — do not duplicate them inside an implementation
   directory. Readiness is signalled through the `HSYNC_BOOTNODE_READY_FILE`
   seam; the suite is gated by `HSYNC_BB_BOOTNODE=1`.
@@ -212,7 +211,7 @@ documentation-engineering rules:
 * **Multi-language obligation**
   Breaking the wire contract means bumping the mandatory `protocol_version`
   (`boot/1` → `boot/next`) and updating **atomically**: `protocol-spec/boot-1.md`
-  (or its successor), `fixtures/`, `python/`, `rust/`, `c/`, `tests/`, `bench/`,
+  (or its successor), `fixtures/`, `python/`, `rust/`, `tests/`, `bench/`,
   `compile_deb.sh`/`packaging/`, `llm-wiki/` and `docs/`. No implementation may
   keep speaking the retired version, and no compatibility shim may exist in one
   language only.
@@ -244,7 +243,7 @@ trivial documentation-only or formatting-only changes.
 
 | Implementation | Observable behavior | Cross-language / artifact impact |
 | --- | --- | --- |
-| `python/` | CLI, `boot/1` wire behavior, no-log | spec, fixtures, `rust/`, `c/`, root `tests/`, `bench/`, `compile_deb.sh`, `packaging/`, docs |
+| `python/` | CLI, `boot/1` wire behavior, no-log | spec, fixtures, `rust/`, root `tests/`, `bench/`, `compile_deb.sh`, `packaging/`, docs |
 | `rust/` | same CLI + `boot/1` wire behavior | spec, fixtures, `python/`, root `tests/`, `bench/`, `compile_deb.sh`, `packaging/`, docs |
 | root (`tests/`, `bench/`, `fixtures/`, spec) | the shared contract itself | every implementation |
 

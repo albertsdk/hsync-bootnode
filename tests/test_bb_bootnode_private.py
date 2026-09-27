@@ -3,7 +3,7 @@
 The scenarios drive the real binary through public behaviour only: the CLI
 (``--private`` / ``HSYNC_BOOTNODE_PRIVATE``, exit codes, banner) and the
 ``boot/1`` wire protocol. They must stay true for any implementation of the
-protocol (the future ``rust/``/``c/`` ports run this file unchanged).
+protocol (the future ``rust/`` port runs this file unchanged).
 """
 
 from __future__ import annotations

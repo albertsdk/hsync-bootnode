@@ -1,7 +1,7 @@
 # Architecture — hsync-bootnode
 
 One QUIC/UDP listener, in-memory state, no persistence, no logs. The v1
-implementation is Python (aioquic); the Rust and C implementations planned in
+implementation is Python (aioquic); the Rust implementation planned in
 the repo root `README.md` will share the same wire protocol SSOT
 (`protocol-spec/boot-1.md`) and the same fixtures.
 
@@ -96,7 +96,7 @@ UDP :443
 | Linux | `packaging/systemd/hsync-bootnode.service` | v1 |
 | macOS | `packaging/launchd/it.hsync.bootnode.plist` | v1 |
 | Windows | `packaging/windows/hsync-bootnode-service.xml` (WinSW) | v1 |
-| Linux `.deb` (amd64/arm64/armhf) | `../compile_deb.sh` (`-l/--language`, default `python`; `rust`/`c` rejected until those ports exist) + `packaging/deb/` (control, maintainer scripts, deb unit, man page) | v1 |
+| Linux `.deb` (amd64/arm64/armhf) | `../compile_deb.sh` (`-l/--language`, default `python`; `rust` rejected until that port exists) + `packaging/deb/` (control, maintainer scripts, deb unit, man page) | v1 |
 
 ## Packaging
 
@@ -108,7 +108,7 @@ UDP :443
   `/usr/bin/hsync-bootnode` symlink, the hardened deb systemd unit, and the
   gzipped man page; `DEBIAN/postinst` creates `/etc/hsync-bootnode/` (0750)
   for the out-of-package group-keys file and never enables the service.
-- `rust/`/`c` ports plug in by extending `validate_language()`,
+- `rust/` port plugs in by extending `validate_language()`,
   `_build_binary()` and `_container_build_cmd()` in `../compile_deb.sh`
   (dispatch points, fail-fast contract) — never by adding `deb` logic inside
   the per-language script.
@@ -136,8 +136,8 @@ seam (keyed on the ready file appearing with a PID, not on PID equality with the
 launcher — a onefile-packaged binary runs the app in a child process), and
 drives it **only** through the public CLI + `boot/1` wire protocol
 (QUIC/UDP, NDJSON, ALPN `hsync-boot/1`). It never imports
-`hsync_bootnode`. The same suite will validate the future `rust/` and `c/`
-ports unchanged. Benchmarks (`bench/`) follow the same rule for L2/L3
+`hsync_bootnode`. The same suite will validate the future `rust/`
+port unchanged. Benchmarks (`bench/`) follow the same rule for L2/L3
 (`bench_quic.py`, `soak.py` spawn the binary); L1 (`bench/bench_handler.py`) and
 the diagnostics (L4 `bench/profile_handshake.py` — handshake vs `aioquic`
 closing drain; L5 `bench/cpu_saturation.py` — load vs node CPU%) are
@@ -157,4 +157,4 @@ The monorepo `p2p`/bootnode migration is **complete**:
   `quiche` via JNI). Resumption document: the Android project's
   [`quic-jni`](https://github.com/albertsdk/hsync-android/blob/main/llm-wiki/modules/quic-jni.md)
   page.
-- **Not started (v2)**: Rust (`quinn`) and optional C implementations.
+- **Not started (v2)**: Rust (`quinn`) implementation.

@@ -83,9 +83,8 @@ flows directly between peers. See [How it works](docs/README.md#how-it-works-in-
 | [`packaging/`](packaging/) | OS service units — systemd / launchd / WinSW | v1 |
 | [`llm-wiki/`](llm-wiki/) | Internal agent knowledge base (architecture) | v1 |
 | [`docs/`](docs/) | End-user documentation (install, usage reference) | v1 |
-| [`compile_deb.sh`](compile_deb.sh) | Root `.deb` assembler: `-l/--language` (default `python`; `rust`/`c` rejected until those ports exist), `deb`/`deb-all` targets | v1 |
+| [`compile_deb.sh`](compile_deb.sh) | Root `.deb` assembler: `-l/--language` (default `python`; `rust` rejected until that port exists), `deb`/`deb-all` targets | v1 |
 | [`rust/`](rust/) | Future implementation — Rust + quinn | Not started |
-| [`c/`](c/) | Optional future implementation — C | Not started |
 
 ## Quick start
 

@@ -37,14 +37,14 @@ __all__ = [
     "BOOT_ALPN",
     "BOOT_IDLE_TIMEOUT",
     "MAX_FRAME_BYTES",
-    "NodeIdentity",
     "BootQuicProtocol",
-    "make_identity",
-    "load_or_create_identity",
-    "load_identity",
-    "rotate_identity",
     "IdentityError",
+    "NodeIdentity",
     "build_quic_configuration",
+    "load_identity",
+    "load_or_create_identity",
+    "make_identity",
+    "rotate_identity",
     "start_server",
 ]
 
@@ -281,6 +281,10 @@ class BootQuicProtocol(QuicConnectionProtocol):
     ) -> None:
         super().__init__(quic, stream_handler)
         self.peer_addr: tuple[str, int] | None = None
+        # Strong references to the per-session tasks: aioquic does not await the
+        # stream handler, so without this the loop could garbage-collect a
+        # running session.
+        self._stream_tasks: set[asyncio.Task[None]] = set()
         # Route every new stream to our per-session coroutine instead of the
         # bare callback (aioquic does not await the stream handler itself).
         self._stream_handler = self._spawn_stream
@@ -298,7 +302,9 @@ class BootQuicProtocol(QuicConnectionProtocol):
     def _spawn_stream(self, reader: Any, writer: Any) -> None:
         peer = self._observed_peer()
         debug_event("session open", peer=f"{peer[0]}:{peer[1]}")
-        asyncio.create_task(self._serve_stream(reader, writer))
+        task = asyncio.create_task(self._serve_stream(reader, writer))
+        self._stream_tasks.add(task)
+        task.add_done_callback(self._stream_tasks.discard)
 
     async def _serve_stream(self, reader: Any, writer: Any) -> None:
         peer_ip, peer_port = self._observed_peer()

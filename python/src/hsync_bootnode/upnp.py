@@ -26,15 +26,15 @@ from urllib.parse import urljoin
 from xml.etree import ElementTree
 
 __all__ = [
+    "UPNP_SSDP_ADDR",
     "IgdService",
     "UpnpError",
-    "UPNP_SSDP_ADDR",
     "UpnpManager",
-    "discover_igd",
     "add_port_mapping",
-    "delete_port_mapping",
     "build_add_mapping_soap",
     "build_delete_mapping_soap",
+    "delete_port_mapping",
+    "discover_igd",
     "parse_soap_error",
 ]
 

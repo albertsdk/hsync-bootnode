@@ -375,8 +375,8 @@ def _load_keys(keys_fd: int | None) -> dict[str, SecretStr]:
         return {}
     raw = _read_fd(keys_fd)
     keys: dict[str, SecretStr] = {}
-    for line in raw.splitlines():
-        line = line.strip()
+    for raw_line in raw.splitlines():
+        line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
         bucket, _, key = line.partition("=")
@@ -401,7 +401,7 @@ def _install_uvloop() -> None:
     if sys.platform == "win32":
         return
     try:
-        import uvloop  # noqa: PLC0415
+        import uvloop
     except ImportError:
         return
     uvloop.install()
@@ -416,7 +416,7 @@ def _install_sigterm_handler() -> None:
     path (caught around ``asyncio.run``).
     """
 
-    def _handle(signum: int, frame: object) -> None:
+    def _handle(_signum: int, _frame: object) -> None:
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, _handle)

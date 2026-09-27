@@ -13,9 +13,9 @@ import hmac
 from hsync_bootnode.protocol import _BUCKET_TOKEN_RE, BUCKET_TOKEN_LEN
 
 __all__ = [
+    "constant_time_equals",
     "derive_bucket_token",
     "is_valid_bucket_token",
-    "constant_time_equals",
     "verify_bucket_token",
 ]
 

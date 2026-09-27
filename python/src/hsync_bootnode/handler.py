@@ -40,9 +40,9 @@ from hsync_bootnode.routing import DEFAULT_TTL, PeerRecord, RoutingTable
 from hsync_bootnode.tokens import derive_bucket_token, verify_bucket_token
 
 __all__ = [
-    "CertificateFingerprint",
-    "BootHandler",
     "BootConfigError",
+    "BootHandler",
+    "CertificateFingerprint",
 ]
 
 # Token authorization / spec rate limits (in-memory sliding windows).
@@ -345,10 +345,10 @@ class BootHandler:
         """
         if self._private and self._authorize(model.bucket, model.bucket_token, peer_ip) != "ok":
             debug_event("leave refused", cid=model.cid, bucket=model.bucket, peer=peer_ip)
-            return None
+            return
         self.routing.remove(model.cid, model.bucket)
         debug_event("leave removed", cid=model.cid, bucket=model.bucket, peer=peer_ip)
-        return None
+        return
 
     def _query(self, model: BootQuery, peer_ip: str) -> bytes:
         pair_key = f"{peer_ip}|{model.bucket}"

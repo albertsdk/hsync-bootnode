@@ -14,10 +14,10 @@ from dataclasses import dataclass, field
 from hsync_bootnode.protocol import BootPeer, BucketProto, Endpoint
 
 __all__ = [
+    "DEFAULT_SAMPLE_LIMIT",
+    "DEFAULT_TTL",
     "PeerRecord",
     "RoutingTable",
-    "DEFAULT_TTL",
-    "DEFAULT_SAMPLE_LIMIT",
 ]
 
 # Seconds (spec: client refresh every 30 s, prune every 15 s, TTL 60 s).

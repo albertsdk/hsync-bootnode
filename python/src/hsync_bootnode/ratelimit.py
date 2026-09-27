@@ -12,8 +12,8 @@ from __future__ import annotations
 import time
 
 __all__ = [
-    "TokenBucketLimiter",
     "RateLimitKey",
+    "TokenBucketLimiter",
 ]
 
 RateLimitKey = str

@@ -16,13 +16,21 @@ import signal
 import sys
 
 import typer
+from hsync_common import ssl_utils
 from hsync_common.constants import BOOT_DEFAULT_PORT
 from pydantic import SecretStr
 
 from hsync_bootnode import __version__
 from hsync_bootnode.debug import configure_debug, debug_log
 from hsync_bootnode.handler import BootConfigError, BootHandler
-from hsync_bootnode.server import start_server
+from hsync_bootnode.server import (
+    IdentityError,
+    NodeIdentity,
+    load_identity,
+    load_or_create_identity,
+    rotate_identity,
+    start_server,
+)
 from hsync_bootnode.upnp import UpnpManager
 
 app = typer.Typer(
@@ -125,6 +133,23 @@ def run(
         envvar=_DEFAULT_NO_RATE_LIMIT_ENV,
         help="Disable rate limiting (benchmark/test seam; never in production).",
     ),
+    identity: str | None = typer.Option(
+        None,
+        "--identity",
+        help=(
+            "Persist the TLS identity (key+cert) at this path, so the certificate "
+            "fingerprint is stable across restarts and can be pinned by clients. "
+            "Without it the identity stays in-memory (ephemeral, no-log default)."
+        ),
+    ),
+    public_host: list[str] = typer.Option(
+        [],
+        "--public-host",
+        help=(
+            "Public hostname or IP to add to the certificate SAN, so clients can "
+            "reach the node under a name that is not the bind address (repeatable)."
+        ),
+    ),
 ) -> None:
     """Run the bootstrap node: single QUIC/UDP listener (boot/1)."""
     try:
@@ -136,7 +161,15 @@ def run(
             ttl=float(ttl),
             enforce_rate_limits=not no_rate_limit,
         )
+        node_identity = (
+            load_or_create_identity(identity, host=host, public_hosts=public_host)
+            if identity
+            else None
+        )
     except BootConfigError as exc:
+        typer.echo(f"configuration error: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    except IdentityError as exc:
         typer.echo(f"configuration error: {exc}", err=True)
         raise typer.Exit(code=2) from exc
 
@@ -144,9 +177,15 @@ def run(
     _install_uvloop()
     _install_sigterm_handler()
 
+    identity_line = (
+        f"  identity  : {identity} (persisted)"
+        if node_identity is not None
+        else "  identity  : in-memory (ephemeral; pinning needs --identity)"
+    )
     banner = (
         f"hsync-bootnode {__version__} — boot/1, no-log, in-memory\n"
         f"  listener : {host}:{port} (QUIC/UDP, TLS 1.3, RETRY+address-validation)\n"
+        f"{identity_line}\n"
         f"  protected buckets: {', '.join(protected_bucket) or '(none)'}\n"
         f"  mode      : {'private (every frame needs a bucket_token)' if private else 'open'}\n"
         f"  group keys loaded: {len(keys)}\n"
@@ -157,12 +196,57 @@ def run(
     )
     typer.echo(banner)
     try:
-        asyncio.run(_async_main(host, port, handler, no_upnp, ready_file))
+        asyncio.run(_async_main(host, port, handler, no_upnp, ready_file, identity=node_identity))
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass  # graceful shutdown: transport closed in _async_main's finally
     except ListenerBindError as exc:
         typer.echo(_bind_error_message(exc), err=True)
         raise typer.Exit(code=3) from exc
+
+
+identity_app = typer.Typer(help="Manage the persistent node identity (TLS key+cert).")
+app.add_typer(identity_app, name="identity")
+
+
+@identity_app.command("show")
+def identity_show(
+    identity: str = typer.Option(..., "--identity", help="Path of the persisted identity file."),
+    pem: bool = typer.Option(
+        False, "--pem", help="Print the certificate PEM instead of the fingerprint."
+    ),
+) -> None:
+    """Print the persisted identity fingerprint (or its certificate PEM)."""
+    try:
+        node = load_identity(identity)
+    except IdentityError as exc:
+        typer.echo(f"configuration error: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    if pem:
+        typer.echo(ssl_utils.serialize_cert_pem(node.certificate).decode("ascii"))
+    else:
+        typer.echo(f"sha256:{node.fingerprint}")
+
+
+@identity_app.command("rotate")
+def identity_rotate(
+    identity: str = typer.Option(..., "--identity", help="Path of the persisted identity file."),
+    public_host: list[str] = typer.Option(
+        [],
+        "--public-host",
+        help="Public hostname or IP to add to the new certificate SAN (repeatable).",
+    ),
+) -> None:
+    """Regenerate the persisted identity and print the new fingerprint."""
+    try:
+        node = rotate_identity(identity, host="0.0.0.0", public_hosts=public_host)
+    except IdentityError as exc:
+        typer.echo(f"configuration error: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    typer.echo(f"sha256:{node.fingerprint}")
+    typer.echo(
+        "distribute this fingerprint to clients; accept the old pin during the rotation window",
+        err=True,
+    )
 
 
 class ListenerBindError(Exception):
@@ -227,9 +311,13 @@ async def _async_main(
     handler: BootHandler,
     no_upnp: bool,
     ready_file: str | None = None,
+    *,
+    identity: NodeIdentity | None = None,
 ) -> None:
     try:
-        server, bound_port, identity = await start_server(host, port, handler, retry=True)
+        server, bound_port, identity = await start_server(
+            host, port, handler, retry=True, identity=identity
+        )
     except OSError as exc:
         raise ListenerBindError(host, port, _errno_from(exc)) from exc
     typer.echo(f"  running   : {host}:{bound_port} — cert fingerprint {identity.fingerprint}")

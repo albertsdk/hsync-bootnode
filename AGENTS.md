@@ -158,10 +158,12 @@ documentation-engineering rules:
 * **No-log invariant**
   Identical in every language: the process NEVER writes peer data (IPs, CIDs,
   timestamps) to disk. The routing table is RAM-only; the TLS identity is
-  in-memory and regenerated per process; diagnostics are opt-in, peer-aware and
-  stderr-only (`--debug` / `HSYNC_BOOTNODE_DEBUG=1`). Enforced for Python by
-  `python/tests/test_nolog.py` (read-only filesystem sandbox): the Rust port must
-  ship an equivalent enforcement test.
+  in-memory and regenerated per process **by default**, with an opt-in
+  `--identity PATH` exception that persists only the operator's own key+cert
+  (ADR-0034) so the fingerprint is stable and rotatable; diagnostics are opt-in,
+  peer-aware and stderr-only (`--debug` / `HSYNC_BOOTNODE_DEBUG=1`). Enforced for
+  Python by `python/tests/test_nolog.py` (read-only filesystem sandbox): the Rust
+  port must ship an equivalent enforcement test.
 
 * **Rigid schema**
   Every `boot/1` frame model rejects unknown fields (pydantic

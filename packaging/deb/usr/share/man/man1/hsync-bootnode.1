@@ -16,13 +16,22 @@ protocol over QUIC/UDP port 443 (TLS 1.3 inside QUIC, mandatory RETRY and
 address-validation tokens).
 .PP
 The routing table lives exclusively in RAM with a configurable TTL (default
-60 seconds, 1\-3600): nothing is ever written to disk, no log file is
-produced, and the TLS identity is generated per process. Stopping the process
-erases every trace of the network.
+60 seconds, 1\-3600): nothing peer-related is ever written to disk, no log file
+is produced, and the TLS identity is generated per process unless the operator
+opts into persistence with
+.BR "run \-\-identity" .
+Stopping the process erases every trace of the network.
 .SH COMMANDS
 .TP
 .B run
 Run the bootstrap node: single QUIC/UDP listener (boot/1).
+.TP
+.B identity show
+Print the persisted identity fingerprint (or its certificate PEM with
+.BR \-\-pem ).
+.TP
+.B identity rotate
+Regenerate the persisted identity and print the new fingerprint.
 .SH OPTIONS
 .TP
 .BI run\ \fR--host\fP= HOST
@@ -32,6 +41,17 @@ Address to bind the QUIC/UDP listener to. Default:
 .BI run\ \fR--port\fP= PORT
 UDP port (1\-65535). Default: 443 (QUIC/HTTP3). Ports below 1024 need root or
 .BR CAP_NET_BIND_SERVICE .
+.TP
+.BI run\ \fR--identity\fP= PATH
+Persist the TLS identity (key+cert) at
+.I PATH
+so the certificate fingerprint is stable across restarts and can be pinned by
+clients. Without it the identity stays in-memory (ephemeral default). The file
+is written with 0600 permissions in a 0700 directory and contains no peer data.
+.TP
+.BI run\ \fR--public-host\fP= NAME
+Public hostname or IP to add to the certificate SAN; repeatable for multiple
+names.
 .TP
 .BI run\ \fR--protected-bucket\fP= NAME
 Bucket requiring a valid
@@ -125,6 +145,12 @@ Group keys for protected buckets, one
 .I bucket=<hex\-key>
 per line. Provisioned by the administrator; never part of the package.
 .TP
+.I /var/lib/hsync-bootnode/identity.pem
+Opt-in persistent TLS identity (certificate + private key, 0600), created by
+.BR "run \-\-identity" ;
+contains no peer data. Rotate it with
+.BR "identity rotate" .
+.TP
 .I /usr/lib/systemd/system/hsync-bootnode.service
 Hardened systemd unit (DynamicUser, ProtectSystem=strict, SystemCallFilter,
 StandardOutput=null). Installed but not enabled: opt in with
@@ -150,6 +176,17 @@ Show the certificate fingerprint printed at startup to pin the node on
 clients:
 .br
 .B hsync-bootnode run --port 443
+.TP
+Run with a persistent identity so the fingerprint is stable across restarts,
+then read the fingerprint to distribute to clients:
+.br
+.B hsync-bootnode run --identity /var/lib/hsync-bootnode/identity.pem --public-host boot.example.com
+.br
+.B hsync-bootnode identity show --identity /var/lib/hsync-bootnode/identity.pem
+.TP
+Rotate the identity after a suspected compromise:
+.br
+.B hsync-bootnode identity rotate --identity /var/lib/hsync-bootnode/identity.pem
 .TP
 Unprivileged port (no root or capability needed):
 .br

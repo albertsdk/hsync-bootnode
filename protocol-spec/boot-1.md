@@ -22,6 +22,32 @@
 - Per-IP token bucket: ~10 req/s (burst 50). Additional per-bucket limits in §Auth.
 - Idle connections are dropped after 30 s.
 
+## Trust & identity (ADR-0034)
+
+- The node presents a **self-signed** TLS certificate (Ed25519 key by default).
+- **Fingerprint** = SHA-256 of the leaf certificate DER, lowercase hex; canonical
+  form `sha256:<hex>`. It is the same domain as the `cert_fp` field carried in
+  frames, so a client-side pin and a relayed peer `cert_fp` are directly
+  comparable.
+- **Publication is out-of-band**: `identity show`, the startup banner and the
+  service units print the fingerprint; the operator distributes it to clients
+  (it is never sent by the node on the wire, so it cannot be learned from the
+  protocol itself).
+- **Verify before frame (client obligation)**: a client MUST establish the
+  certificate fingerprint — via an explicit `--bootnode-fingerprint` pin or the
+  opt-in `--bootnode-tofu` store — **before** writing any frame. The
+  `bucket_token` travels inside `register`/`query`, so trust is decided pre-write;
+  a mismatch closes the connection with zero application bytes sent.
+- **Identity persistence is opt-in**: by default the identity is in-memory and
+  regenerated per process (the no-log invariant is unchanged). `--identity PATH`
+  persists a key+cert so the fingerprint is stable across restarts and rotatable
+  with `identity rotate`; the packaged service units pass `--identity`.
+- **Rotation**: a client accepts up to two pins (old + new) during the rotation
+  window; the trust store records whichever matched. `identity rotate` prints the
+  new fingerprint.
+- No wire change: `protocol_version` stays `boot/1` — trust is a transport-layer
+  concern layered on the unchanged frame contract.
+
 ## Frames (client → server on one stream)
 
 | Frame | Payload |

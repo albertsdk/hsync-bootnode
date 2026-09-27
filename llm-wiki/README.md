@@ -25,7 +25,9 @@ Internal, agent-optimized knowledge base for the `hsync-bootnode` project
 ## Hard invariants (read before touching any module)
 
 1. **No-log**: the process NEVER writes peer data (IPs, CIDs, timestamps) to
-   disk. TLS identity is in-memory, per-process. Enforced by
+   disk. TLS identity is in-memory, per-process **by default**; `--identity PATH`
+   is the single opt-in exception that persists only the operator's own key+cert
+   (ADR-0034) for a stable, rotatable fingerprint. Enforced by
    `python/tests/test_nolog.py` (read-only filesystem sandbox). The opt-in
    `--debug` sink (decision #25) is stderr-only and may include the peer
    identity; without it nothing peer-related leaves memory.
@@ -48,4 +50,6 @@ Internal, agent-optimized knowledge base for the `hsync-bootnode` project
    `hsync_common.path_validation.is_valid_bucket_name`), not re-declared locally;
    the boot/1 spec + fixtures stay the cross-language contract. The daemon also
    reuses `hsync_common.ssl_utils` for its in-memory TLS identity (see
-   `decisions.md` #26 and hsync-common ADR-0033).
+   `decisions.md` #26 and hsync-common ADR-0033); ADR-0034 adds the opt-in
+   persistent identity (`--identity`, `identity show`/`rotate`) and the
+   `sha256:<hex>` trust fingerprint.

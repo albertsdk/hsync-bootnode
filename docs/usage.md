@@ -6,10 +6,13 @@ the OS service units. Installation and the open-mode quick start are on the
 
 ## Command
 
-The single command is `run` (plus the top-level `--version` flag):
+The commands are `run`, `identity show`, and `identity rotate` (plus the
+top-level `--version` flag):
 
 ```bash
 hsync-bootnode run [OPTIONS]
+hsync-bootnode identity show --identity PATH [--pem]
+hsync-bootnode identity rotate --identity PATH [--public-host NAME]...
 hsync-bootnode --version
 ```
 
@@ -19,6 +22,8 @@ hsync-bootnode --version
 |---|---|---|
 | `--host` | `0.0.0.0` | Address to bind the QUIC/UDP listener to. |
 | `--port` | `443` | UDP port (1–65535). 443 is the QUIC/HTTP3 default; ports below 1024 need root or `CAP_NET_BIND_SERVICE` (the systemd unit grants it). |
+| `--identity` | *(none)* | Persist the TLS identity (key+cert) at this path, so the certificate fingerprint is stable across restarts and can be pinned by clients. Without it the identity stays in-memory (ephemeral, no-log default). |
+| `--public-host` | *(none)* | Public hostname or IP to add to the certificate SAN (repeatable). |
 | `--protected-bucket` | *(none)* | Bucket that requires a valid `bucket_token`. Repeatable. Declaring a protected bucket without provisioning its key fails fast at startup (exit code 2). |
 | `--keys-fd` | *(none)* | File descriptor carrying the group keys (see below). Environment variable form: `HSYNC_BOOTNODE_KEYS_FD`. |
 | `--private` | *(disabled flag)* | Private node: every frame must carry a valid `bucket_token`, for **every** bucket (not only `--protected-bucket`). Starting it with no group key fails fast (exit code 2). Environment variable form: `HSYNC_BOOTNODE_PRIVATE=1`. |
@@ -27,6 +32,27 @@ hsync-bootnode --version
 | `--debug` | *(disabled flag)* | Emit the full operation log to stderr (opt-in): connections, frames, decisions, record changes and TTL sweeps, **including the peer identity** (CID, bucket, IP, port). Stderr only — never written to disk; without it no peer data leaves memory. Environment variable form: `HSYNC_BOOTNODE_DEBUG=1`. |
 | `--ready-file` | *(none)* | Write the process PID to this path once the listener is bound (readiness seam, contains no peer data). Environment variable form: `HSYNC_BOOTNODE_READY_FILE`. |
 | `--no-rate-limit` | *(disabled flag)* | Disable rate limiting entirely (benchmark/test seam). Environment variable form: `HSYNC_BOOTNODE_NO_RATE_LIMIT=1`. Never enable in production — it removes the anti-abuse limits the spec requires. |
+
+### `identity show`
+
+Prints the persisted identity fingerprint (or, with `--pem`, the public
+certificate). `--identity PATH` is required; the private key is never printed.
+
+```bash
+hsync-bootnode identity show --identity /var/lib/hsync-bootnode/identity.pem
+# sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+```
+
+### `identity rotate`
+
+Regenerates the persisted key+cert and prints the new fingerprint, which the
+operator distributes to clients. `--identity PATH` is required; the old
+fingerprint stays accepted by clients during the rotation window (two-pin
+window).
+
+```bash
+hsync-bootnode identity rotate --identity /var/lib/hsync-bootnode/identity.pem
+```
 
 ### `--version`
 
@@ -157,10 +183,40 @@ neither carries nor changes it.
 
 - Peer data (IPs, CIDs, timestamps) lives only in RAM with the configured
   `--ttl` (default 60 s, max 3600 s).
-- The TLS certificate is self-signed, generated at startup, and never
-  persisted.
+- The TLS certificate is self-signed. By default it is generated at startup and
+  never persisted; `--identity PATH` is the single opt-in exception, persisting
+  only the operator's own key+cert (never peer data) for a stable fingerprint.
 - Output goes to the console only; the shipped service units discard it
   (`/dev/null`).
+
+## TLS identity & pinning
+
+By default the node generates a fresh self-signed certificate at every start, so
+its fingerprint changes with each restart and a client cannot pin it. For a
+self-hosted node whose clients pin the fingerprint, persist the identity:
+
+```bash
+# create (first run) and reuse (subsequent runs) the identity:
+hsync-bootnode run --identity /var/lib/hsync-bootnode/identity.pem \
+    --public-host boot.example.com
+```
+
+The file is written with `0600` permissions in a `0700` directory and contains
+only the operator's own key+cert — never peer data, so the no-log invariant is
+preserved. Read the fingerprint and distribute it to clients out of band:
+
+```bash
+hsync-bootnode identity show --identity /var/lib/hsync-bootnode/identity.pem
+```
+
+Clients pin the node with `--bootnode-fingerprint` (or trust it on first use with
+`--bootnode-tofu`); see the client `p2p-bootnode` documentation. To rotate the key
+(e.g. after a suspected compromise), regenerate it and move clients to the new
+fingerprint in a two-pin window:
+
+```bash
+hsync-bootnode identity rotate --identity /var/lib/hsync-bootnode/identity.pem
+```
 
 ## Diagnostics (debug mode)
 

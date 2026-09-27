@@ -60,7 +60,9 @@ flows directly between peers. See [How it works](docs/README.md#how-it-works-in-
 ## Design invariants
 
 - **No-log** — the process never writes peer data (IPs, CIDs, timestamps)
-  to disk. The TLS identity is in-memory and regenerated per process.
+  to disk. The TLS identity is in-memory and regenerated per process by default;
+  `--identity PATH` is the single opt-in exception, persisting only the
+  operator's own key+cert for a stable, pin-able fingerprint.
 - **Zero-knowledge / protected buckets** — group tokens are HMAC-SHA256
   capabilities compared in constant time; refusals are uniform and never reveal
   whether a bucket exists.
@@ -95,7 +97,9 @@ The full install walkthrough (`.deb`, from source, protected buckets) lives in
 ```
 
 The node prints its effective configuration and TLS certificate fingerprint,
-then serves forever. Point the clients of a P2P group at it:
+then serves forever. Pin that fingerprint on clients (or persist the identity
+with `--identity` so it survives restarts) and point the clients of a P2P group
+at the node:
 
 ```bash
 HSYNC_BOOTNODE=boot.example.net hsync p2p -b mybucket -p /srv/hsync

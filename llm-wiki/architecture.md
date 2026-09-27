@@ -44,7 +44,7 @@ UDP :443
 1. `server.py` reads one newline-terminated frame (≤ 8 KiB, checked on the frame
    length itself so an oversized frame always closes the stream); a frame longer
    than 8 KiB closes the session silently (no-log).
-2. `BootHandler.handle` (`python/src/hsync_bootnode/handler.py:150`) validates the
+2. `BootHandler.handle` (`python/src/hsync_bootnode/handler.py:171`) validates the
    raw frame in a single pass via the `BootFrame` discriminated union
    (`BOOT_FRAME_ADAPTER.validate_json`). `ValidationError` → silent drop
    (no-log, no oracle, no admission token consumed); only a *valid* frame then
@@ -74,7 +74,7 @@ UDP :443
   `--identity PATH` (the operator's own key+cert, ADR-0034 — not peer data).
   Verified by `python/tests/test_nolog.py` under a read-only filesystem.
 - **Anti-amplification**: QUIC RETRY + address-validation before connection
-  state (`start_server(..., retry=True)`, `python/src/hsync_bootnode/server.py:168`).
+  state (`start_server(..., retry=True)`, `python/src/hsync_bootnode/server.py:365`).
 - **Protected buckets**: the group key never enters any record; only the derived token.
   Protected buckets are declared by the operator (`--protected-bucket`,
   repeatable) and fail fast at startup if declared without a key

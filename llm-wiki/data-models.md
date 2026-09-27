@@ -70,8 +70,8 @@ excluded from the union: they are never validated on the input path.
 
 | Structure | Location | Role |
 |---|---|---|
-| `PeerRecord` | `python/src/hsync_bootnode/routing.py:31` | RAM-only routing entry keyed `(cid, bucket, group)`; carries `capacity` (advisory hint), `expires_at` (TTL) and a lazily-built materialized wire projection `wire` (`BootPeer | None`) |
-| `RoutingTable` | `python/src/hsync_bootnode/routing.py:55` | In-memory registry (`upsert`/`remove`/`get`/`prune`/`sample`/`count`); never persisted. Backed by three secondary indexes — `_by_group` (bucket+group → keys, O(1) `sample`), `_by_cid` (cid+bucket → keys, O(1) `remove`), `_pos` (key → list position for O(1) swap-remove). `prune` rebuilds the indexes in bulk when ≥ 50% of records expire, else removes incrementally. |
+| `PeerRecord` | `python/src/hsync_bootnode/routing.py:29` | RAM-only routing entry keyed `(cid, bucket, group)`; carries `capacity` (advisory hint), `expires_at` (TTL) and a lazily-built materialized wire projection `wire` (`BootPeer | None`) |
+| `RoutingTable` | `python/src/hsync_bootnode/routing.py:60` | In-memory registry (`upsert`/`remove`/`get`/`prune`/`sample`/`count`); never persisted. Backed by three secondary indexes — `_by_group` (bucket+group → keys, O(1) `sample`), `_by_cid` (cid+bucket → keys, O(1) `remove`), `_pos` (key → list position for O(1) swap-remove). `prune` rebuilds the indexes in bulk when ≥ 50% of records expire, else removes incrementally. |
 | `TokenBucketLimiter` | `python/src/hsync_bootnode/ratelimit.py:22` | In-memory token bucket for the per-IP/per-bucket rate limits; `evict_stale` drops fully-refilled buckets (behaviour-identical, bounds memory) |
 | `NodeIdentity` | `python/src/hsync_bootnode/server.py` | Self-signed TLS identity (cert + ECDSA P-256 / RSA / Ed25519 key). Ephemeral via `make_identity`, or persisted (`0600`/`0700`) via `load_or_create_identity`/`rotate_identity`. `fingerprint` is the leaf-DER SHA-256 (`sha256:<hex>`), the trust anchor for client pinning (ADR-0034) |
 | `CertificateFingerprint` | `python/src/hsync_bootnode/handler.py:65` | 64-hex-char `str` subtype carried on the wire as `cert_fp` and shared with the trust fingerprint domain |
@@ -85,7 +85,7 @@ leave           ──► BootLeave                    ──► (no reply frame
 ```
 
 `BootPeer` is projected from a `PeerRecord` (handler `_to_peer`,
-`python/src/hsync_bootnode/handler.py:462`): the peer's advertised `endpoints[0]` is
+`python/src/hsync_bootnode/handler.py:461`): the peer's advertised `endpoints[0]` is
 preferred, falling back to the observed source endpoint. The projection is
 materialized once on `PeerRecord.wire` and reused on later samples — valid for the
 record's lifetime because `register` always builds a fresh `PeerRecord` and

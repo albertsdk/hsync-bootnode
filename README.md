@@ -6,22 +6,24 @@
 
 **HSYNC Bootnode** is the optional discovery node that lets HSYNC peers find
 each other over the Internet when they are **not** on the same local network. It
-is a stateless, no-log bootstrap service: it tells P2P clients which peers are
+is a stateless, no-log meeting point: it tells P2P clients which peers are
 online without ever storing anything, speaking the `boot/1` protocol over QUIC
-(UDP port 443).
+(UDP port 443). Think of it as an **address book, not a post office**: it helps
+your devices find each other, and the file data always flows directly between
+them.
 
 > **Why it exists:** the [HSYNC Client](https://github.com/albertsdk/hsync-client)'s
 > [p2p Mode](https://github.com/albertsdk/hsync-client/blob/main/docs/p2p-mode.md)
 > discovers peers over mDNS on the local network. A bootnode extends that same
-> mode across networks — same election, same transport, same data plane; only
-> discovery differs.
+> mode across networks: same election, same transport, same peer-to-peer data
+> plane — only discovery differs.
 
-> **Status:** v1 **complete and stable** (Python + aioquic) — the implementation
-> is feature-complete, tested and packaged, and it is what clients talk to. The
-> Rust/`quinn` port is planned as an **additive v2** for the
-> "thousands of handshakes/s" target, not a prerequisite. This is a
-> **multi-language** repository: one protocol, several implementations sharing
-> the same spec and fixtures.
+> **Status:** v1 **complete and stable** (Python + aioquic): packaged, tested,
+> and the implementation clients currently talk to. A Rust/`quinn` port is
+> planned as an **additive v2** for higher handshake throughput, not a
+> prerequisite — this is a **multi-language** repository: one protocol, several
+> implementations sharing the same spec and fixtures (see
+> [Layout](#layout-monorepo--multiple-implementations-of-the-same-protocol)).
 
 > 👉 **Operational Advisory:** the bootnode is discovery-only — it never stores
 > or relays file data. Provision protected buckets and pin its TLS fingerprint
@@ -68,6 +70,18 @@ network over the Internet** whose file data still flows only between peers. See
 [Private node](docs/usage.md#private-node-authenticated-bootstrap) and the
 [privacy and anonymity model](docs/usage.md#privacy-and-anonymity-model).
 
+## When you need it
+
+**You need a bootnode when:**
+
+* your P2P group spans different networks — home ↔ office, two branches, a laptop on mobile data — and you don't want a central server holding the files;
+* you want a private, closed group: run the node with `--private` and every frame is authenticated against a group key, with no accounts to create and nothing stored.
+
+**You don't need it when:**
+
+* all your devices are on the same local network — plain `hsync p2p` discovers them via mDNS;
+* your devices sync through an [HSYNC Server](https://github.com/albertsdk/hsync-server) (Server Mode), which already acts as their meeting point.
+
 ## Design invariants
 
 - **No-log** — the process never writes peer data (IPs, CIDs, timestamps)
@@ -100,9 +114,13 @@ network over the Internet** whose file data still flows only between peers. See
 ## Quick start
 
 The full install walkthrough (`.deb`, from source, protected buckets) lives in
-[docs/README.md](docs/README.md). A minimal open-mode node:
+[docs/README.md](docs/README.md). A minimal open-mode node from a source
+checkout:
 
 ```bash
+cd python
+python3 -m venv .venv
+.venv/bin/pip install .
 .venv/bin/hsync-bootnode run --host 0.0.0.0 --port 443
 ```
 

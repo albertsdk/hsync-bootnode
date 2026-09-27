@@ -5,8 +5,16 @@ tells P2P clients which peers are currently online, without storing anything.
 It runs an in-memory, no-log, zero-knowledge bootstrap service speaking the
 `boot/1` protocol over QUIC (UDP port 443).
 
-> **Status**: v1 (Python). The wire protocol is under active design — see
-> `protocol-spec/boot-1.md`.
+> **Status**: v1 complete and stable (Python). The `boot/1` protocol is versioned
+> and specified in `protocol-spec/boot-1.md`.
+
+Run it as-is and it is a **public** rendezvous point. Run it with `--private` and
+it becomes the closed rendezvous point of a single community: every frame is
+authenticated against a group key, there is no account to create and nothing is
+stored — a **private, pseudonymous P2P network over the Internet** whose file data
+still flows only between peers. See
+[Private node](usage.md#private-node-authenticated-bootstrap) and the
+[privacy and anonymity model](usage.md#privacy-and-anonymity-model).
 
 ## How it works in one paragraph
 
@@ -65,5 +73,5 @@ the full option list, see the [Usage reference](usage.md).
 
 | Document | Content |
 |---|---|
-| [usage.md](usage.md) | CLI reference, protected buckets and private nodes, keys provisioning, OS services |
+| [usage.md](usage.md) | CLI reference, protected buckets and private nodes, keys provisioning, privacy/security model, OS services |
 | `protocol-spec/boot-1.md` | Wire protocol specification |

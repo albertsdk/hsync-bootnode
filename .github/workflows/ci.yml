@@ -1,0 +1,98 @@
+# CI — hsync-bootnode
+# Lint + tests for the boot/1 bootstrap node. The Python implementation depends on
+# the shared library through a Poetry path dependency (../hsync-common), so the
+# sibling repo is checked out alongside it.
+#
+# Two suites run here:
+#   * python/tests — white-box unit tests of the reference implementation;
+#   * tests/       — the language-neutral black-box suite, which spawns the node
+#                    executable and drives only the public CLI + boot/1 wire, so
+#                    it keeps passing against any future implementation (rust/).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: lint + tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13", "3.14"]
+    steps:
+      - name: Checkout hsync-bootnode
+        uses: actions/checkout@v7
+        with:
+          path: hsync-bootnode
+
+      # Path dependency: ../hsync-common must sit next to this repo.
+      # hsync-common is a private repo, so the default GITHUB_TOKEN cannot read
+      # it; authenticate with a PAT stored in the HSYNC_COMMON_PAT secret.
+      - name: Checkout hsync-common
+        uses: actions/checkout@v7
+        with:
+          repository: albertsdk/hsync-common
+          ref: main
+          path: hsync-common
+          token: ${{ secrets.HSYNC_COMMON_PAT }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # Gate the markdown docs on valid relative links, including the cross-repo
+      # pointers into the sibling hsync-common checkout. Pure stdlib script.
+      - name: Docs link-check
+        working-directory: hsync-bootnode
+        run: python ../hsync-common/scripts/dev/check_doc_links.py .
+
+      - name: Install Poetry
+        run: pipx install poetry
+
+      # The black-box harness resolves the node executable as
+      # python/.venv/bin/hsync-bootnode, so the virtualenv must live inside the
+      # project; `poetry install` also creates that console script.
+      - name: Configure in-project virtualenv
+        working-directory: hsync-bootnode/python
+        run: poetry config virtualenvs.in-project true
+
+      # Skip the optional `build` group: PyInstaller is only needed by
+      # compile.sh (standalone binaries / .deb), never by lint or tests.
+      - name: Install dependencies
+        working-directory: hsync-bootnode/python
+        run: poetry install --no-interaction --without build
+
+      - name: Ruff (lint — python/)
+        working-directory: hsync-bootnode/python
+        run: poetry run ruff check .
+
+      - name: Ruff (format check — python/)
+        working-directory: hsync-bootnode/python
+        run: poetry run ruff format --check .
+
+      - name: Mypy
+        working-directory: hsync-bootnode/python
+        run: poetry run mypy src/hsync_bootnode
+
+      - name: Unit tests (python/tests)
+        working-directory: hsync-bootnode/python
+        run: poetry run pytest -q
+
+      - name: Ruff (lint — language-neutral tests/ and bench/)
+        working-directory: hsync-bootnode
+        run: python/.venv/bin/python -m ruff check tests bench
+
+      # Language-neutral contract suite: spawns the console script and observes
+      # only the public CLI + boot/1 wire, so it stays valid for the rust/ port.
+      - name: Black-box suite (tests/)
+        working-directory: hsync-bootnode
+        run: HSYNC_BB_BOOTNODE=1 python/.venv/bin/python -m pytest -q tests/

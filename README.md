@@ -16,9 +16,12 @@ online without ever storing anything, speaking the `boot/1` protocol over QUIC
 > mode across networks — same election, same transport, same data plane; only
 > discovery differs.
 
-> **Status:** v1 (Python + aioquic). The `boot/1` wire protocol is under active
-> design. This is a **multi-language** repository: one protocol, several
-> implementations sharing the same spec and fixtures (Python today, Rust next).
+> **Status:** v1 **complete and stable** (Python + aioquic) — the implementation
+> is feature-complete, tested and packaged, and it is what clients talk to. The
+> Rust/`quinn` port is planned as an **additive v2** for the
+> "thousands of handshakes/s" target, not a prerequisite. This is a
+> **multi-language** repository: one protocol, several implementations sharing
+> the same spec and fixtures.
 
 > 👉 **Operational Advisory:** the bootnode is discovery-only — it never stores
 > or relays file data. Provision protected buckets and pin its TLS fingerprint
@@ -29,14 +32,14 @@ online without ever storing anything, speaking the `boot/1` protocol over QUIC
 
 [![License: MPL 2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/)
-[![Rust (planned)](https://img.shields.io/badge/Rust-planned-DEA584.svg)](rust/)
+[![Rust 1.98+ (planned)](https://img.shields.io/badge/Rust-1.98+_(planned)-DEA584.svg)](rust/)
 [![Status: v1](https://img.shields.io/badge/Status-v1-yellow.svg)](docs/README.md)
 
 **Quick navigation:**
 - **New to HSYNC?** Start with [What it is](#what-it-is) and the [Getting Started guide](docs/README.md)
 - **Deploying a node?** See the [Usage reference](docs/usage.md) and [Deploying as a service](docs/usage.md#deploying-as-a-service)
 - **Writing an implementation?** Read the [`boot/1` specification](protocol-spec/boot-1.md)
-- **Want to contribute?** See [Contributing](https://github.com/albertsdk/hsync-main/blob/main/CONTRIBUTING.md) and [`AGENTS.md`](AGENTS.md)
+- **Want to contribute?** See [Contributing](CONTRIBUTING.md)
 
 ---
 
@@ -57,6 +60,14 @@ more:
 It is not a relay, not a storage node and not a control plane: file data always
 flows directly between peers. See [How it works](docs/README.md#how-it-works-in-one-paragraph).
 
+A node run as-is is a **public** rendezvous point for anyone who knows its
+hostname. Started with `--private` it becomes the closed rendezvous point of a
+single community instead: every frame is authenticated against a group key, there
+is no account to create and nothing is stored — a **private, pseudonymous P2P
+network over the Internet** whose file data still flows only between peers. See
+[Private node](docs/usage.md#private-node-authenticated-bootstrap) and the
+[privacy and anonymity model](docs/usage.md#privacy-and-anonymity-model).
+
 ## Design invariants
 
 - **No-log** — the process never writes peer data (IPs, CIDs, timestamps)
@@ -75,8 +86,8 @@ flows directly between peers. See [How it works](docs/README.md#how-it-works-in-
 
 | Path | Implementation | Status |
 |---|---|---|
-| [`protocol-spec/boot-1.md`](protocol-spec/boot-1.md) | Single wire-protocol specification | Draft |
-| [`fixtures/`](fixtures/) | Shared protocol fixtures (single source for all languages) | Draft |
+| [`protocol-spec/boot-1.md`](protocol-spec/boot-1.md) | Single wire-protocol specification | v1 |
+| [`fixtures/`](fixtures/) | Shared protocol fixtures (single source for all languages) | v1 |
 | [`tests/`](tests/) | **Language-neutral** black-box suite (spawns the binary, wire-only) | v1 |
 | [`bench/`](bench/) | L1–L5 benchmarks; L2/L3 language-neutral, L4 profiles the handshake, L5 the CPU saturation | v1 |
 | [`python/`](python/) | v1 implementation — Python + aioquic (QUIC/UDP 443) | v1 |
@@ -84,7 +95,7 @@ flows directly between peers. See [How it works](docs/README.md#how-it-works-in-
 | [`llm-wiki/`](llm-wiki/) | Internal agent knowledge base (architecture) | v1 |
 | [`docs/`](docs/) | End-user documentation (install, usage reference) | v1 |
 | [`compile_deb.sh`](compile_deb.sh) | Root `.deb` assembler: `-l/--language` (default `python`; `rust` rejected until that port exists), `deb`/`deb-all` targets | v1 |
-| [`rust/`](rust/) | Future implementation — Rust + quinn | Not started |
+| [`rust/`](rust/) | Additive v2 port — Rust + quinn (not required by v1) | Not started |
 
 ## Quick start
 
@@ -96,13 +107,26 @@ The full install walkthrough (`.deb`, from source, protected buckets) lives in
 ```
 
 The node prints its effective configuration and TLS certificate fingerprint,
-then serves forever. Pin that fingerprint on clients (or persist the identity
-with `--identity` so it survives restarts) and point the clients of a P2P group
-at the node:
+then serves forever. Point the clients of a P2P group at the node — a first
+contact trusts the printed fingerprint on first use, while a stable setup
+persists the identity with `--identity` (so it survives restarts) and pins it:
 
 ```bash
-HSYNC_BOOTNODE=boot.example.net hsync p2p -b mybucket -p /srv/hsync
+# First contact: trust the fingerprint on first use.
+HSYNC_BOOTNODE=boot.example.net \
+  HSYNC_BOOTNODE_TOFU=1 \
+  hsync p2p -b mybucket -p /srv/hsync
 ```
+
+```bash
+# Stable setup: pin the fingerprint from `identity show`.
+HSYNC_BOOTNODE=boot.example.net \
+  HSYNC_BOOTNODE_FINGERPRINT=YOUR_BOOTNODE_FINGERPRINT \
+  hsync p2p -b mybucket -p /srv/hsync
+```
+
+Either way the client refuses an unpinned self-signed node, so one of the two
+forms is required (`--insecure` is for loopback tests only).
 
 See the [client guide — Sync across networks](https://github.com/albertsdk/hsync-client/blob/main/docs/p2p-bootnode.md)
 for the client-side setup.
@@ -112,18 +136,18 @@ for the client-side setup.
 | Document | What it covers |
 | -------- | -------------- |
 | [Getting Started](docs/README.md) | Requirements, install (`.deb` / source), quick start |
-| [Usage reference](docs/usage.md) | `run` options, environment variables, group keys, private nodes, services, diagnostics |
+| [Usage reference](docs/usage.md) | `run` options, environment variables, group keys, private nodes, privacy/security model, services, diagnostics |
 | [`boot/1` specification](protocol-spec/boot-1.md) | Wire protocol — the single source of truth |
 | [Internal wiki](llm-wiki/README.md) | Architecture, data models, decisions, hard invariants |
 | [Benchmarks](bench/README.md) | L1–L5 measurement scope and methodology |
 | [Black-box suite](tests/README.md) | Language-neutral wire/CLI contract tests |
-| [Contributing](https://github.com/albertsdk/hsync-main/blob/main/CONTRIBUTING.md) | Development setup and contribution guidelines |
+| [Contributing](CONTRIBUTING.md) | Development setup, toolchain, tests and contribution guidelines |
 
 ### Associated Ecosystem Components
 
 `hsync-bootnode` is an optional component of the HSYNC ecosystem:
 
-- [HSYNC Main](https://github.com/albertsdk/hsync-main/blob/main/README.md) — Umbrella repository and project overview.
+- [HSYNC Main](https://github.com/albertsdk/hsync/blob/main/README.md) — Umbrella repository and project overview.
 - [HSYNC Client](https://github.com/albertsdk/hsync-client/blob/main/README.md) — Sync client; the consumer of the `boot/1` protocol *(Stable)*.
 - [HSYNC Common](https://github.com/albertsdk/hsync-common/blob/main/README.md) — Shared library; mirrors the `boot/1` contract for the Python side.
 - [HSYNC Desktop](https://github.com/albertsdk/hsync-desktop/blob/main/docs/README.md) — Desktop client GUI front-end, exposes the bootnode setting *(in development)*.
@@ -137,7 +161,7 @@ Please use GitHub's **Private Vulnerability Reporting** rather than a public iss
 
 👉 **[Report a vulnerability](https://github.com/albertsdk/hsync/security/advisories/new)**
 
-See the ecosystem [Security Policy](https://github.com/albertsdk/hsync-main/blob/main/SECURITY.md)
+See the ecosystem [Security Policy](https://github.com/albertsdk/hsync/blob/main/SECURITY.md)
 for supported versions and hardening guidance.
 
 ## Disclaimer
@@ -146,7 +170,7 @@ for supported versions and hardening guidance.
 > **The bootnode exposes a network service.** Misconfiguration, software defects
 > or unexpected conditions may expose your discovery metadata or make the node
 > unavailable. **Use at your own risk**, run it in a controlled environment, and
-> review the privacy model in the [Usage reference](docs/usage.md#privacy-model-no-log).
+> review the privacy model in the [Usage reference](docs/usage.md#privacy-and-anonymity-model).
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHOR OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY — including, without limitation, any direct, indirect, incidental, special, exemplary, or consequential damages, loss of data, or business interruption — WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 

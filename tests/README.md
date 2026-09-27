@@ -23,6 +23,7 @@ The suite is gated by `HSYNC_BB_BOOTNODE=1` and uses the Python virtualenv only
 as a *test runner* (pytest + aioquic for the wire client):
 
 ```bash
+# from the workspace root (equivalent: make test-bb-bootnode)
 cd hsync-bootnode
 HSYNC_BB_BOOTNODE=1 python/.venv/bin/python -m pytest -q tests/
 ```

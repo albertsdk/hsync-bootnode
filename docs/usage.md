@@ -9,7 +9,7 @@ the OS service units. Installation and the open-mode quick start are on the
 The commands are `run`, `identity show`, and `identity rotate` (plus the
 top-level `--version` flag):
 
-```bash
+```text
 hsync-bootnode run [OPTIONS]
 hsync-bootnode identity show --identity PATH [--pem]
 hsync-bootnode identity rotate --identity PATH [--public-host NAME]...
@@ -164,7 +164,7 @@ Trade-offs (by design, not defects):
 - Rate limits still apply to legitimate key holders; private mode is not a
   substitute for the anti-abuse limits.
 - No account system and no persistence: routing table, keys and limits live in
-  RAM only (see "Privacy model").
+  RAM only (see "Privacy and anonymity model").
 
 ## Peer capacity hint (`capacity`)
 
@@ -179,15 +179,61 @@ authenticated data-plane handshake (ADR 0030), so a client must never treat
 random sample by `capacity`, so a self-declared value buys no priority; `refresh`
 neither carries nor changes it.
 
-## Privacy model (no-log)
+## Privacy and anonymity model
 
-- Peer data (IPs, CIDs, timestamps) lives only in RAM with the configured
-  `--ttl` (default 60 s, max 3600 s).
-- The TLS certificate is self-signed. By default it is generated at startup and
-  never persisted; `--identity PATH` is the single opt-in exception, persisting
-  only the operator's own key+cert (never peer data) for a stable fingerprint.
-- Output goes to the console only; the shipped service units discard it
-  (`/dev/null`).
+A bootnode is what turns a group of devices into a **private P2P network over the
+Internet**: they find each other through the node, while the file data keeps
+flowing only between peers. These are the properties an operator or a community
+can rely on.
+
+- **No accounts, no registration** — there is no user database and no per-peer
+  credential to issue or revoke. The only credential is the group key of a
+  protected bucket (or of a private node): a *capability*, not an identity.
+- **Pseudonymous, not anonymous** — the node invents no identity of its own. The
+  `cid` a client presents in p2p mode is its **persistent device identifier** (the
+  same `device_id` that anchors TOFU pins), so treat it as a stable pseudonym, not
+  as an ephemeral anonymous token.
+- **Nothing survives the process** — peer data (IPs, CIDs, timestamps) lives only in
+  RAM with the configured `--ttl` (default 60 s, max 3600 s); the routing table,
+  the group keys and the rate-limit windows are all in memory. Stop the process and
+  every trace of the network is gone.
+- **No peer data on disk, ever** — the TLS certificate is self-signed and generated
+  at startup by default. `--identity PATH` is the single opt-in exception and
+  persists **only the operator's own key+cert** (never peer data), `0600` inside a
+  `0700` directory, so the fingerprint can be pinned.
+- **Uniform refusals (no enumeration oracle)** — a wrong/missing token and a bucket
+  with no key loaded are answered with the same `token_required` (then
+  `rate_limited` with `retry_after`), so a client cannot tell which buckets exist,
+  which are provisioned, or that a private node gates everything.
+- **Silent by default** — output goes to the console only and the shipped service
+  units discard it (`/dev/null`). `--debug` is the only channel that can emit peer
+  data, and it is opt-in, stderr-only and never written to disk (see
+  "Diagnostics").
+
+### Transport security
+
+- QUIC/UDP (default port 443) carrying **TLS 1.3**: the exchanged peer list is not
+  readable by an ISP or a passive observer on the path.
+- The node presents a **self-signed** certificate and clients pin its SHA-256
+  fingerprint (or trust it on first use); an unpinned self-signed node is refused
+  — the exact steps are in "TLS identity & pinning".
+- QUIC `RETRY` + address validation before any connection state is allocated
+  (anti-amplification), plus in-memory rate limits: a refusal is always answered,
+  never a silent drop. Every `boot/1` frame rejects unknown fields, and the
+  deployed units are sandboxed (systemd `DynamicUser`, syscall filter).
+
+### What it is not
+
+- **Not an anonymity network** — it is a rendezvous point, so it observes the
+  `ip:port` a peer registers with (and echoes it back in the `ack`), and a `query`
+  response hands each peer the `ip:port`/`cert_fp` of the peers it returns. Hiding
+  your IP from the node or from your peers is out of scope; nothing here is
+  Tor-like.
+- **Not a relay, a storage node or a control plane** — file data always flows
+  directly between peers and the node never sees its content.
+- **A private node is authentication, not a VPN** — it gates who may use the node as
+  a rendezvous point; the sync traffic is encrypted by the peers' own HTTPS/WSS
+  session.
 
 ## TLS identity & pinning
 

@@ -78,7 +78,10 @@ UDP :443
 - **Protected buckets**: the group key never enters any record; only the derived token.
   Protected buckets are declared by the operator (`--protected-bucket`,
   repeatable) and fail fast at startup if declared without a key
-  (`BootConfigError`, exit code 2).
+  (`BootConfigError`, exit code 2). The client derives the same token from its p2p
+  shared key (`HSYNC_P2P_KEY` → `derive_bucket_token`), so one client key
+  authenticates to any bucket whose group key equals it; the user-facing model is
+  `docs/usage.md` ("Privacy and anonymity model").
 - **Private node** (`--private` / `HSYNC_BOOTNODE_PRIVATE=1`): the protected-bucket check
   applies to every bucket, `leave` included, and a node started without any
   group key fails fast (`BootConfigError`, exit code 2). It is a policy on the
@@ -157,4 +160,5 @@ The monorepo `p2p`/bootnode migration is **complete**:
   `quiche` via JNI). Resumption document: the Android project's
   [`quic-jni`](https://github.com/albertsdk/hsync-android/blob/main/llm-wiki/modules/quic-jni.md)
   page.
-- **Not started (v2)**: Rust (`quinn`) implementation.
+- **Not started (v2)**: Rust (`quinn`) implementation — target toolchain stable
+  Rust 1.98+.

@@ -312,8 +312,10 @@ Notes:
   it did not run, and never treat `command not found` (exit 127) as a passing
   result. `ruff check` exits non-zero when violations remain — that is a real
   finding to fix, never to mask with `|| true`.
-* The workspace-root `Makefile` does **not** fan out to `hsync-bootnode` yet:
-  run the commands above directly instead of inventing a `make` target.
+* The workspace-root `Makefile` fans out here too: `make lint` covers `python/`
+  **and** the language-neutral `tests/` + `bench/`, `make test-python` runs
+  `python/tests`, and `make test-bb-bootnode` runs the black-box suite
+  (`HSYNC_BB_BOOTNODE=1`). The commands above remain the single-project form.
 * Never run `ruff check`/`ruff format` from the workspace root, and never chain
   several of these commands with `;` on one line.
 

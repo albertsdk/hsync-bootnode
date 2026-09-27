@@ -34,7 +34,7 @@ UDP :443
 | `python/src/hsync_bootnode/handler.py` | Request pipeline: rate-limit → validate (single pass) → authorize (protected-bucket policy: declared protected buckets, or every bucket when `private=True`) → mutate → reply | `BootHandler.handle`, `BootConfigError`, `OP_IP_BURST`, `WINDOW_SECONDS` |
 | `python/src/hsync_bootnode/ratelimit.py` | Sliding windows; `evict_stale` bounds memory (evicts fully-refilled buckets, behaviour-identical) | `TokenBucketLimiter` (`allow`, `retry_after`, `evict_stale`) |
 | `python/src/hsync_bootnode/tokens.py` | token derivation `HMAC-SHA256(key, "boot/1" || bucket)[:32]` | `derive_bucket_token`, `verify_bucket_token` |
-| `python/src/hsync_bootnode/server.py` | QUIC adapter: self-signed TLS identity (`hsync_common.ssl_utils`, Ed25519), RETRY, frame IO bound to 8 KiB (framing only — parsing/validation lives in `handler.py`); opt-in persistent identity (ADR-0034) | `start_server`, `NodeIdentity`, `make_identity`, `load_or_create_identity`, `load_identity`, `rotate_identity`, `IdentityError`, `BootQuicProtocol` |
+| `python/src/hsync_bootnode/server.py` | QUIC adapter: self-signed TLS identity (`hsync_common.ssl_utils`, ECDSA P-256 by default), RETRY, frame IO bound to 8 KiB (framing only — parsing/validation lives in `handler.py`); opt-in persistent identity (ADR-0034) | `start_server`, `NodeIdentity`, `make_identity`, `load_or_create_identity`, `load_identity`, `rotate_identity`, `IdentityError`, `BootQuicProtocol` |
 | `python/src/hsync_bootnode/upnp.py` | SSDP IGD discovery + SOAP `AddPortMapping`/`DeletePortMapping`; stateless when no IGD | `UpnpManager.run`, `add_port_mapping`, `discover_igd` |
 | `python/src/hsync_bootnode/debug.py` | Opt-in **full operation log** on stderr, peer identity included (decision #25); off by default, never on disk (no-log invariant) | `configure_debug`, `debug_enabled`, `debug_log`, `debug_event` |
 | `python/src/hsync_bootnode/cli.py` | Typer multi-command app; group keys from `--keys-fd` / `HSYNC_BOOTNODE_KEYS_FD` (read once); fail-fast config; `--ttl`/`--debug`/`--ready-file` seams; `--identity`/`--public-host` + `identity show`/`rotate` | `run`, `identity_show`, `identity_rotate`, `main` (`--version`), `_load_keys` |
@@ -120,7 +120,7 @@ UDP :443
 | `python/tests/test_handler.py` | Routing, TTL (frozen clock), protected buckets, private policy (every bucket gated, unkeyed bucket, gated `leave`), rate limits, STUN-echo, frame rejection |
 | `python/tests/test_scaffold.py` | Fixtures / spec contract + frame schema positives/negatives (rigid schema) |
 | `python/tests/test_server.py` | QUIC loopback: register/query/protected refusal, private-node refusal, garbage frames, pipelined frames on one stream |
-| `python/tests/test_identity.py` | Opt-in persistent identity: create/load/rotate, `0600`/`0700` permissions, Ed25519, SAN from bind + `--public-host` |
+| `python/tests/test_identity.py` | Opt-in persistent identity: create/load/rotate, `0600`/`0700` permissions, ECDSA P-256, SAN from bind + `--public-host` |
 | `python/tests/test_nolog.py` | Zero-write invariant under read-only fs |
 | `python/tests/test_upnp.py` | SSDP/SOAP shapes, error downgrade, stateless no-IGD |
 | `python/tests/test_cli.py` | CLI version/fail-fast/keys-fd contract |

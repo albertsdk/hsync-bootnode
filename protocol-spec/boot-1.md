@@ -24,7 +24,8 @@
 
 ## Trust & identity (ADR-0034)
 
-- The node presents a **self-signed** TLS certificate (Ed25519 key by default).
+- The node presents a **self-signed** TLS certificate (ECDSA P-256 key by
+  default; RSA/Ed25519 identities remain loadable).
 - **Fingerprint** = SHA-256 of the leaf certificate DER, lowercase hex; canonical
   form `sha256:<hex>`. It is the same domain as the `cert_fp` field carried in
   frames, so a client-side pin and a relayed peer `cert_fp` are directly

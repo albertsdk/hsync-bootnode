@@ -10,7 +10,7 @@ import ipaddress
 
 import pytest
 from cryptography import x509
-from cryptography.hazmat.primitives.asymmetric import ed25519
+from cryptography.hazmat.primitives.asymmetric import ec
 
 from hsync_bootnode.server import (
     IdentityError,
@@ -21,9 +21,10 @@ from hsync_bootnode.server import (
 )
 
 
-def test_make_identity_is_ed25519_and_not_ca():
+def test_make_identity_is_ecdsa_p256_and_not_ca():
     node = make_identity(host="127.0.0.1")
-    assert isinstance(node.private_key, ed25519.Ed25519PrivateKey)
+    assert isinstance(node.private_key, ec.EllipticCurvePrivateKey)
+    assert isinstance(node.private_key.curve, ec.SECP256R1)
     assert node.is_ca is False
 
 
@@ -49,7 +50,7 @@ def test_load_or_create_creates_with_restricted_permissions(tmp_path):
     assert path.is_file()
     assert path.stat().st_mode & 0o777 == 0o600
     assert path.parent.stat().st_mode & 0o777 == 0o700
-    assert isinstance(node.private_key, ed25519.Ed25519PrivateKey)
+    assert isinstance(node.private_key, ec.EllipticCurvePrivateKey)
     assert len(str(node.fingerprint)) == 64
 
 
@@ -92,3 +93,48 @@ def test_load_identity_rejects_cert_without_key(tmp_path):
     cert_only.write_bytes(ssl_utils.serialize_cert_pem(node.certificate))
     with pytest.raises(IdentityError):
         load_identity(cert_only)
+
+
+def _write_identity(path, key) -> None:
+    from hsync_common import ssl_utils
+
+    cert = ssl_utils.build_self_signed_certificate(
+        key,
+        subject_attrs=[x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, "hsync-bootnode")],
+        san_list=[x509.DNSName("hsync-bootnode")],
+        validity_days=30,
+    )
+    path.write_bytes(
+        ssl_utils.serialize_cert_pem(cert)
+        + b"\n"
+        + ssl_utils.serialize_private_key_unencrypted(key)
+    )
+
+
+def test_load_identity_accepts_legacy_ed25519(tmp_path):
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+    from hsync_common import ssl_utils
+
+    path = tmp_path / "legacy-ed25519.pem"
+    _write_identity(path, ssl_utils.generate_ed25519_private_key())
+    node = load_identity(path)
+    assert isinstance(node.private_key, ed25519.Ed25519PrivateKey)
+
+
+def test_rotate_legacy_ed25519_yields_ecdsa(tmp_path):
+    from hsync_common import ssl_utils
+
+    path = tmp_path / "legacy-ed25519.pem"
+    _write_identity(path, ssl_utils.generate_ed25519_private_key())
+    rotated = rotate_identity(path, host="127.0.0.1")
+    assert isinstance(rotated.private_key, ec.EllipticCurvePrivateKey)
+    assert isinstance(load_identity(path).private_key, ec.EllipticCurvePrivateKey)
+
+
+def test_load_identity_rejects_unsupported_key_type(tmp_path):
+    from cryptography.hazmat.primitives.asymmetric import dsa
+
+    path = tmp_path / "dsa.pem"
+    _write_identity(path, dsa.generate_private_key(key_size=2048))
+    with pytest.raises(IdentityError):
+        load_identity(path)

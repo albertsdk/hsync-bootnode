@@ -25,7 +25,7 @@ from aioquic.asyncio.protocol import QuicConnectionProtocol
 from aioquic.quic.configuration import QuicConfiguration
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ed25519
+from cryptography.hazmat.primitives.asymmetric import ec, ed25519
 from cryptography.hazmat.primitives.asymmetric import rsa as rsa_key
 from cryptography.x509.oid import NameOID
 from hsync_common import ssl_utils
@@ -55,9 +55,9 @@ BOOT_IDLE_TIMEOUT = 30.0
 # One boot/1 frame must not exceed 8 KiB (register carries at most 16 endpoints).
 MAX_FRAME_BYTES = 8192
 
-# A TLS identity may use Ed25519 (preferred for new identities, ADR-0034) or RSA
-# (pre-existing identity files, kept until rotated).
-PrivateKey = rsa_key.RSAPrivateKey | ed25519.Ed25519PrivateKey
+# A TLS identity may use ECDSA P-256 (default for new identities, ADR-0034), or
+# RSA / Ed25519 (pre-existing identity files, kept until rotated).
+PrivateKey = rsa_key.RSAPrivateKey | ec.EllipticCurvePrivateKey | ed25519.Ed25519PrivateKey
 
 # PEM block extractors for the combined ``identity.pem`` (cert + private key).
 _CERT_PEM_RE = re.compile(rb"-----BEGIN CERTIFICATE-----.+?-----END CERTIFICATE-----", re.DOTALL)
@@ -90,7 +90,7 @@ class NodeIdentity:
 
 def make_identity(host: str = "0.0.0.0", *, public_hosts: Sequence[str] = ()) -> NodeIdentity:
     """Build a fresh ephemeral self-signed identity for this process (no disk writes)."""
-    key = ssl_utils.generate_ed25519_private_key()
+    key = ssl_utils.generate_ecdsa_private_key()
     cert = ssl_utils.build_self_signed_certificate(
         key,
         subject_attrs=[x509.NameAttribute(NameOID.COMMON_NAME, "hsync-bootnode")],
@@ -112,15 +112,15 @@ def load_or_create_identity(
     The file is a combined PEM (certificate followed by the unencrypted PKCS#8
     private key), written with ``0600`` permissions in a ``0700`` directory —
     the same model as SSH host keys. When the file exists it is loaded as-is
-    (RSA or Ed25519); when absent a fresh Ed25519 identity is generated and
-    written. This is the only code path that ever persists key material; the
-    default run stays ephemeral via :func:`make_identity`.
+    (RSA, ECDSA, or Ed25519); when absent a fresh ECDSA P-256 identity is
+    generated and written. This is the only code path that ever persists key
+    material; the default run stays ephemeral via :func:`make_identity`.
     """
     identity_path = Path(path)
     if identity_path.exists():
         return load_identity(identity_path)
 
-    key = ssl_utils.generate_ed25519_private_key()
+    key = ssl_utils.generate_ecdsa_private_key()
     cert = ssl_utils.build_self_signed_certificate(
         key,
         subject_attrs=[x509.NameAttribute(NameOID.COMMON_NAME, "hsync-bootnode")],
@@ -155,7 +155,7 @@ def rotate_identity(
     if not identity_path.exists():
         raise IdentityError(f"identity file {identity_path} does not exist; nothing to rotate")
     load_identity(identity_path)  # fail early if the current file is unusable
-    key = ssl_utils.generate_ed25519_private_key()
+    key = ssl_utils.generate_ecdsa_private_key()
     cert = ssl_utils.build_self_signed_certificate(
         key,
         subject_attrs=[x509.NameAttribute(NameOID.COMMON_NAME, "hsync-bootnode")],
@@ -200,7 +200,9 @@ def _load_identity_file(identity_path: Path) -> NodeIdentity:
         )
     cert = x509.load_pem_x509_certificate(cert_match.group(0))
     key = serialization.load_pem_private_key(key_match.group(0), password=None)
-    if not isinstance(key, (rsa_key.RSAPrivateKey, ed25519.Ed25519PrivateKey)):
+    if not isinstance(
+        key, (rsa_key.RSAPrivateKey, ec.EllipticCurvePrivateKey, ed25519.Ed25519PrivateKey)
+    ):
         raise IdentityError(f"identity file {identity_path} has an unsupported key type")
     return NodeIdentity(certificate=cert, private_key=key)
 

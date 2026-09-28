@@ -24,9 +24,14 @@ ExecStart=/bin/sh -c 'if [ -r "$CREDENTIALS_DIRECTORY/group-keys" ]; then exec /
 Restart=on-failure
 RestartSec=5s
 # No-log: the bootstrap node writes nothing to disk (verified by the
-# read-only-filesystem test suite); console output is discarded.
+# read-only-filesystem test suite). The banner on stdout is discarded; stderr
+# goes to the journal so the always-on operational channel (warn/error) is
+# visible with `journalctl -u hsync-bootnode`. That channel is peer-free by
+# construction (see the "Diagnostics" section of usage.md); peer identity is
+# emitted by --debug only. Bound the journal if you need a retention policy:
+#   /etc/systemd/journald.conf: SystemMaxUse=…, MaxRetentionSec=…
 StandardOutput=null
-StandardError=null
+StandardError=journal
 
 # ---- Hardening ---------------------------------------------------------------
 NoNewPrivileges=yes

@@ -15,7 +15,6 @@ than crashing the node.
 from __future__ import annotations
 
 import asyncio
-import logging
 import socket
 import time
 import urllib.error
@@ -24,6 +23,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import urljoin
 from xml.etree import ElementTree
+
+from hsync_bootnode.diagnostics import debug_event, warn_event
 
 __all__ = [
     "UPNP_SSDP_ADDR",
@@ -37,8 +38,6 @@ __all__ = [
     "discover_igd",
     "parse_soap_error",
 ]
-
-logger = logging.getLogger("hsync_bootnode.upnp")
 
 UPNP_SSDP_ADDR = ("239.255.255.250", 1900)
 _SSDP_SEARCH_TARGET = "urn:schemas-upnp-org:device:InternetGatewayDevice:1"
@@ -305,9 +304,9 @@ def delete_port_mapping(
 class UpnpManager:
     """Asyncio zero-touch UPnP: map the QUIC listener port and refresh it.
 
-    Stateless by design: discovery failure or an absent IGD is logged once and
-    retried at the next cycle — the node keeps serving normally (the operator
-    may instead open the port manually).
+    Stateless by design: discovery failure or an absent IGD is reported once on
+    the always-on diagnostics channel and retried at the next cycle — the node
+    keeps serving normally (the operator may instead open the port manually).
     """
 
     def __init__(
@@ -327,8 +326,11 @@ class UpnpManager:
         while True:
             try:
                 await asyncio.get_running_loop().run_in_executor(None, self._ensure_mapped)
-            except UpnpError:
-                pass  # transient: retry at the next cycle, node keeps serving
+            except UpnpError as exc:
+                # Transient: retry at the next cycle, the node keeps serving —
+                # but a mapping that never succeeds is exactly what an operator
+                # must see to understand why peers cannot reach the node.
+                warn_event("upnp mapping unavailable", reason=exc)
             await asyncio.sleep(self.refresh_interval)
 
     def _ensure_mapped(self) -> None:
@@ -337,11 +339,7 @@ class UpnpManager:
             service = discover_igd()
             if service is None:
                 if not self._reported_missing:
-                    logger.warning(
-                        "UPnP: no IGD found on the LAN; port %s will not be "
-                        "mapped. Open it manually or add --no-upnp.",
-                        self.external_port,
-                    )
+                    warn_event("upnp no igd on lan", port=self.external_port)
                     self._reported_missing = True
                 return
             add_port_mapping(
@@ -350,12 +348,7 @@ class UpnpManager:
                 external_port=self.external_port,
             )
             self._active = service
-            logger.info(
-                "UPnP: UDP %s -> %s mapped via %s",
-                self.external_port,
-                self.internal_port,
-                service.control_url,
-            )
+            debug_event("upnp mapping active", port=self.external_port, proto="udp")
             return
         # Refresh the existing mapping (idempotent AddPortMapping).
         add_port_mapping(

@@ -20,7 +20,7 @@ from typing import Literal, cast
 
 from pydantic import SecretStr, ValidationError
 
-from hsync_bootnode.debug import debug_event, debug_log
+from hsync_bootnode.diagnostics import debug_event, debug_log
 from hsync_bootnode.protocol import (
     BOOT_ACK_ADAPTER,
     BOOT_FRAME_ADAPTER,

@@ -35,5 +35,9 @@ keys are provisioned out of band; see docs/usage.md for the keys-fd contract.
     <user>LocalService</user>
   </serviceaccount>
 
-  <log mode="none"/>
+  <!-- Stderr carries the always-on, peer-free operational channel (warn/error):
+       "append" keeps it in hsync-bootnode-service.err.log next to the service
+       (rotate it, e.g. with the WinSW roll options if you need a bound). Peer
+       identity is emitted by the debug flag only. -->
+  <log mode="append"/>
 </service>

@@ -49,7 +49,11 @@ directory first, e.g. `sudo install -d -m 0700 /usr/local/var/hsync-bootnode`).
 
     <key>StandardOutPath</key>
     <string>/dev/null</string>
+    <!-- Stderr carries the always-on, peer-free operational channel (warn/error):
+         keep it in a file so a failed UPnP mapping or an unwritable readiness
+         file is diagnosable. Rotate it with newsyslog or trim it periodically;
+         peer identity is emitted by the debug flag only. -->
     <key>StandardErrorPath</key>
-    <string>/dev/null</string>
+    <string>/var/log/hsync-bootnode.err</string>
 </dict>
 </plist>

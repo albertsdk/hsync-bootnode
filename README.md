@@ -87,7 +87,10 @@ network over the Internet** whose file data still flows only between peers. See
 - **No-log** — the process never writes peer data (IPs, CIDs, timestamps)
   to disk. The TLS identity is in-memory and regenerated per process by default;
   `--identity PATH` is the single opt-in exception, persisting only the
-  operator's own key+cert for a stable, pin-able fingerprint.
+  operator's own key+cert for a stable, pin-able fingerprint. Diagnostics on
+  stderr come in two channels: an always-on, **peer-free** operational one
+  (warnings/errors about the node itself) and the opt-in `--debug` operation log,
+  the only one that can contain peer identity.
 - **Zero-knowledge / protected buckets** — group tokens are HMAC-SHA256
   capabilities compared in constant time; refusals are uniform and never reveal
   whether a bucket exists.

@@ -28,9 +28,10 @@ Internal, agent-optimized knowledge base for the `hsync-bootnode` project
    disk. TLS identity is in-memory, per-process **by default**; `--identity PATH`
    is the single opt-in exception that persists only the operator's own key+cert
    (ADR-0034) for a stable, rotatable fingerprint. Enforced by
-   `python/tests/test_nolog.py` (read-only filesystem sandbox). The opt-in
-   `--debug` sink (decision #25) is stderr-only and may include the peer
-   identity; without it nothing peer-related leaves memory.
+   `python/tests/test_nolog.py` (read-only filesystem sandbox). Diagnostics
+   come in two stderr channels: an **always-on**, peer-free operational one
+   (`warn`/`error`, decisions #36) and the opt-in peer-aware `--debug` sink
+   (decision #25); without `--debug` nothing peer-related leaves memory.
 2. **RAM only**: the routing table lives in
    `python/src/hsync_bootnode/routing.py` and is never persisted. TTL 60 s,
    prune every 15 s, client refresh every 30 s.

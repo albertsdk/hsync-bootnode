@@ -184,3 +184,74 @@ def test_port_flag_alone_keeps_the_default_host() -> None:
     from hsync_bootnode.cli import _resolve_listener
 
     assert _resolve_listener(None, 8443) == ("0.0.0.0", 8443)
+
+
+class _FakeIdentity:
+    """Minimal stand-in for the listener identity (only ``fingerprint`` is read)."""
+
+    fingerprint = "00" * 32
+
+
+class _FakeServer:
+    """Minimal stand-in for the started listener (only ``close`` is called)."""
+
+    def close(self) -> None:
+        pass
+
+
+def test_ready_file_failure_is_actionable_exit_4(monkeypatch, tmp_path) -> None:
+    """An unwritable --ready-file exits 4 with an actionable message, no traceback."""
+
+    async def _start(*args, **kwargs):  # noqa: ANN002, ANN003
+        return _FakeServer(), 8443, _FakeIdentity()
+
+    _patch_run_no_side_effects(monkeypatch, _start)
+    ready = tmp_path / "missing-dir" / "ready.pid"
+    result = runner.invoke(app, ["run", "--port", "8443", "--ready-file", str(ready)])
+
+    assert result.exit_code == 4
+    out = _combined(result)
+    assert "no such directory" in out
+    assert "Traceback" not in out
+    # The always-on diagnostics channel reports it too, and it stays peer-free.
+    assert "error: readiness file not writable" in out
+    assert f"path={ready}" in out
+
+
+def test_ready_file_conflict_leaves_the_existing_file_alone(monkeypatch, tmp_path) -> None:
+    """A pre-existing path is refused (O_EXCL) and never deleted by the node."""
+
+    async def _start(*args, **kwargs):  # noqa: ANN002, ANN003
+        return _FakeServer(), 8443, _FakeIdentity()
+
+    _patch_run_no_side_effects(monkeypatch, _start)
+    ready = tmp_path / "ready.pid"
+    ready.write_text("stale", encoding="utf-8")
+
+    result = runner.invoke(app, ["run", "--port", "8443", "--ready-file", str(ready)])
+
+    assert result.exit_code == 4
+    assert "already exists" in _combined(result)
+    assert ready.read_text(encoding="utf-8") == "stale"
+
+
+def test_debug_run_announces_the_peer_aware_stream(monkeypatch, tmp_path) -> None:
+    """Opting into --debug is announced on the always-on channel (transparency).
+
+    The unwritable readiness file ends the run deterministically right after the
+    announcement, so the assertion does not depend on a serving process.
+    """
+
+    async def _start(*args, **kwargs):  # noqa: ANN002, ANN003
+        return _FakeServer(), 8443, _FakeIdentity()
+
+    _patch_run_no_side_effects(monkeypatch, _start)
+    ready = tmp_path / "missing-dir" / "ready.pid"
+    result = runner.invoke(
+        app,
+        ["run", "--port", "8443", "--debug", "--no-rate-limit", "--ready-file", str(ready)],
+    )
+
+    out = _combined(result)
+    assert "warn: peer data logging enabled reason=--debug" in out
+    assert "warn: rate limiting disabled reason=--no-rate-limit" in out

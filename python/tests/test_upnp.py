@@ -6,9 +6,14 @@ is tested with canned responses, and the SOAP XML is verified field by field.
 
 from __future__ import annotations
 
+import asyncio
+
+import pytest
+
 from hsync_bootnode.upnp import (
     IgdService,
     UpnpError,
+    UpnpManager,
     _parse_ssdp_response,
     add_port_mapping,
     build_add_mapping_soap,
@@ -121,3 +126,38 @@ def test_upnp_manager_stateless_when_no_igd(monkeypatch: object) -> None:
     manager._ensure_mapped()
     assert manager._active is None
     assert manager._reported_missing is True
+
+
+def test_upnp_manager_warns_once_when_no_igd(monkeypatch: object, capsys) -> None:
+    """Without ``--debug`` the operator still learns the port was not mapped."""
+    import hsync_bootnode.upnp as upnp_mod
+
+    monkeypatch.setattr(upnp_mod, "discover_igd", lambda *a, **k: None)
+    manager = upnp_mod.UpnpManager(443, refresh_interval=3600.0)
+    manager._ensure_mapped()
+    manager._ensure_mapped()  # latched: the state stays unchanged, no repeat line
+
+    lines = capsys.readouterr().err.splitlines()
+    assert len(lines) == 1
+    assert " warn: upnp no igd on lan port=443" in lines[0]
+
+
+@pytest.mark.asyncio
+async def test_upnp_manager_reports_a_failed_cycle(monkeypatch: object, capsys) -> None:
+    """An exception is retried, but never silently: the operator sees the reason."""
+
+    def _boom(self) -> None:
+        raise UpnpError("SSDP discovery failed: Network is unreachable")
+
+    monkeypatch.setattr(UpnpManager, "_ensure_mapped", _boom)
+    manager = UpnpManager(443, refresh_interval=3600.0)
+    task = asyncio.create_task(manager.run())
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    lines = capsys.readouterr().err.splitlines()
+    assert len(lines) == 1
+    assert " warn: upnp mapping unavailable" in lines[0]
+    assert "reason=SSDP discovery failed: Network is unreachable" in lines[0]

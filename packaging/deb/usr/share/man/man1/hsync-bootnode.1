@@ -21,6 +21,13 @@ is produced, and the TLS identity is generated per process unless the operator
 opts into persistence with
 .BR "run \-\-identity" .
 Stopping the process erases every trace of the network.
+.PP
+Diagnostics go to stderr in two channels: an always\-on, peer\-free operational
+channel (\fBwarn\fP/\fBerror\fP: a UPnP mapping that could not be created, an
+unwritable readiness file, an unexpected session failure) and the opt\-in full
+operation log described under
+.BR "run \-\-debug" ,
+which is the only channel that may contain peer identity.
 .SH COMMANDS
 .TP
 .B run
@@ -94,15 +101,21 @@ Record TTL in seconds (1\-3600). Default: 60 (peers refresh every 30 s).
 .B run\ \fR--debug\fP
 Emit the full operation log to stderr (opt\-in; off by default): connections,
 frames, decisions, record changes and TTL sweeps, including the peer identity
-(CID, bucket, IP, port) needed for analysis. Stderr only \- it is never
-written to disk, and without it no peer data leaves memory. Env form:
+(CID, bucket, IP, port) needed for analysis. Each line opens with a UTC
+ISO\-8601 timestamp and the emitting process identity
+(\fBts - hsync-bootnode[pid] debug:\fP), so the stream can be ordered and
+correlated with the logs of the other HSYNC components. Stderr only \- it is
+never written to disk, and without it no peer data leaves memory. The always\-on
+warn/error channel does not depend on this flag. Env form:
 .BR HSYNC_BOOTNODE_DEBUG=1 .
 .TP
 .BI run\ \fR--ready-file\fP= PATH
 Write the process PID to
 .I PATH
 once the QUIC listener is bound, and remove it on graceful shutdown (contains
-no peer data). Env form:
+no peer data). A path that cannot be written (missing directory, permissions, an
+existing stale file) fails fast with exit code 4 and an actionable message. Env
+form:
 .BR HSYNC_BOOTNODE_READY_FILE .
 .TP
 .B run\ \fR--no-rate-limit\fP

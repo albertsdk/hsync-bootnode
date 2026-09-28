@@ -7,8 +7,20 @@ the wire protocol.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from harness import query_frame, register_frame, run_cli
+
+# Any diagnostic line: "2026-09-30T10:30:45.123Z - hsync-bootnode[1234] warn: …".
+_LINE_RE = re.compile(
+    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z"
+    r" - hsync-bootnode\[\d+\] (debug|warn|error): .+"
+)
+_DEBUG_LINE_RE = re.compile(
+    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z"
+    r" - hsync-bootnode\[\d+\] debug: .+"
+)
 
 
 def test_version_flag_prints_protocol_and_impl() -> None:
@@ -58,12 +70,23 @@ async def test_debug_mode_emits_the_full_operation_log(bootnode_factory, bucket,
         await client.exchange(query_frame(bucket))
 
     stderr = handle.stderr_text()
-    assert "[hsync-bootnode][debug]" in stderr
+    debug_lines = [line for line in stderr.splitlines() if " debug: " in line]
+    assert debug_lines, stderr
+    # Each line is a timestamped, self-identifying record: the operator who
+    # dumps this stderr must be able to order and attribute every event.
+    unmatched = [line for line in debug_lines if not _DEBUG_LINE_RE.fullmatch(line)]
+    assert not unmatched, unmatched
     assert "register ack" in stderr
     assert "query response" in stderr
     # The operator opted in: the log must say WHO connected and what happened.
     assert cid in stderr
     assert f"bucket={bucket}" in stderr
+    # Opting in is announced on the always-on channel (transparency), and that
+    # announcement itself stays peer-free.
+    assert "warn: peer data logging enabled reason=--debug" in stderr
+    announcement = next(line for line in stderr.splitlines() if "warn:" in line)
+    assert cid not in announcement
+    assert bucket not in announcement
 
 
 @pytest.mark.asyncio
@@ -77,9 +100,37 @@ async def test_default_mode_keeps_peer_data_out_of_stderr(bootnode_factory, buck
         await client.exchange(register_frame(cid, bucket))
 
     stderr = handle.stderr_text()
-    assert "[hsync-bootnode][debug]" not in stderr
+    assert not [line for line in stderr.splitlines() if _DEBUG_LINE_RE.fullmatch(line)]
     assert cid not in stderr
     assert bucket not in stderr
+    # A healthy default run is silent: this suite always starts the node with
+    # --no-upnp, so no operational warning is expected either.
+    assert not [line for line in stderr.splitlines() if _LINE_RE.fullmatch(line)]
+
+
+def test_ready_file_failure_exits_4_without_a_traceback(tmp_path) -> None:
+    """The readiness seam fails actionably (exit 4) and is reported on stderr."""
+    from harness import free_udp_port
+
+    missing = tmp_path / "missing-dir" / "ready.pid"
+    result = run_cli(
+        [
+            "run",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(free_udp_port()),
+            "--no-upnp",
+            "--ready-file",
+            str(missing),
+        ]
+    )
+    assert result.returncode == 4
+    assert "no such directory" in result.stderr
+    assert "Traceback" not in result.stderr
+    # The always-on diagnostics channel carries it too, peer-free.
+    assert "error: readiness file not writable" in result.stderr
+    assert f"path={missing}" in result.stderr
 
 
 def test_port_in_use_fails_fast_with_actionable_error() -> None:

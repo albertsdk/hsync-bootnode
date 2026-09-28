@@ -22,6 +22,7 @@ from pydantic import SecretStr
 from hsync_bootnode.handler import BootHandler
 from hsync_bootnode.server import (
     BOOT_ALPN,
+    BootQuicProtocol,
     build_quic_configuration,
     make_identity,
     start_server,
@@ -175,6 +176,49 @@ async def test_loopback_private_node_requires_token_on_every_bucket() -> None:
             assert response["count"] == 0
     finally:
         server.close()
+
+
+@pytest.mark.asyncio
+async def test_unexpected_session_failure_is_reported_peer_free(capsys) -> None:
+    """A session error is isolated AND visible, without leaking the peer identity.
+
+    The listener must survive (isolation), but the operator has to see the
+    failure on the always-on channel — and that channel never carries the peer
+    address, even though the failing session knows it.
+    """
+
+    protocol = object.__new__(BootQuicProtocol)
+    protocol.peer_addr = ("203.0.113.9", 51000)
+    protocol.boot_handler = BootHandler()
+
+    class _FailingReader:
+        async def read(self, _size: int) -> bytes:
+            raise ValueError("boom")
+
+    class _Writer:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def is_closing(self) -> bool:
+            return False
+
+        def write(self, _data: bytes) -> None:
+            pass
+
+        async def drain(self) -> None:
+            pass
+
+        def close(self) -> None:
+            self.closed = True
+
+    writer = _Writer()
+    await protocol._serve_stream(_FailingReader(), writer)
+
+    assert writer.closed is True
+    err = capsys.readouterr().err
+    assert "error: session failed exc=ValueError" in err
+    assert "203.0.113.9" not in err
+    assert "51000" not in err
 
 
 def _register_frame(token: str | None) -> dict:

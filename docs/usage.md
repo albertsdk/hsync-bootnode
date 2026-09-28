@@ -29,8 +29,8 @@ hsync-bootnode --version
 | `--private` | *(disabled flag)* | Private node: every frame must carry a valid `bucket_token`, for **every** bucket (not only `--protected-bucket`). Starting it with no group key fails fast (exit code 2). Environment variable form: `HSYNC_BOOTNODE_PRIVATE=1`. |
 | `--no-upnp` | *(disabled flag)* | Disable the zero-touch UPnP UDP mapping. |
 | `--ttl` | `60` | Record TTL in seconds (1–3600). Peers refresh every 30 s, so the default 60 s matches the spec. Lower it for faster convergence in tests. |
-| `--debug` | *(disabled flag)* | Emit the full operation log to stderr (opt-in): connections, frames, decisions, record changes and TTL sweeps, **including the peer identity** (CID, bucket, IP, port). Stderr only — never written to disk; without it no peer data leaves memory. Environment variable form: `HSYNC_BOOTNODE_DEBUG=1`. |
-| `--ready-file` | *(none)* | Write the process PID to this path once the listener is bound (readiness seam, contains no peer data). Environment variable form: `HSYNC_BOOTNODE_READY_FILE`. |
+| `--debug` | *(disabled flag)* | Emit the full operation log to stderr (opt-in): connections, frames, decisions, record changes and TTL sweeps, **including the peer identity** (CID, bucket, IP, port). Every line is timestamped and self-identifying (`2026-09-30T10:30:45.123Z - hsync-bootnode[1234] debug: …`). Stderr only — never written to disk; without it no peer data leaves memory. Environment variable form: `HSYNC_BOOTNODE_DEBUG=1`. |
+| `--ready-file` | *(none)* | Write the process PID to this path once the listener is bound (readiness seam, contains no peer data). Environment variable form: `HSYNC_BOOTNODE_READY_FILE`. An unwritable path fails fast with exit code 4. |
 | `--no-rate-limit` | *(disabled flag)* | Disable rate limiting entirely (benchmark/test seam). Environment variable form: `HSYNC_BOOTNODE_NO_RATE_LIMIT=1`. Never enable in production — it removes the anti-abuse limits the spec requires. |
 
 ### `identity show`
@@ -226,10 +226,14 @@ can rely on.
   with no key loaded are answered with the same `token_required` (then
   `rate_limited` with `retry_after`), so a client cannot tell which buckets exist,
   which are provisioned, or that a private node gates everything.
-- **Silent by default** — output goes to the console only and the shipped service
-  units discard it (`/dev/null`). `--debug` is the only channel that can emit peer
-  data, and it is opt-in, stderr-only and never written to disk (see
-  "Diagnostics").
+- **Silent about peers by default** — output goes to the console only and the
+  shipped service units route stderr to the system log (`journalctl -u
+  hsync-bootnode`, a launchd file, the WinSW log). That always-on channel carries
+  the node's **own** operational state (a UPnP mapping that could not be created,
+  an unwritable readiness file, an unexpected session failure) and is **peer-free
+  by construction**: it accepts only non-identifying fields, so no CID, bucket or
+  IP can reach it. `--debug` is the only channel that can emit peer identity, and
+  it is opt-in, stderr-only and never written to disk (see "Diagnostics").
 
 ### Transport security
 
@@ -285,20 +289,46 @@ fingerprint in a two-pin window:
 hsync-bootnode identity rotate --identity /var/lib/hsync-bootnode/identity.pem
 ```
 
-## Diagnostics (debug mode)
+## Diagnostics
 
-The node is silent by design. For troubleshooting, `--debug` (or
-`HSYNC_BOOTNODE_DEBUG=1`) enables the **full operation log** on stderr —
+The node emits two kinds of line on stderr, in the same format — a UTC ISO 8601
+timestamp, the emitting process, the level and the message:
+
+```text
+2026-09-30T10:30:45.123Z - hsync-bootnode[1234] warn: upnp no igd on lan port=443
+2026-09-30T10:30:45.130Z - hsync-bootnode[1234] debug: register ack cid=A1b2C3d4E5f6G7h8I9j0K bucket=shared
+```
+
+**Always on — node health (`warn` / `error`).** Operational events the operator
+must see without any flag: a UPnP mapping that could not be created, an
+unwritable `--ready-file`, an unexpected failure inside one QUIC session (which
+the listener isolates and keeps serving). This channel is **peer-free by
+construction**: it accepts only non-identifying fields, and passing a peer field
+is a programming error that raises rather than logging. Repeated identical errors
+are throttled and reported as `suppressed=<n>`, so a failing path cannot flood
+the log.
+
+**Opt-in — the full operation log (`debug`).** `--debug` (or
+`HSYNC_BOOTNODE_DEBUG=1`) adds the whole request life cycle on stderr —
 connections opened/closed, frames received, the decision taken, records
 created/refreshed/removed, TTL sweeps and refusals — **including the peer
-identity** (CID, bucket, IP, port) that makes the log
-usable for analysis. It is off by default, it goes to stderr only, and it never
-writes anything to disk: without `--debug` no peer data leaves memory.
+identity** (CID, bucket, IP, port) that makes the log usable for analysis. When
+it is enabled the node says so once on the always-on channel
+(`warn: peer data logging enabled`).
+
+Neither channel ever writes to disk from the process: without `--debug` no peer
+data leaves memory, and `--debug` is for a specific troubleshooting session, not
+a permanent setting. The shipped units store stderr in the operating system's log
+— bound its retention there (`/etc/systemd/journald.conf`: `SystemMaxUse=`,
+`MaxRetentionSec=`, then `journalctl -u hsync-bootnode`; a launchd file rotated
+by `newsyslog`; the WinSW log).
 
 The `--ready-file`/`HSYNC_BOOTNODE_READY_FILE` seam writes the process PID to
 the given path once the QUIC listener is bound (and removes it on graceful
 shutdown). It carries no peer data and exists so tests and orchestrators can
-await readiness deterministically.
+await readiness deterministically. A path the node cannot write (missing
+directory, no permission, an existing stale file) fails fast with exit code 4 and
+an actionable message instead of a traceback.
 
 ## Deploying as a service
 
@@ -323,5 +353,7 @@ Edit the executable paths inside each unit to the location of your venv.
 | `error: cannot bind the QUIC/UDP listener … — the address is not available` | `--host` is not a local interface address: use a local IP, or `0.0.0.0` to listen on all of them. |
 | Client gets `token_required` | The bucket is gated (declared `--protected-bucket`, or every bucket on a private node) and the client's derived token is missing/wrong — check the group key on the client side. |
 | Client gets `rate_limited` | A limit was exceeded (per-IP ~10 req/s, 5/min failed tokens, 5/min queries per (IP, bucket), 10/min registers per bucket); wait for `retry_after` seconds. |
-| No UPnP mapping | Router without IGD, or mapping refused: the node keeps running stateless; publish a public UDP endpoint in another way or use `--no-upnp` to skip discovery entirely. |
-| Need to see what the node is doing | Start with `--debug` (or `HSYNC_BOOTNODE_DEBUG=1`): the full operation log, peer identity included, is written to stderr. |
+| No UPnP mapping | Router without IGD, or mapping refused: the node keeps running stateless and reports it once on the always-on channel (`warn: upnp no igd on lan port=…` or `warn: upnp mapping unavailable reason=…`); publish a public UDP endpoint in another way or use `--no-upnp` to skip discovery entirely. |
+| `error: readiness file not writable` (exit code 4) | `--ready-file` points at a path the node cannot create (missing parent directory, no permission, or a stale file that `O_EXCL` refuses to overwrite): create/remove the path or point the flag elsewhere. |
+| `warn: upnp mapping unavailable` / `error: session failed` in the logs | Always-on diagnostics, not peer data: the node degraded (no UPnP mapping) or one session failed unexpectedly and was isolated. Both are emitted without `--debug` and never contain a peer identity. |
+| Need to see what the node is doing | Operational warnings and errors are already on stderr (and in the service log). Start with `--debug` (or `HSYNC_BOOTNODE_DEBUG=1`) to add the full operation log, peer identity included. |

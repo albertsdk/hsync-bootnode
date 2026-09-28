@@ -22,7 +22,7 @@ from hsync_common.endpoint import parse_host_port
 from pydantic import SecretStr
 
 from hsync_bootnode import __version__
-from hsync_bootnode.debug import configure_debug, debug_log
+from hsync_bootnode.diagnostics import configure_debug, debug_log, error_event, warn_event
 from hsync_bootnode.handler import BootConfigError, BootHandler
 from hsync_bootnode.server import (
     IdentityError,
@@ -50,7 +50,8 @@ app = typer.Typer(
 # ``HSYNC_BOOTNODE_KEYS_FD`` is the envvar form (plan §4), honoured by
 # systemd/launchd/Windows service wrappers. Read once, never written.
 _DEFAULT_KEYS_FD_ENV = "HSYNC_BOOTNODE_KEYS_FD"
-# Opt-in stderr diagnostics (see debug.py): peer-aware, stderr-only, off by default.
+# Opt-in stderr debug stream (see diagnostics.py): peer-aware, stderr-only, off
+# by default. The warn/error channel is always on and peer-free.
 _DEFAULT_DEBUG_ENV = "HSYNC_BOOTNODE_DEBUG"
 # Test/ops readiness seam: write the process PID here once the listener is
 # bound, mirroring the client's HSYNC_READY_FILE. Contains no peer data.
@@ -209,6 +210,12 @@ def run(
         raise typer.Exit(code=2) from exc
 
     configure_debug(debug)
+    if debug:
+        # Transparency (RFC 6973 §6.2): the operator opted into a stream that
+        # may contain peer identity — say so once, on the always-on channel.
+        warn_event("peer data logging enabled", reason="--debug")
+    if no_rate_limit:
+        warn_event("rate limiting disabled", reason="--no-rate-limit")
     _install_uvloop()
     _install_sigterm_handler()
 
@@ -241,6 +248,10 @@ def run(
     except ListenerBindError as exc:
         typer.echo(_bind_error_message(exc), err=True)
         raise typer.Exit(code=3) from exc
+    except ReadyFileError as exc:
+        error_event("readiness file not writable", path=exc.path, reason=exc.reason)
+        typer.echo(_ready_file_error_message(exc), err=True)
+        raise typer.Exit(code=4) from exc
 
 
 identity_app = typer.Typer(help="Manage the persistent node identity (TLS key+cert).")
@@ -298,6 +309,16 @@ class ListenerBindError(Exception):
         super().__init__(f"cannot bind {host}:{port}")
 
 
+class ReadyFileError(Exception):
+    """The readiness PID file could not be written (missing directory, permission)."""
+
+    def __init__(self, path: str, errno_value: int | None) -> None:
+        self.path = path
+        self.errno_value = errno_value
+        self.reason = os.strerror(errno_value) if errno_value is not None else "write failed"
+        super().__init__(f"cannot write the readiness file {path}: {self.reason}")
+
+
 def _errno_from(exc: BaseException) -> int | None:
     """Return the OS errno behind a bind failure, from ``exc`` or its cause.
 
@@ -344,6 +365,31 @@ def _bind_error_message(exc: ListenerBindError) -> str:
     )
 
 
+def _ready_file_error_message(exc: ReadyFileError) -> str:
+    """Actionable stderr message for an unwritable readiness file (exit code 4)."""
+    target = exc.path
+    if exc.errno_value == errno.ENOENT:
+        return (
+            f"error: cannot write the readiness file {target} — no such directory.\n"
+            "       The parent directory must exist before the node starts: create it,\n"
+            "       or drop --ready-file when nothing awaits the readiness signal."
+        )
+    if exc.errno_value in (errno.EACCES, errno.EPERM, errno.EROFS):
+        return (
+            f"error: cannot write the readiness file {target} — permission denied.\n"
+            "       Point --ready-file at a path writable by the node's user."
+        )
+    if exc.errno_value == errno.EEXIST:
+        return (
+            f"error: cannot write the readiness file {target} — the path already exists.\n"
+            "       A stale file from a previous run is not overwritten by design: remove it."
+        )
+    return (
+        f"error: cannot write the readiness file {target}: {exc.reason}.\n"
+        "       Check --ready-file (HSYNC_BOOTNODE_READY_FILE)."
+    )
+
+
 async def _async_main(
     host: str,
     port: int,
@@ -363,9 +409,13 @@ async def _async_main(
     debug_log(f"listener bound {host}:{bound_port} (retry+address-validation)")
 
     tasks: list[asyncio.Task] = []
+    # Only remove a readiness file THIS process created: with O_EXCL a pre-existing
+    # path (another instance, a stale file) is left untouched on every exit path.
+    ready_written = False
     try:
         if ready_file:
             _write_ready_file(ready_file)
+            ready_written = True
             debug_log(f"readiness written to {ready_file}")
 
         tasks.append(asyncio.create_task(_prune_loop(handler)))
@@ -377,7 +427,7 @@ async def _async_main(
         server.close()
         for task in tasks:
             task.cancel()
-        if ready_file:
+        if ready_written and ready_file:
             _remove_ready_file(ready_file)
 
 
@@ -389,7 +439,12 @@ def _write_ready_file(path: str) -> None:
     existing file under the node's privileges.
     """
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(path, flags, 0o600)
+    try:
+        fd = os.open(path, flags, 0o600)
+    except OSError as exc:
+        # Actionable exit (code 4) instead of a traceback: the listener is up but
+        # the operator's orchestration seam cannot be honoured.
+        raise ReadyFileError(path, exc.errno) from exc
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         handle.write(str(os.getpid()))
 

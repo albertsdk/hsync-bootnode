@@ -30,7 +30,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa as rsa_key
 from cryptography.x509.oid import NameOID
 from hsync_common import ssl_utils
 
-from hsync_bootnode.debug import debug_event
+from hsync_bootnode.diagnostics import debug_event, error_event
 from hsync_bootnode.handler import BootHandler, CertificateFingerprint
 
 __all__ = [
@@ -326,6 +326,14 @@ class BootQuicProtocol(QuicConnectionProtocol):
             debug_event("drop oversized-frame", peer=f"{peer_ip}:{peer_port}")
             return  # oversized frame: refuse and close the session silently
         except (asyncio.CancelledError, ConnectionError, TimeoutError):
+            return
+        except Exception as exc:
+            # Unexpected failure in one session: the listener and every other
+            # session stay up (isolation), but the operator must still see it —
+            # the always-on error channel carries the exception CLASS only, no
+            # peer identity. Without this the traceback would reach asyncio's
+            # fallback handler in an unformatted, undocumented shape.
+            error_event("session failed", exc=type(exc).__name__)
             return
         finally:
             debug_event("session close", peer=f"{peer_ip}:{peer_port}")

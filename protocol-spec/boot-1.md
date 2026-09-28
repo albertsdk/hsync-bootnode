@@ -35,8 +35,9 @@
   (it is never sent by the node on the wire, so it cannot be learned from the
   protocol itself).
 - **Verify before frame (client obligation)**: a client MUST establish the
-  certificate fingerprint — via an explicit `--bootnode-fingerprint` pin or the
-  opt-in `--bootnode-tofu` store — **before** writing any frame. The
+  certificate fingerprint — via an explicit `--bootnode-fingerprint` pin, the
+  opt-in `--bootnode-tofu` store, or an SSH-style confirmation prompt (the
+  client-side default) — **before** writing any frame. The
   `bucket_token` travels inside `register`/`query`, so trust is decided pre-write;
   a mismatch closes the connection with zero application bytes sent.
 - **Identity persistence is opt-in**: by default the identity is in-memory and

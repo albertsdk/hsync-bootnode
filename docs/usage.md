@@ -239,9 +239,11 @@ can rely on.
 
 - QUIC/UDP (default port 443) carrying **TLS 1.3**: the exchanged peer list is not
   readable by an ISP or a passive observer on the path.
-- The node presents a **self-signed** certificate and clients pin its SHA-256
-  fingerprint (or trust it on first use); an unpinned self-signed node is refused
-  — the exact steps are in "TLS identity & pinning".
+- The node presents a **self-signed** certificate and clients authenticate it by
+  SHA-256 fingerprint: on a terminal the first contact is confirmed at a prompt
+  (the default `ask` policy, like `ssh`), while an unattended client pins the
+  fingerprint or trusts the first sighting — the exact steps are in "TLS identity
+  & pinning".
 - QUIC `RETRY` + address validation before any connection state is allocated
   (anti-amplification), plus in-memory rate limits: a refusal is always answered,
   never a silent drop. Every `boot/1` frame rejects unknown fields, and the
@@ -280,8 +282,10 @@ preserved. Read the fingerprint and distribute it to clients out of band:
 hsync-bootnode identity show --identity /var/lib/hsync-bootnode/identity.pem
 ```
 
-Clients pin the node with `--bootnode-fingerprint` (or trust it on first use with
-`--bootnode-tofu`); see the client `p2p-bootnode` documentation. To rotate the key
+Clients authenticate the node by fingerprint: a terminal confirms the first
+contact at the prompt, an unattended client pins it with
+`--bootnode-fingerprint` (or trusts the first sighting with `--bootnode-tofu`);
+see the client `p2p-bootnode` documentation. To rotate the key
 (e.g. after a suspected compromise), regenerate it and move clients to the new
 fingerprint in a two-pin window:
 

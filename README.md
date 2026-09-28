@@ -128,24 +128,32 @@ python3 -m venv .venv
 ```
 
 The node prints its effective configuration and TLS certificate fingerprint,
-then serves forever. Point the clients of a P2P group at the node — a first
-contact trusts the printed fingerprint on first use, while a stable setup
-persists the identity with `--identity` (so it survives restarts) and pins it:
+then serves forever. Point the clients of a P2P group at the node — on a
+terminal the first contact shows the fingerprint and asks you to confirm it once
+(like `ssh`), and an unattended run states the trust explicitly. For a stable
+setup, persist the node identity with `--identity` (so it survives restarts) and
+pin the printed fingerprint:
 
 ```bash
-# First contact: trust the fingerprint on first use.
+# First contact on a terminal: confirm the fingerprint at the prompt.
+hsync p2p boot.example.net -b mybucket -p /srv/hsync
+```
+
+```bash
+# Unattended run (no terminal): trust the first sighting.
 hsync p2p boot.example.net -b mybucket -p /srv/hsync \
   --bootnode-tofu
 ```
 
 ```bash
-# Stable setup: pin the fingerprint from `identity show`.
+# Hardened: pin the fingerprint from `identity show`.
 hsync p2p boot.example.net -b mybucket -p /srv/hsync \
   --bootnode-fingerprint YOUR_BOOTNODE_FINGERPRINT
 ```
 
-Either way the client refuses an unpinned self-signed node, so one of the two
-forms is required (`--insecure` is for loopback tests only).
+The fingerprint is what authenticates the self-signed node, so an unattended or
+security-sensitive setup needs one of the two explicit forms (`--insecure` is for
+loopback tests only).
 
 See the [client guide — Sync across networks](https://github.com/albertsdk/hsync-client/blob/main/docs/p2p-bootnode.md)
 for the client-side setup.

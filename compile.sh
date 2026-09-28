@@ -338,7 +338,7 @@ _container_native_cmd() {
     local outdir="$1"
     case "${DEB_LANGUAGE}" in
         python)
-            printf '%s' "poetry install --only main --with build && HSYNC_PREFER_PATH_PYINSTALLER=1 HSYNC_PYINSTALLER_WORKPATH=/tmp/work poetry run ./compile.sh -t native -o ${outdir}"
+            printf '%s' "poetry install --only main,build && HSYNC_PREFER_PATH_PYINSTALLER=1 HSYNC_PYINSTALLER_WORKPATH=/tmp/work poetry run ./compile.sh -t native -o ${outdir}"
             ;;
         *)
             validate_language
@@ -353,7 +353,7 @@ _container_build_cmd() {
     local deb_arch="$1"
     case "${DEB_LANGUAGE}" in
         python)
-            printf '%s' "poetry install --only main --with build && HSYNC_PREFER_PATH_PYINSTALLER=1 poetry run ./compile.sh -t onedir -o build/deb-all/${deb_arch}/pyinstaller"
+            printf '%s' "poetry install --only main,build && HSYNC_PREFER_PATH_PYINSTALLER=1 poetry run ./compile.sh -t onedir -o build/deb-all/${deb_arch}/pyinstaller"
             ;;
         *)
             validate_language

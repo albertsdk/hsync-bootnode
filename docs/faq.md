@@ -3,14 +3,20 @@
 Operational questions about running the node and about the clients that connect
 to it. For the CLI itself see [usage.md](usage.md).
 
-## Why does my client abort with "certificate fingerprint … does not match the accepted pin"?
+## Why does my client abort with "Bootnode '…' trust failed: the certificate fingerprint does not match the accepted pin"?
 
 **Symptom.** A client that connected to the node before now stops with:
 
 ```text
-ERROR: Bootnode <host>:<port> trust failed: certificate fingerprint <new>
-does not match the accepted pin
+ERROR: Bootnode '<host>:<port>' trust failed: the certificate fingerprint
+does not match the accepted pin (possible man-in-the-middle).
+The bootnode presented this SHA256 fingerprint:
+  sha256:<new-fingerprint>
 ```
+
+The client also prints the known-hosts file that holds the accepted pin and the
+exact `hsync bootnode trust add`/`hsync bootnode trust remove` commands that
+unblock the situation.
 
 **Why.** The client authenticates the node's **self-signed** certificate by
 *pinning* its fingerprint: with `--bootnode-tofu` it remembers the first
@@ -38,9 +44,10 @@ explicitly:
 hsync p2p <host> -b <bucket> --bootnode-fingerprint <new-fingerprint>
 ```
 
-Or, for a TOFU client, remove the stale pin so it is trusted again on the next
-connection: delete the `<host>:<port>` entry from the client's trust store
-(`bootnode_known_hosts.json` under `$XDG_STATE_HOME/hsync/`, or the path in
+Or, for a TOFU client, forget the stale pin with `hsync bootnode trust remove`
+(the client prints this exact command, with the host and port, when it refuses)
+so the next connection is trusted again; the entry lives in the client's trust
+store (`bootnode_known_hosts.json` under `$XDG_STATE_HOME/hsync/`, or the path in
 `HSYNC_BOOTNODE_TRUST_FILE`).
 
 **Never** accept a fingerprint you cannot explain: a mismatch is precisely what
@@ -100,5 +107,6 @@ is registered in the bucket yet — nothing is wrong: see the client's
 ## Where can I read the pin the client stored?
 
 On the client host, in `bootnode_known_hosts.json` under `$XDG_STATE_HOME/hsync/`
-(or `~/.local/state/hsync/`), overridable with `HSYNC_BOOTNODE_TRUST_FILE`. It
-maps `<host>:<port>` to the current fingerprint and its `updated_at` timestamp.
+(or `~/.local/state/hsync/`), overridable with `HSYNC_BOOTNODE_TRUST_FILE`; the
+client prints this path whenever it pins a fingerprint. It maps `<host>:<port>`
+to the current fingerprint and its `updated_at` timestamp.

@@ -20,8 +20,8 @@ hsync-bootnode --version
 
 | Option | Default | Description |
 |---|---|---|
-| `--host` | `0.0.0.0` | Address to bind the QUIC/UDP listener to. |
-| `--port` | `443` | UDP port (1–65535). 443 is the QUIC/HTTP3 default; ports below 1024 need root or `CAP_NET_BIND_SERVICE` (the systemd unit grants it). |
+| `--host` | `0.0.0.0` | Address to bind the QUIC/UDP listener to. Accepts an optional port (`HOST[:PORT]`, e.g. `0.0.0.0:443` or `[::1]:443`). |
+| `--port` | `443` | UDP port (1–65535). 443 is the QUIC/HTTP3 default; ports below 1024 need root or `CAP_NET_BIND_SERVICE` (the systemd unit grants it). Mutually exclusive with a port in `--host HOST:PORT`. |
 | `--identity` | *(none)* | Persist the TLS identity (key+cert) at this path, so the certificate fingerprint is stable across restarts and can be pinned by clients. Without it the identity stays in-memory (ephemeral, no-log default). |
 | `--public-host` | *(none)* | Public hostname or IP to add to the certificate SAN (repeatable). |
 | `--protected-bucket` | *(none)* | Bucket that requires a valid `bucket_token`. Repeatable. Declaring a protected bucket without provisioning its key fails fast at startup (exit code 2). |

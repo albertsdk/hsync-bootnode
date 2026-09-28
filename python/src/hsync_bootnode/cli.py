@@ -18,6 +18,7 @@ import sys
 import typer
 from hsync_common import ssl_utils
 from hsync_common.constants import BOOT_DEFAULT_PORT
+from hsync_common.endpoint import parse_host_port
 from pydantic import SecretStr
 
 from hsync_bootnode import __version__
@@ -72,16 +73,49 @@ def main(
         raise typer.Exit()
 
 
+def _resolve_listener(host: str | None, port: int | None) -> tuple[str, int]:
+    """Resolve the listener bind address/port from ``--host``/``--port``.
+
+    ``--host`` may carry a port (``HOST[:PORT]``); that port and ``--port`` are
+    mutually exclusive. Defaults: ``0.0.0.0`` and ``BOOT_DEFAULT_PORT``.
+    """
+    resolved_host = "0.0.0.0"
+    resolved_port = BOOT_DEFAULT_PORT
+    if host is not None:
+        try:
+            hp = parse_host_port(host)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        resolved_host = hp.host
+        if hp.port is not None:
+            if port is not None:
+                raise typer.BadParameter(
+                    "specify the port either in --host HOST:PORT or with --port, not both"
+                )
+            resolved_port = hp.port
+    if port is not None:
+        resolved_port = port
+    return resolved_host, resolved_port
+
+
 @app.command()
 def run(
-    host: str = typer.Option("0.0.0.0", "--host", help="Address to bind the QUIC/UDP listener to."),
-    port: int = typer.Option(
-        BOOT_DEFAULT_PORT,
+    host: str | None = typer.Option(
+        None,
+        "--host",
+        help=(
+            "Address to bind the QUIC/UDP listener to, optionally with a port "
+            "(HOST[:PORT], e.g. 0.0.0.0:443 or [::1]:443). Default: 0.0.0.0."
+        ),
+    ),
+    port: int | None = typer.Option(
+        None,
         "--port",
         min=1,
         max=65535,
         help=(
             f"UDP port (default {BOOT_DEFAULT_PORT} for QUIC/HTTP3). "
+            "Mutually exclusive with a port in --host HOST:PORT. "
             "Ports below 1024 need root or CAP_NET_BIND_SERVICE."
         ),
     ),
@@ -152,6 +186,7 @@ def run(
     ),
 ) -> None:
     """Run the bootstrap node: single QUIC/UDP listener (boot/1)."""
+    resolved_host, resolved_port = _resolve_listener(host, port)
     try:
         keys = _load_keys(keys_fd)
         handler = BootHandler(
@@ -162,7 +197,7 @@ def run(
             enforce_rate_limits=not no_rate_limit,
         )
         node_identity = (
-            load_or_create_identity(identity, host=host, public_hosts=public_host)
+            load_or_create_identity(identity, host=resolved_host, public_hosts=public_host)
             if identity
             else None
         )
@@ -184,7 +219,7 @@ def run(
     )
     banner = (
         f"hsync-bootnode {__version__} — boot/1, no-log, in-memory\n"
-        f"  listener : {host}:{port} (QUIC/UDP, TLS 1.3, RETRY+address-validation)\n"
+        f"  listener : {resolved_host}:{resolved_port} (QUIC/UDP, TLS 1.3, RETRY+address-validation)\n"
         f"{identity_line}\n"
         f"  protected buckets: {', '.join(protected_bucket) or '(none)'}\n"
         f"  mode      : {'private (every frame needs a bucket_token)' if private else 'open'}\n"
@@ -196,7 +231,11 @@ def run(
     )
     typer.echo(banner)
     try:
-        asyncio.run(_async_main(host, port, handler, no_upnp, ready_file, identity=node_identity))
+        asyncio.run(
+            _async_main(
+                resolved_host, resolved_port, handler, no_upnp, ready_file, identity=node_identity
+            )
+        )
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass  # graceful shutdown: transport closed in _async_main's finally
     except ListenerBindError as exc:

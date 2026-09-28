@@ -151,10 +151,36 @@ def test_bind_bad_host_is_actionable(monkeypatch) -> None:
 
 
 def test_run_port_default_uses_the_shared_ssot() -> None:
-    """The CLI ``--port`` default is the shared ``BOOT_DEFAULT_PORT`` (spec §Transport)."""
+    """The effective default port is the shared ``BOOT_DEFAULT_PORT`` (spec §Transport)."""
     from hsync_common.constants import BOOT_DEFAULT_PORT
-    from typer.main import get_command
 
-    run_command = get_command(app).commands["run"]
-    port_default = next(param.default for param in run_command.params if param.name == "port")
-    assert port_default == BOOT_DEFAULT_PORT == 443
+    from hsync_bootnode.cli import _resolve_listener
+
+    assert _resolve_listener(None, None) == ("0.0.0.0", BOOT_DEFAULT_PORT)
+    assert _resolve_listener("0.0.0.0", None) == ("0.0.0.0", BOOT_DEFAULT_PORT)
+
+
+def test_host_port_shorthand_is_accepted() -> None:
+    """``--host HOST:PORT`` resolves host and port without a separate ``--port``."""
+    from hsync_bootnode.cli import _resolve_listener
+
+    assert _resolve_listener("0.0.0.0:8443", None) == ("0.0.0.0", 8443)
+    assert _resolve_listener("[::1]:8443", None) == ("::1", 8443)
+
+
+def test_host_port_and_port_flag_are_mutually_exclusive() -> None:
+    """A port in ``--host`` and in ``--port`` is a usage error, not a precedence."""
+    import pytest
+    import typer
+
+    from hsync_bootnode.cli import _resolve_listener
+
+    with pytest.raises(typer.BadParameter):
+        _resolve_listener("0.0.0.0:8443", 8443)
+
+
+def test_port_flag_alone_keeps_the_default_host() -> None:
+    """``--port`` without ``--host`` binds all interfaces, as before."""
+    from hsync_bootnode.cli import _resolve_listener
+
+    assert _resolve_listener(None, 8443) == ("0.0.0.0", 8443)

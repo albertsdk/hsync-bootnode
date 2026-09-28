@@ -77,7 +77,7 @@ excluded from the union: they are never validated on the input path.
 | `BUCKET_TOKEN_LEN` | `protocol.py:54` | 64 (lowercase hex = `hex(32 bytes)`), derived as `HMAC-SHA256(key, "boot/1" || bucket)[:32]` |
 | `BucketProto` | `protocol.py:57` | `Literal["tcp", "udp"]` |
 | `CAPACITY_MAX` | `protocol.py:63` | 32 — upper bound of the advisory `capacity` hint (`0` = not a seeder); mirrors `serve_slots` |
-| `BOOT_DEFAULT_PORT` | imported from `hsync_common.constants` (`cli.py`, `--port` default) | `443` — default UDP listener port (spec §Transport); single SSOT shared with `hsync-client` |
+| `BOOT_DEFAULT_PORT` | imported from `hsync_common.constants` (`cli.py`, `_resolve_listener` effective default) | `443` — default UDP listener port (spec §Transport); single SSOT shared with `hsync-client` |
 
 ## Runtime (non-wire) structures
 

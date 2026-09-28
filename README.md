@@ -131,13 +131,13 @@ persists the identity with `--identity` (so it survives restarts) and pins it:
 
 ```bash
 # First contact: trust the fingerprint on first use.
-hsync p2p -b mybucket -p /srv/hsync boot.example.net \
+hsync p2p boot.example.net -b mybucket -p /srv/hsync \
   --bootnode-tofu
 ```
 
 ```bash
 # Stable setup: pin the fingerprint from `identity show`.
-hsync p2p -b mybucket -p /srv/hsync boot.example.net \
+hsync p2p boot.example.net -b mybucket -p /srv/hsync \
   --bootnode-fingerprint YOUR_BOOTNODE_FINGERPRINT
 ```
 

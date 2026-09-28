@@ -1,156 +1,55 @@
 # syntax=docker/dockerfile:1.6
 #
-# hsync-bootnode — Debian/Ubuntu .deb builder image (amd64 / arm64 / armhf)
+# HSYNC Bootnode — Linux builder image (amd64 / arm64 / armhf)
 #
-# Multi-stage build that produces a debian:bookworm (glibc 2.36) environment
-# containing Python 3.12, Poetry, and dpkg-dev, ready to:
+# Single-stage builder based on the official ``python:3.12-bookworm`` multi-arch
+# image (Debian 12, glibc 2.36, CPython 3.12 built ``--enable-shared``), plus
+# Poetry, the Rust toolchain and ``dpkg-dev``. It is ready to:
 #   1. invoke PyInstaller on the project sources mounted at /repo
 #   2. assemble a .deb package with dpkg-deb
+#
+# The prebuilt upstream image is used instead of compiling CPython from source:
+# it is published for linux/amd64, linux/arm64 and linux/arm/v7, and it keeps
+# the CPython build (gcc/cc1) out of qemu-user emulation, where older qemu
+# builds crash non-deterministically. ``--enable-shared`` (as built upstream)
+# is required by PyInstaller.
 #
 # debian:bookworm targets Debian 12 / Ubuntu 22.04+ (glibc 2.36).
 #
 # Built and consumed locally by:
-#   ../compile_deb.sh --target deb-all (from hsync-bootnode)
+#   compile.sh --target deb-all
+#   compile.sh --target rpi
 # Never published to any registry.
 
-# PYTHON_VERSION and PYTHON_SHA256 are kept in sync with the upstream
-# docker-library/python image (https://github.com/docker-library/python).
-ARG PYTHON_VERSION=3.12.13
-ARG PYTHON_SHA256=c08bc65a81971c1dd5783182826503369466c7e67374d1646519adf05207b684
-
 # Base image and target platform are parametrised so the same Dockerfile
-# produces a builder for every CPU family:
-#   amd64 → amd64/debian:bookworm
-#   arm64 → arm64v8/debian:bookworm
-#   armhf → arm32v7/debian:bookworm
-ARG BASE_IMAGE=amd64/debian:bookworm
+# produces a builder for every CPU family. ``python:3.12-bookworm`` is a
+# multi-arch manifest, so ``--platform`` alone selects the architecture:
+#   linux/amd64 → amd64
+#   linux/arm64 → arm64
+#   linux/arm/v7 → armhf (armv7)
+ARG BASE_IMAGE=python:3.12-bookworm
 ARG TARGET_PLATFORM=linux/amd64
 
-# -----------------------------------------------------------------------------
-# Stage 1 — compile Python 3.12 from source (cached forever)
-# -----------------------------------------------------------------------------
-FROM --platform=${TARGET_PLATFORM} ${BASE_IMAGE} AS python-builder
-
-ARG PYTHON_VERSION
-ARG PYTHON_SHA256
+FROM --platform=${TARGET_PLATFORM} ${BASE_IMAGE}
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LC_ALL=C.UTF-8 \
-    LANG=C.UTF-8
-
-# Build dependencies required by the CPython source distribution.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential \
-        ca-certificates \
-        curl \
-        libssl-dev \
-        zlib1g-dev \
-        libbz2-dev \
-        libreadline-dev \
-        libsqlite3-dev \
-        libncursesw5-dev \
-        libffi-dev \
-        liblzma-dev \
-        uuid-dev \
-        xz-utils \
-        tk-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Build & install CPython into /opt/python3.12. ``--enable-optimizations`` is
-# intentionally omitted — PGO under qemu emulation is extremely slow and the
-# gains are marginal for our use case (one-shot PyInstaller build).
-#
-# ``--with-system-ffi`` was removed in Python 3.12 (the bundled copy is now the
-# only option and the flag produces a configure warning); it is omitted here.
-#
-# The download is retried up to 3 times to survive transient python.org / CDN
-# failures seen on GitHub Actions runners. ``make -j`` is capped at 4 jobs
-# instead of ``$(nproc)``: under qemu-user emulation (arm64/armhf) each gcc
-# process has significant memory overhead, and the 16 GB Actions runner can OOM
-# with the full ``$(nproc)`` (4) parallelism, killing the build with exit code 1.
-#
-# ``make`` is additionally wrapped in a retry loop (``-j4``, ``-j4``, then a
-# final ``-j1``): under qemu-user emulation individual gcc invocations can crash
-# with a SIGSEGV (exit code 139) on otherwise valid translation units (e.g.
-# ``Python/_warnings.c``). These crashes are non-deterministic and depend on
-# emulated thread scheduling / memory pressure, so simply re-running ``make``
-# (which resumes from the already-produced ``.o`` files) succeeds; the ``-j1``
-# fallback maximises the odds on the last attempt.
-#
-# ``ac_cv_sizeof_time_t`` is seeded explicitly: under qemu-user emulation the
-# CPython ``configure`` runtime probe for ``sizeof(time_t)`` is unreliable and
-# can leave ``SIZEOF_TIME_T`` undefined in ``pyconfig.h``. That makes both the
-# ``#if SIZEOF_TIME_T == SIZEOF_LONG_LONG`` / ``== SIZEOF_LONG`` branches in
-# ``Python/pytime.c`` evaluate ``SIZEOF_TIME_T`` as empty, so ``PY_TIME_T_MIN``
-# is never ``#define``-d and compilation fails with
-# ``error: 'PY_TIME_T_MIN' undeclared``. We instead measure the size with a
-# tiny C program compiled by the (target-native under qemu) gcc and feed the
-# result into configure's cache. The size is returned via the program's exit
-# code, so ``|| TT_SIZE=$?`` is used to capture it without tripping ``set -e``.
-RUN set -eux; \
-    for attempt in 1 2 3; do \
-        curl -fsSL "https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tar.xz" \
-            -o /tmp/python.tar.xz && break; \
-        echo "curl attempt ${attempt}/3 failed, retrying in 5s..." >&2; \
-        sleep 5; \
-    done; \
-    test -s /tmp/python.tar.xz; \
-    echo "${PYTHON_SHA256} /tmp/python.tar.xz" | sha256sum -c -; \
-    mkdir -p /tmp/python-src; \
-    tar -xJf /tmp/python.tar.xz -C /tmp/python-src --strip-components=1; \
-    cd /tmp/python-src; \
-    printf '#include <time.h>\nint main(void){return (int)sizeof(time_t);}\n' > /tmp/tt.c; \
-    gcc /tmp/tt.c -o /tmp/tt_bin; \
-    TT_SIZE=0; /tmp/tt_bin || TT_SIZE=$?; \
-    echo "detected sizeof(time_t) = ${TT_SIZE} bytes"; \
-    test "${TT_SIZE}" = 4 -o "${TT_SIZE}" = 8; \
-    ./configure \
-        --prefix=/opt/python3.12 \
-        --enable-shared \
-        --with-ensurepip=install \
-        ac_cv_sizeof_time_t="${TT_SIZE}" \
-        LDFLAGS=-Wl,-rpath=/opt/python3.12/lib; \
-    echo "=== pyconfig.h SIZEOF_TIME_T / SIZEOF_LONG ==="; \
-    grep -E 'define SIZEOF_TIME_T|define SIZEOF_LONG' pyconfig.h || true; \
-    for jobs in 4 4 1; do \
-        echo "make -j${jobs} (attempt with ${jobs} job(s))"; \
-        rc=0; make -j"${jobs}" || rc=$?; \
-        if [ "${rc}" = 0 ]; then break; fi; \
-        echo "make -j${jobs} failed with exit code ${rc}; retrying (qemu gcc segfaults are non-deterministic)..." >&2; \
-        if [ "${jobs}" = 1 ]; then echo "make failed even with -j1, giving up" >&2; exit "${rc}"; fi; \
-    done; \
-    make install; \
-    /opt/python3.12/bin/python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel; \
-    rm -rf /tmp/python-src /tmp/python.tar.xz
-
-# -----------------------------------------------------------------------------
-# Stage 2 — runtime builder image
-# -----------------------------------------------------------------------------
-FROM --platform=${TARGET_PLATFORM} ${BASE_IMAGE} AS builder
-
-ENV DEBIAN_FRONTEND=noninteractive \
-    LC_ALL=C.UTF-8 \
-    LANG=C.UTF-8 \
-    PATH=/opt/python3.12/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    P2PG=C.UTF-8 \
+    PATH=/opt/rust/cargo/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     POETRY_VIRTUALENVS_IN_PROJECT=0 \
     POETRY_VIRTUALENVS_CREATE=true \
     POETRY_NO_INTERACTION=1
 
-# Runtime dependencies for the produced binary + tooling for PyInstaller +
-# dpkg-dev for .deb packaging + build-essential for native Python extensions.
-# The *-dev packages are needed because on armhf PyPI does not publish wheels
-# for ``cryptography``, requiring a source build.
+# PyInstaller tooling + .deb packaging + native-extension build dependencies.
+# The *-dev packages are needed because on armhf PyPI publishes no wheel for
+# ``cryptography``, which is then built from source (hence the Rust toolchain
+# below).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
         binutils \
-        libsqlite3-0 \
-        libbz2-1.0 \
-        liblzma5 \
-        libncursesw6 \
-        libreadline8 \
         build-essential \
         pkg-config \
         libffi-dev \
@@ -160,17 +59,37 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         fakeroot \
     && rm -rf /var/lib/apt/lists/*
 
-# Bring in the Python 3.12 install from the previous stage.
-COPY --from=python-builder /opt/python3.12 /opt/python3.12
-
-# Rust toolchain — ``cryptography`` >= 35 uses pyo3 for its native modules.
-# Pinned to a known version so the cached layer is reproducible.
+# Rust toolchain — ``cryptography`` >= 35 uses pyo3 for its native modules and
+# PyPI publishes no wheel for armhf, so it is built from source there. rustup
+# is pinned to 1.29.1 and the toolchain to 1.84.0; rustup-init is fetched for
+# the target arch and its SHA256 verified, instead of piping the remote
+# https://sh.rustup.rs script into a shell.
+ARG TARGETARCH
+ARG TARGETVARIANT
 ENV RUSTUP_HOME=/opt/rust/rustup \
-    CARGO_HOME=/opt/rust/cargo \
-    PATH=/opt/rust/cargo/bin:/opt/python3.12/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    CARGO_HOME=/opt/rust/cargo
 RUN set -eux; \
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --no-modify-path --profile minimal --default-toolchain 1.84.0; \
+    case "${TARGETARCH}${TARGETVARIANT}" in \
+        amd64) rust_target=x86_64-unknown-linux-gnu;      rust_sha=dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71 ;; \
+        arm64) rust_target=aarch64-unknown-linux-gnu;     rust_sha=15f6e4ce9f583b929c996c91562bad6d4454f3281de858b02cdfdef615fac433 ;; \
+        armv7) rust_target=armv7-unknown-linux-gnueabihf; rust_sha=6f34abb0d553273ce08306ea3adb758d0171f21090cc5ad5426f474ded5504d1 ;; \
+        *) echo "unsupported TARGETARCH/TARGETVARIANT: ${TARGETARCH}/${TARGETVARIANT}" >&2; exit 1 ;; \
+    esac; \
+    for attempt in 1 2 3 4 5; do \
+        curl --proto '=https' --tlsv1.2 -fsSL --connect-timeout 30 \
+            --speed-limit 1024 --speed-time 60 \
+            -o /tmp/rustup-init \
+            "https://static.rust-lang.org/rustup/archive/1.29.1/${rust_target}/rustup-init" \
+            && break; \
+        echo "rustup-init download attempt ${attempt}/5 failed, retrying in 5s..." >&2; \
+        rm -f /tmp/rustup-init; \
+        sleep 5; \
+    done; \
+    test -s /tmp/rustup-init; \
+    echo "${rust_sha}  /tmp/rustup-init" | sha256sum -c -; \
+    chmod +x /tmp/rustup-init; \
+    /tmp/rustup-init -y --no-modify-path --profile minimal --default-toolchain 1.84.0; \
+    rm -f /tmp/rustup-init; \
     rustc --version; \
     cargo --version
 
@@ -179,7 +98,7 @@ RUN set -eux; \
 # ``[project]`` table and the lock file is generated by Poetry 2.x; older
 # 1.x releases ignore ``[project]`` and abort with "fields ... are required
 # in package mode" while also rejecting the newer lock-file format.
-RUN /opt/python3.12/bin/python3 -m pip install --no-cache-dir --prefer-binary \
+RUN python3 -m pip install --no-cache-dir --prefer-binary \
         "poetry==2.3.2"
 
 # Workdir is mounted by the caller (``-v "$PWD:/src"``).

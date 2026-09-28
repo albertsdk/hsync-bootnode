@@ -32,17 +32,24 @@ every trace of your network is gone.
   unit does), or use a port ≥ 1024 (e.g. `--port 8443`)
 - Optional: a UPnP-capable router for zero-touch UDP port mapping
 
+## Build the executable
+
+```bash
+./compile.sh           # host standalone → dist/<os>-<arch>/hsync-bootnode
+./compile.sh -t rpi    # Raspberry Pi armhf + arm64 (Docker + qemu-user-static)
+```
+
 ## Install (Debian/Ubuntu — `.deb`)
 
 ```bash
-./compile_deb.sh -t deb        # host arch → dist/deb/hsync-bootnode_<ver>_<arch>.deb
+./compile.sh -t deb            # host arch → dist/deb/hsync-bootnode_<ver>_<arch>.deb
 sudo dpkg -i dist/deb/hsync-bootnode_*.deb
 sudo systemctl enable --now hsync-bootnode.service
 ```
 
-`./compile_deb.sh -t deb-all` cross-builds amd64/arm64/armhf via Docker +
+`./compile.sh -t deb-all` cross-builds amd64/arm64/armhf via Docker +
 `qemu-user-static`. The `-l/--language` flag (default `python`,
-also `DEB_LANGUAGE`) selects which implementation the package embeds;
+also `DEB_LANGUAGE`) selects which implementation the artifact embeds;
 `rust` is rejected until that port exists. Protected buckets need a
 group-keys file (never shipped in the package):
 
@@ -74,4 +81,5 @@ the full option list, see the [Usage reference](usage.md).
 | Document | Content |
 |---|---|
 | [usage.md](usage.md) | CLI reference, protected buckets and private nodes, keys provisioning, privacy/security model, OS services |
+| [faq.md](faq.md) | Operational FAQ: certificate pin/TOFU mismatches, stable identity, client-side recovery |
 | `protocol-spec/boot-1.md` | Wire protocol specification |

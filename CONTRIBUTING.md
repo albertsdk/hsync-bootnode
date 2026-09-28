@@ -23,7 +23,7 @@ wire change must keep every implementation byte-identical.
 
 ### Packaging and black-box tests
 
-- `dpkg-deb` (dpkg-dev); Docker + `qemu-user-static` for `deb-all`
+- `dpkg-deb` (dpkg-dev); Docker + `qemu-user-static` for `rpi` / `deb-all`
 - `fakeroot` (optional) for `.deb` assembly
 
 ## Repository Layout
@@ -37,7 +37,7 @@ wire change must keep every implementation byte-identical.
 | `python/` | v1 implementation — Python + aioquic, with its white-box unit suite |
 | `rust/` | v2 implementation — Rust + quinn (planned, not started) |
 | `packaging/` | OS service units (systemd / launchd / WinSW) and the `.deb` payload |
-| `compile_deb.sh` | Root `.deb` assembler (`-l/--language`, `deb`/`deb-all`) |
+| `compile.sh` | Root build entry point (`native`/`rpi`/`deb`/`deb-all`, `-l/--language`) |
 | `llm-wiki/` | Internal agent knowledge base |
 | `docs/` | End-user documentation |
 | `AGENTS.md` | Coding rules for AI agents — a useful checklist for humans too |
@@ -55,14 +55,16 @@ cd hsync-bootnode/python && poetry install
 ## Building
 
 ```bash
-# Python standalone binary (PyInstaller)
+# Python standalone binary (PyInstaller, per-language script)
 cd hsync-bootnode/python && ./compile.sh                  # host OS/arch
 cd hsync-bootnode/python && ./compile.sh -t onedir -o build/onedir
 
-# .deb package (root assembler; python is the only language implemented today)
-cd hsync-bootnode && ./compile_deb.sh -t deb              # host architecture
-cd hsync-bootnode && ./compile_deb.sh -t deb-all          # amd64, arm64, armhf (Docker)
-cd hsync-bootnode && ./compile_deb.sh -l python -t deb
+# User-facing artifacts (root entry point; python is the only language today)
+cd hsync-bootnode && ./compile.sh -t native               # host standalone
+cd hsync-bootnode && ./compile.sh -t rpi                  # Raspberry Pi armhf+arm64 (Docker)
+cd hsync-bootnode && ./compile.sh -t deb                  # host architecture .deb
+cd hsync-bootnode && ./compile.sh -t deb-all              # amd64, arm64, armhf (Docker)
+cd hsync-bootnode && ./compile.sh -l python -t deb
 ```
 
 `-l/--language` defaults to `python` and rejects `rust` until that port exists;
@@ -194,7 +196,7 @@ behavior — must also keep these in sync:
 - `packaging/deb/usr/share/man/man1/hsync-bootnode.1` (man page: `OPTIONS`,
   `ENVIRONMENT`, `EXIT STATUS`, examples)
 - the OS service units in `packaging/` and the `--help` text of
-  `python/compile.sh` / `compile_deb.sh`
+  `python/compile.sh` / `compile.sh`
 - `README.md` (layout table, quick start, documentation index)
 
 ## Commit Messages

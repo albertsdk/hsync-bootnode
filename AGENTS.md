@@ -29,7 +29,7 @@ that apply to the Rust implementation.
 | `python/` | Python + aioquic implementation (v1) and its white-box unit suite |
 | `rust/` | Rust + quinn implementation (planned, v2) |
 | `packaging/` | OS service units (`systemd`/`launchd`/`windows`) and the `.deb` payload |
-| `compile_deb.sh` | Root `.deb` assembler (`-l/--language`, `deb`/`deb-all`) |
+| `compile.sh` | Root build entry point (`native`/`rpi`/`deb`/`deb-all`, `-l/--language`) |
 | `llm-wiki/` | Internal agent knowledge base |
 | `docs/` | End-user documentation |
 
@@ -44,7 +44,8 @@ that apply to the Rust implementation.
   `*.deb`, `*.o`/`*.a`/`*.so`, `*.env`, and any local `group-keys` file.
 * Each implementation is compiled by the build script inside **its own**
   directory (`python/compile.sh`, and `rust/compile.sh` once the port lands);
-  `compile_deb.sh` at the root only *dispatches* and assembles packages.
+  `compile.sh` at the root only *dispatches* and assembles artifacts
+  (native/rpi/deb/deb-all).
 
 ---
 
@@ -187,15 +188,15 @@ documentation-engineering rules:
   * the man page `packaging/deb/usr/share/man/man1/hsync-bootnode.1`
     (OPTIONS, ENVIRONMENT, FILES, EXAMPLES, `.TH` date/version);
   * the `.deb` payload under `packaging/deb/` and the language dispatch points in
-    `compile_deb.sh` (`validate_language`, `_build_binary`,
-    `_container_build_cmd`);
+    `compile.sh` (`validate_language`, `_build_native`, `_build_onedir`,
+    `_container_native_cmd`, `_container_build_cmd`);
   * the OS service units `packaging/{systemd,launchd,windows}/`;
   * `README.md` and `docs/usage.md`;
   * the language-neutral suite `tests/` when the observable CLI/exit-code
     contract changes.
 
   A new language port also requires its own per-language binary script (e.g.
-  `rust/compile.sh`) and must be wired into `compile_deb.sh`; the root script must
+  `rust/compile.sh`) and must be wired into `compile.sh`; the root script must
   keep failing fast for languages that do not exist yet.
 
 ---
@@ -212,7 +213,7 @@ documentation-engineering rules:
   Breaking the wire contract means bumping the mandatory `protocol_version`
   (`boot/1` → `boot/next`) and updating **atomically**: `protocol-spec/boot-1.md`
   (or its successor), `fixtures/`, `python/`, `rust/`, `tests/`, `bench/`,
-  `compile_deb.sh`/`packaging/`, `llm-wiki/` and `docs/`. No implementation may
+  `compile.sh`/`packaging/`, `llm-wiki/` and `docs/`. No implementation may
   keep speaking the retired version, and no compatibility shim may exist in one
   language only.
 
@@ -243,8 +244,8 @@ trivial documentation-only or formatting-only changes.
 
 | Implementation | Observable behavior | Cross-language / artifact impact |
 | --- | --- | --- |
-| `python/` | CLI, `boot/1` wire behavior, no-log | spec, fixtures, `rust/`, root `tests/`, `bench/`, `compile_deb.sh`, `packaging/`, docs |
-| `rust/` | same CLI + `boot/1` wire behavior | spec, fixtures, `python/`, root `tests/`, `bench/`, `compile_deb.sh`, `packaging/`, docs |
+| `python/` | CLI, `boot/1` wire behavior, no-log | spec, fixtures, `rust/`, root `tests/`, `bench/`, `compile.sh`, `packaging/`, docs |
+| `rust/` | same CLI + `boot/1` wire behavior | spec, fixtures, `python/`, root `tests/`, `bench/`, `compile.sh`, `packaging/`, docs |
 | root (`tests/`, `bench/`, `fixtures/`, spec) | the shared contract itself | every implementation |
 
 ### 2. First Implementation Pass
@@ -256,7 +257,7 @@ Implement the smallest complete change satisfying the acceptance criteria. Do no
 After the first implementation pass, and before finalizing:
 
 1. Re-read the original request and acceptance criteria without assuming the implementation is correct.
-2. Inspect the **complete diff** (`cd hsync-bootnode && git diff` / `git status`), including tests, fixtures, the spec, `compile_deb.sh`, `packaging/`, the man page, `llm-wiki/` and `docs/`. Reviewing your own edit history is not enough — read the actual diff.
+2. Inspect the **complete diff** (`cd hsync-bootnode && git diff` / `git status`), including tests, fixtures, the spec, `compile.sh`, `packaging/`, the man page, `llm-wiki/` and `docs/`. Reviewing your own edit history is not enough — read the actual diff.
 3. Trace normal, invalid-input, empty/missing, minimum/maximum, oversized, malformed, pipelined-frames, TTL-expiry, cancellation, graceful-shutdown, partial-write and rate-limit paths where applicable.
 4. Verify consistency across the spec, the committed fixtures, the frame models of **every** implementation, the CLI/env contract (flags ↔ `HSYNC_BOOTNODE_*` ↔ man page ↔ service units), the packaging scripts and the documentation.
 5. Run the narrowest relevant checks first (see below), then the broader ones when practical.

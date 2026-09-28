@@ -108,7 +108,7 @@ network over the Internet** whose file data still flows only between peers. See
 | [`packaging/`](packaging/) | OS service units — systemd / launchd / WinSW | v1 |
 | [`llm-wiki/`](llm-wiki/) | Internal agent knowledge base (architecture) | v1 |
 | [`docs/`](docs/) | End-user documentation (install, usage reference) | v1 |
-| [`compile_deb.sh`](compile_deb.sh) | Root `.deb` assembler: `-l/--language` (default `python`; `rust` rejected until that port exists), `deb`/`deb-all` targets | v1 |
+| [`compile.sh`](compile.sh) | Root build entry point: `native` / `rpi` / `deb` / `deb-all`, `-l/--language` (default `python`; `rust` rejected until that port exists) | v1 |
 | [`rust/`](rust/) | Additive v2 port — Rust + quinn (not required by v1) | Not started |
 
 ## Quick start

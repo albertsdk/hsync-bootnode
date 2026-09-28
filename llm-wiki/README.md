@@ -18,7 +18,7 @@ Internal, agent-optimized knowledge base for the `hsync-bootnode` project
 | Wire-protocol specification (SSOT) | `protocol-spec/boot-1.md` |
 | Shared protocol fixtures | `fixtures/bootnode-*.json` |
 | Python implementation | `python/src/hsync_bootnode/` |
-| [`compile_deb.sh`](../compile_deb.sh) | Root `.deb` assembler (`-l/--language`, `deb`/`deb-all`); per-language binary builds stay in their own directory | v1 |
+| [`compile.sh`](../compile.sh) | Root build entry point (`native`/`rpi`/`deb`/`deb-all`, `-l/--language`); per-language binary builds stay in their own directory | v1 |
 | OS service units | `packaging/{systemd,launchd,windows}/` |
 | End-user documentation | `docs/` |
 

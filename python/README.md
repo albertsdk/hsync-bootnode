@@ -46,11 +46,13 @@ python -m hsync_bootnode run --host 0.0.0.0 --port 443
 
 ```bash
 cd python
-./compile.sh            # → dist/linux-amd64/hsync-bootnode (host standalone)
+./compile.sh            # → python/dist/linux-amd64/hsync-bootnode
 ```
 
-Binaries only — the Debian package is assembled at the repo root
-(`../compile_deb.sh`). Protected buckets and keys provisioning, service
-deployment and the full option list: [`../docs/usage.md`](../docs/usage.md).
-Internal architecture:
+This per-language script builds binaries only (`native`, `onedir`). The
+repository-root [`../compile.sh`](../compile.sh) is the entry point for the
+user-facing artifacts and wraps it: `native` (host standalone),
+`rpi` (Raspberry Pi armhf/arm64) and `deb`/`deb-all`. Protected buckets and keys
+provisioning, service deployment and the full option list:
+[`../docs/usage.md`](../docs/usage.md). Internal architecture:
 [`../llm-wiki/architecture.md`](../llm-wiki/architecture.md).

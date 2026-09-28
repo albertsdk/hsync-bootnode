@@ -4,7 +4,7 @@
 #
 # Builds the hsync-bootnode standalone executable from the Python sources
 # using PyInstaller. Binaries only: the Debian/Ubuntu .deb packaging lives in
-# the repository root (../compile_deb.sh), which selects the implementation
+# the repository root (../compile.sh), which selects the implementation
 # language (python or rust) and assembles the package. A script placed
 # inside one implementation directory stays responsible for that language's
 # binary only.
@@ -18,9 +18,11 @@
 #                           Supported:
 #                               native    host OS / arch standalone binary
 #                               onedir    onedir bundle; the payload consumed
-#                                         by ../compile_deb.sh for the .deb
-#   -o, --output-dir DIR    (onedir only) directory receiving the bundle
-#                           (default: dist/onedir)
+#                                         by ../compile.sh for the .deb
+#   -o, --output-dir DIR    Directory receiving the artifact (default:
+#                           native → dist/<os>-<arch>/; onedir → dist/onedir/).
+#                           For native the executable itself lands directly in
+#                           DIR; for onedir the bundle directory <DIR>/<app>/.
 #   -h, --help              Show this help message
 #
 # Requirements:
@@ -116,7 +118,8 @@ ${BOLD}Options:${RESET}
     -c, --clean             Clean build artifacts before building
     -t, --target TARGET     Build target (default: native)
                             Supported: native, onedir
-    -o, --output-dir DIR    onedir output directory (default: dist/onedir)
+    -o, --output-dir DIR    Directory receiving the artifact (default:
+                            native → dist/<os>-<arch>/; onedir → dist/onedir/)
     -h, --help              Show this help message
 
 ${BOLD}Examples:${RESET}
@@ -154,9 +157,17 @@ clean_artifacts() {
 }
 
 # Resolve the PyInstaller executable: in-project venv first, PATH fallback
-# (the Docker deb build runs this script under `poetry run`, where the poetry
-# venv is outside the project and is already first on PATH).
+# (the Docker build runs this script under `poetry run`, where the container
+# venv is already first on PATH but the mounted host .venv still exists).
+# HSYNC_PREFER_PATH_PYINSTALLER=1 forces the PATH lookup first: inside a
+# cross-build container the mounted .venv belongs to the host architecture and
+# must not shadow the container's own PyInstaller.
 _resolve_pyinstaller() {
+    if [[ "${HSYNC_PREFER_PATH_PYINSTALLER:-0}" == "1" ]] \
+        && command -v pyinstaller >/dev/null 2>&1; then
+        PYINSTALLER="$(command -v pyinstaller)"
+        return 0
+    fi
     [[ -x "${PYINSTALLER}" ]] && return 0
     if command -v pyinstaller >/dev/null 2>&1; then
         PYINSTALLER="$(command -v pyinstaller)"
@@ -184,7 +195,7 @@ check_prerequisites() {
 }
 
 # Version override, settable via the HSYNC_VERSION environment variable
-# (compile_deb.sh passes -v/--version through; binaries only log it).
+# (../compile.sh passes -v/--version through; binaries only log it).
 VERSION_OVERRIDE=""
 get_version() {
     if [[ -n "${VERSION_OVERRIDE}" ]]; then
@@ -226,12 +237,22 @@ _pyi_flags() {
 }
 
 # Build the standalone single-file executable (PyInstaller --onefile).
+# HSYNC_PYINSTALLER_WORKPATH, when set, relocates both --workpath and
+# --specpath; the root compile.sh sets it for the rpi cross-build so the
+# host-mounted source tree stays pristine (intermediates go to /tmp).
 build_binary() {
-    local version
+    local version distpath workpath_flag="" specpath_flag=""
     version="$(get_version)"
-    log_step "Building ${APP_NAME} v${version} for ${PLATFORM}..."
-    LC_ALL=C PYTHONWARNINGS=ignore "${PYINSTALLER}" --onefile --distpath "${OUTPUT_DIR}" $(_pyi_flags) "${ENTRY_POINT}"
-    local bin_path="${OUTPUT_DIR}/${APP_NAME}${BIN_EXT}"
+    distpath="${OUTPUT_DIR_OVERRIDE:-${OUTPUT_DIR}}"
+    mkdir -p "${distpath}"
+    if [[ -n "${HSYNC_PYINSTALLER_WORKPATH:-}" ]]; then
+        mkdir -p "${HSYNC_PYINSTALLER_WORKPATH}"
+        workpath_flag="--workpath ${HSYNC_PYINSTALLER_WORKPATH}"
+        specpath_flag="--specpath ${HSYNC_PYINSTALLER_WORKPATH}"
+    fi
+    log_step "Building ${APP_NAME} v${version} for ${PLATFORM} into ${distpath}..."
+    LC_ALL=C PYTHONWARNINGS=ignore "${PYINSTALLER}" --onefile --distpath "${distpath}" ${workpath_flag} ${specpath_flag} $(_pyi_flags) "${ENTRY_POINT}"
+    local bin_path="${distpath}/${APP_NAME}${BIN_EXT}"
     if [[ -f "${bin_path}" ]]; then
         local size
         size="$(du -h "${bin_path}" | cut -f1)"
@@ -251,11 +272,11 @@ build_binary() {
     fi
 }
 
-# Build the onedir bundle consumed by ../compile_deb.sh for the .deb payload.
+# Build the onedir bundle consumed by ../compile.sh for the .deb payload.
 build_onedir() {
     local version distpath bundle
     version="$(get_version)"
-    distpath="${ONEDIR_OUTPUT_DIR:-${ONEDIR_DEFAULT_DIR}}"
+    distpath="${OUTPUT_DIR_OVERRIDE:-${ONEDIR_DEFAULT_DIR}}"
     mkdir -p "${distpath}"
     log_step "Building ${APP_NAME} v${version} onedir bundle into ${distpath}..."
     LC_ALL=C PYTHONWARNINGS=ignore "${PYINSTALLER}" --onedir --distpath "${distpath}" --workpath "${BUILD_DIR}/onedir-work" --specpath "${BUILD_DIR}/onedir-work" $(_pyi_flags) "${ENTRY_POINT}"
@@ -301,7 +322,7 @@ main() {
                 ;;
             -o|--output-dir)
                 [[ $# -ge 2 ]] || { log_error "--output-dir requires a value"; exit 1; }
-                ONEDIR_OUTPUT_DIR="$2"
+                OUTPUT_DIR_OVERRIDE="$2"
                 shift 2
                 ;;
             -h|--help)
@@ -328,9 +349,6 @@ main() {
             if [[ "${do_clean}" == true ]]; then
                 clean_artifacts
                 echo
-            fi
-            if [[ -n "${ONEDIR_OUTPUT_DIR:-}" ]]; then
-                log_warn "--output-dir is ignored for the native target"
             fi
             build_binary
             ;;

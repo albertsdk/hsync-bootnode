@@ -1,22 +1,29 @@
 #!/usr/bin/env bash
 #
-# HSYNC Bootnode - Debian/Ubuntu .deb Build Script
+# HSYNC Bootnode - Build Script
 #
-# Assembles the Debian/Ubuntu .deb package(s) of the bootnode. This script
-# (repository root) selects WHICH implementation language the embedded
-# executable is built from and delegates the binary build to the matching
-# per-language script; the per-language scripts build binaries only.
+# Builds the HSYNC bootnode into the requested artifact: a standalone
+# executable for the host, Raspberry Pi OS executables (armhf/arm64), or
+# Debian/Ubuntu .deb packages. This script (repository root) selects WHICH
+# implementation language the embedded executable is built from and delegates
+# the binary build to the matching per-language script; the per-language
+# scripts build binaries only.
 #
-#   python → python/compile.sh -t onedir -o <distpath>   (implemented)
+#   python → python/compile.sh   (native/onedir; implemented)
 #   rust   → planned v2 port of the same boot/1 protocol (not yet available)
 #
 # Usage:
-#   ./compile_deb.sh [options]
+#   ./compile.sh [options]
 #
 # Options:
-#   -c, --clean             Clean .deb build artifacts before building
-#   -t, --target TARGET     Build target (default: deb)
+#   -c, --clean             Clean build artifacts before building
+#   -t, --target TARGET     Build target (default: native)
 #                           Supported:
+#                               native    standalone executable for the host
+#                                         OS/arch
+#                               rpi       Raspberry Pi OS executables: armhf
+#                                         (32-bit) and arm64 (64-bit) via
+#                                         Docker
 #                               deb       .deb for the host architecture
 #                               deb-all   .deb for amd64, arm64 and armhf
 #                                         (via Docker)
@@ -26,21 +33,25 @@
 #                               rust      planned v2 port — not yet available
 #                           Also settable via the DEB_LANGUAGE environment
 #                           variable (the CLI flag takes precedence).
-#   -v, --version VERSION   Override the version used for packages (default:
+#   -v, --version VERSION   Override the version used for artifacts (default:
 #                           the selected language's project file — for python
 #                           python/pyproject.toml). Also settable via the
 #                           HSYNC_VERSION environment variable. A prerelease
 #                           (e.g. 1.2.0-alpha.1) is translated to the Debian
-#                           form (1.2.0~alpha.1).
+#                           form (1.2.0~alpha.1) for the .deb target.
 #   -h, --help              Show this help message
 #
 # Requirements:
-#   - deb target: the selected language's toolchain (for python: the
-#     committed python/.venv with PyInstaller) + dpkg-deb (dpkg-dev);
+#   - native target: the selected language's toolchain (for python: the
+#     committed python/.venv with PyInstaller)
+#   - deb target: the selected language's toolchain + dpkg-deb (dpkg-dev);
 #     fakeroot optional
-#   - deb-all: Docker with qemu-user-static (binfmt) configured
+#   - rpi / deb-all: Docker with qemu-user-static (binfmt) configured
 #
 # Output:
+#   native:   dist/<os>-<arch>/hsync-bootnode[.exe]
+#   rpi:      dist/rpi/armhf/hsync-bootnode   (Raspberry Pi OS 32-bit)
+#             dist/rpi/arm64/hsync-bootnode   (Raspberry Pi OS 64-bit)
 #   deb:      dist/deb/hsync-bootnode_<ver>_<arch>.deb
 #             Installable with dpkg -i / apt install
 #   deb-all:  dist/deb/hsync-bootnode_<ver>_{amd64,arm64,armhf}.deb
@@ -86,12 +97,23 @@ readonly DEB_BUILD_DIR="${BUILD_DIR}/deb"
 readonly DEB_ALL_BUILD_DIR="${BUILD_DIR}/deb-all"
 readonly DEB_ALL_BUILDER_IMAGE_PREFIX="hsync-bootnode-deb-builder"
 
+# Standalone executable artifacts (native / rpi targets).
+readonly OUTPUT_DIR="${OUTPUT_BASE}/${PLATFORM}"
+readonly BIN_EXT="$([[ "${OS_NAME}" == "windows" ]] && echo ".exe" || echo "")"
+readonly RPI_OUTPUT_DIR="${OUTPUT_BASE}/rpi"
+# The Debian builder image (Python 3.12 + Poetry + the armhf source-build
+# toolchain) is reused for the Raspberry Pi cross-build, so no separate
+# Dockerfile is needed.
+readonly RPI_DOCKERFILE="${DEB_DIR}/Dockerfile.builder"
+readonly RPI_BUILDER_IMAGE_PREFIX="hsync-bootnode-rpi-builder"
+
 # -----------------------------------------------------------------------------
 # Package language — which implementation the .deb's executable is built from
 # -----------------------------------------------------------------------------
 # The dispatcher below delegates the binary build to the per-language script;
-# add a new language by extending validate_language() and the two case blocks
-# in _build_binary() / _container_build_cmd(). Precedence: --language flag >
+# add a new language by extending validate_language() and the case blocks in
+# the _build_native() / _build_onedir() / _container_native_cmd() /
+# _container_build_cmd() dispatchers. Precedence: --language flag >
 # DEB_LANGUAGE env > "python".
 readonly DEB_LANGUAGE_DEFAULT="python"
 DEB_LANGUAGE="${DEB_LANGUAGE:-${DEB_LANGUAGE_DEFAULT}}"
@@ -141,7 +163,10 @@ ensure_qemu_binfmt() {
         return 0
     fi
     log_info "Registering qemu-user-static binfmt handlers..."
-    if ! docker run --rm --privileged multiarch/qemu-user-static --reset -p yes >/dev/null 2>&1; then
+    # Image pinned by digest: this runs --privileged, so it must not move.
+    if ! docker run --rm --privileged \
+        multiarch/qemu-user-static@sha256:fe60359c92e86a43cc87b3d906006245f77bfc0565676b80004cc666e4feb9f0 \
+        --reset -p yes >/dev/null 2>&1; then
         log_error "Failed to run multiarch/qemu-user-static (is the Docker daemon reachable?)."
         exit 1
     fi
@@ -161,53 +186,52 @@ ensure_qemu_binfmt() {
 # Display usage information
 show_help() {
     cat << EOF
-${BOLD}HSYNC Bootnode - Debian/Ubuntu .deb Build Script${RESET}
+${BOLD}HSYNC Bootnode - Build Script${RESET}
 
 ${BOLD}Usage:${RESET}
-    ./compile_deb.sh [options]
+    ./compile.sh [options]
 
 ${BOLD}Options:${RESET}
-    -c, --clean              Clean .deb build artifacts before building
-    -t, --target TARGET      Build target (default: deb)
-                             Supported: deb, deb-all
+    -c, --clean              Clean build artifacts before building
+    -t, --target TARGET      Build target (default: native)
+                             Supported: native, rpi, deb, deb-all
     -l, --language LANGUAGE  Implementation language of the executable
                              (default: python). Supported: python, rust
-    -v, --version VERSION    Override the package version (default: the
+    -v, --version VERSION    Override the artifact version (default: the
                              selected language's project file; python reads
                              python/pyproject.toml). Also settable via
                              HSYNC_VERSION.
     -h, --help               Show this help message
 
 ${BOLD}Examples:${RESET}
-    ./compile_deb.sh                                  # .deb for the host arch
-    ./compile_deb.sh --clean                          # clean and rebuild
-    ./compile_deb.sh -t deb-all                       # amd64, arm64, armhf
-    ./compile_deb.sh -l python -t deb                 # explicit language
-    DEB_LANGUAGE=rust ./compile_deb.sh -t deb         # rejected until the
+    ./compile.sh                                      # host standalone binary
+    ./compile.sh -t rpi                               # Raspberry Pi armhf+arm64
+    ./compile.sh -t deb                               # .deb for the host arch
+    ./compile.sh -t deb-all                           # amd64, arm64, armhf
+    ./compile.sh -l python -t deb                     # explicit language
+    DEB_LANGUAGE=rust ./compile.sh -t deb             # rejected until the
                                                       # Rust port exists
 
 ${BOLD}Output:${RESET}
+    native:   ${OUTPUT_DIR}/${APP_NAME}
+    rpi:      ${RPI_OUTPUT_DIR}/armhf/${APP_NAME}
+              ${RPI_OUTPUT_DIR}/arm64/${APP_NAME}
     deb:      ${DEB_OUTPUT_DIR}/${DEB_PKG_NAME}_<ver>_<arch>.deb
     deb-all:  ${DEB_OUTPUT_DIR}/${DEB_PKG_NAME}_<ver>_{amd64,arm64,armhf}.deb
 EOF
 }
 
-# Clean .deb build artifacts (staging trees and built packages)
+# Clean build artifacts (staging trees, standalone executables and packages)
 clean_artifacts() {
-    log_step "Cleaning .deb build artifacts..."
-    local cleaned=0
-    if [[ -d "${DEB_OUTPUT_DIR}" ]]; then
-        rm -rf "${DEB_OUTPUT_DIR}"
-        ((cleaned++))
-    fi
-    if [[ -d "${DEB_BUILD_DIR}" ]]; then
-        rm -rf "${DEB_BUILD_DIR}"
-        ((cleaned++))
-    fi
-    if [[ -d "${DEB_ALL_BUILD_DIR}" ]]; then
-        rm -rf "${DEB_ALL_BUILD_DIR}"
-        ((cleaned++))
-    fi
+    log_step "Cleaning build artifacts..."
+    local cleaned=0 dir
+    for dir in "${DEB_OUTPUT_DIR}" "${OUTPUT_DIR}" "${RPI_OUTPUT_DIR}" \
+        "${DEB_BUILD_DIR}" "${DEB_ALL_BUILD_DIR}"; do
+        if [[ -d "${dir}" ]]; then
+            rm -rf "${dir}"
+            ((cleaned++)) || true
+        fi
+    done
     if [[ ${cleaned} -gt 0 ]]; then
         log_ok "Cleaned ${cleaned} artifact dir(s)"
     else
@@ -247,8 +271,8 @@ _arch_to_deb() {
 }
 
 # Fail fast if the selected implementation language has no packaging path yet.
-# When the Rust port lands, extend this function and the two dispatchers
-# (_build_binary / _container_build_cmd).
+# When the Rust port lands, extend this function and the dispatchers
+# (_build_native / _build_onedir / _container_native_cmd / _container_build_cmd).
 validate_language() {
     case "${DEB_LANGUAGE}" in
         python) ;;  # implemented today
@@ -265,11 +289,30 @@ validate_language() {
     esac
 }
 
-# Build the onedir executable payload with the selected language's toolchain.
+# Build the standalone executable with the selected language's toolchain.
 # Each implementation directory owns its binary build; this dispatcher only
-# fixes the CONTRACT: the bundle must land at <distpath>/<APP_NAME>/.
+# fixes the CONTRACT: the executable must land at <outdir>/<APP_NAME>[.exe].
+# $1 = outdir (absolute) receiving the executable.
+_build_native() {
+    local outdir="$1"
+    case "${DEB_LANGUAGE}" in
+        python)
+            ( cd "${SCRIPT_DIR}/${PYTHON_DIR}" && ./compile.sh -t native -o "${outdir}" )
+            ;;
+        *)
+            validate_language
+            ;;
+    esac
+    if [[ ! -f "${outdir}/${APP_NAME}${BIN_EXT}" ]]; then
+        log_error "native executable not found at ${outdir}/${APP_NAME}${BIN_EXT}"
+        exit 1
+    fi
+}
+
+# Build the onedir executable payload with the selected language's toolchain.
+# Contract: the bundle must land at <distpath>/<APP_NAME>/.
 # $1 = distpath (absolute) receiving the <APP_NAME>/ bundle directory.
-_build_binary() {
+_build_onedir() {
     local distpath="$1"
     case "${DEB_LANGUAGE}" in
         python)
@@ -285,6 +328,24 @@ _build_binary() {
     fi
 }
 
+# In-container command producing the standalone executable at $1 (a path
+# relative to the container workdir /repo/hsync-bootnode/python).
+# HSYNC_PREFER_PATH_PYINSTALLER=1 stops the mounted host .venv from shadowing
+# the container's own (target-arch) PyInstaller; HSYNC_PYINSTALLER_WORKPATH
+# keeps PyInstaller's build/ + .spec intermediates out of the mounted source
+# tree (so nothing is written back to the host except the /out artifact).
+_container_native_cmd() {
+    local outdir="$1"
+    case "${DEB_LANGUAGE}" in
+        python)
+            printf '%s' "poetry install --only main --with build && HSYNC_PREFER_PATH_PYINSTALLER=1 HSYNC_PYINSTALLER_WORKPATH=/tmp/work poetry run ./compile.sh -t native -o ${outdir}"
+            ;;
+        *)
+            validate_language
+            ;;
+    esac
+}
+
 # In-container command producing the onedir bundle for $1 (deb_arch). The
 # bundle MUST land at build/deb-all/<arch>/pyinstaller/<APP_NAME> (paths are
 # relative to the container workdir /repo/hsync-bootnode/python).
@@ -292,7 +353,7 @@ _container_build_cmd() {
     local deb_arch="$1"
     case "${DEB_LANGUAGE}" in
         python)
-            printf '%s' "poetry install --only main --with build && poetry run ./compile.sh -t onedir -o build/deb-all/${deb_arch}/pyinstaller"
+            printf '%s' "poetry install --only main --with build && HSYNC_PREFER_PATH_PYINSTALLER=1 poetry run ./compile.sh -t onedir -o build/deb-all/${deb_arch}/pyinstaller"
             ;;
         *)
             validate_language
@@ -369,7 +430,7 @@ build_deb() {
     # Absolute distpath: python/compile.sh resolves -o relative to its own cwd.
     local bin_distpath="${DEB_BUILD_DIR}/pyinstaller"
     log_step "Building the ${DEB_LANGUAGE} executable payload..."
-    _build_binary "$(pwd)/${bin_distpath}"
+    _build_onedir "$(pwd)/${bin_distpath}"
     local built_dir="${bin_distpath}/${APP_NAME}"
 
     # --- stage .deb tree ---------------------------------------------------
@@ -436,10 +497,11 @@ build_deb() {
 }
 
 # Build .deb packages for all 3 Debian/Ubuntu architectures (amd64, arm64,
-# armhf) via Docker cross-builds — one build per arch:
-#   amd64 → amd64/debian:bookworm
-#   arm64 → arm64v8/debian:bookworm
-#   armhf → arm32v7/debian:bookworm
+# armhf) via Docker cross-builds — one build per arch (the builder base is the
+# multi-arch ``python:3.12-bookworm`` image, selected via --platform):
+#   amd64 → linux/amd64
+#   arm64 → linux/arm64
+#   armhf → linux/arm/v7
 # Output: dist/deb/hsync-bootnode_<ver>_<arch>.deb
 build_deb_all() {
     local version deb_version
@@ -460,13 +522,9 @@ build_deb_all() {
     ensure_qemu_binfmt qemu-aarch64 qemu-arm
 
     local -A arch_docker_platform
-    local -A arch_base_image
     arch_docker_platform["amd64"]="linux/amd64"
-    arch_base_image["amd64"]="amd64/debian:bookworm"
     arch_docker_platform["arm64"]="linux/arm64"
-    arch_base_image["arm64"]="arm64v8/debian:bookworm"
     arch_docker_platform["armhf"]="linux/arm/v7"
-    arch_base_image["armhf"]="arm32v7/debian:bookworm"
 
     local -a deb_archs=("amd64" "arm64" "armhf")
     local out_abs
@@ -523,7 +581,6 @@ EOS
 
     for deb_arch in "${deb_archs[@]}"; do
         local docker_platform="${arch_docker_platform[${deb_arch}]}"
-        local base_image="${arch_base_image[${deb_arch}]}"
         local builder_tag="${DEB_ALL_BUILDER_IMAGE_PREFIX}:${deb_arch}"
         local bin_dir="${DEB_ALL_BUILD_DIR}/${deb_arch}/pyinstaller"
         local work_dir="${DEB_ALL_BUILD_DIR}/${deb_arch}/work"
@@ -532,7 +589,7 @@ EOS
         log_step "─── ${deb_arch} build ───────────────────────────────────────"
 
         log_step "Building Docker image ${builder_tag}..."
-        docker build --platform "${docker_platform}" --build-arg BASE_IMAGE="${base_image}" --build-arg TARGET_PLATFORM="${docker_platform}" -t "${builder_tag}" -f "${DEB_DIR}/Dockerfile.builder" "${DEB_DIR}"
+        DOCKER_BUILDKIT=1 docker build --platform "${docker_platform}" --build-arg TARGET_PLATFORM="${docker_platform}" -t "${builder_tag}" -f "${DEB_DIR}/Dockerfile.builder" "${DEB_DIR}"
 
         # --- binary build in container (per-language dispatch) ----------------
         # Run as the host uid:gid so the bundle written under build/deb-all and
@@ -574,12 +631,144 @@ EOS
 }
 
 # -----------------------------------------------------------------------------
+# Standalone executables
+# -----------------------------------------------------------------------------
+
+# Build the standalone executable for the host OS/arch.
+# Output: dist/<os>-<arch>/hsync-bootnode[.exe]
+build_native() {
+    local version out_abs bin_path size
+    version="$(get_version)"
+
+    log_step "Building ${APP_NAME} v${version} for ${PLATFORM}..."
+    mkdir -p "${OUTPUT_DIR}"
+    out_abs="$(cd "${OUTPUT_DIR}" && pwd)"
+
+    # The resolved version is exported so the per-language script stamps the
+    # same version (it reads HSYNC_VERSION).
+    export HSYNC_VERSION="${version}"
+    _build_native "${out_abs}"
+
+    bin_path="${OUTPUT_DIR}/${APP_NAME}${BIN_EXT}"
+    size="$(du -h "${bin_path}" | cut -f1)"
+
+    echo
+    log_ok "Build successful!"
+    echo
+    echo -e "  ${BOLD}Binary:${RESET}   ${bin_path}"
+    echo -e "  ${BOLD}Platform:${RESET} ${PLATFORM}"
+    echo -e "  ${BOLD}Language:${RESET} ${DEB_LANGUAGE}"
+    echo -e "  ${BOLD}Size:${RESET}     ${size}"
+    echo -e "  ${BOLD}Version:${RESET}  ${version}"
+    echo
+    echo -e "${DIM}Run with: ./${bin_path} --version${RESET}"
+}
+
+# Build standalone executables for Raspberry Pi OS, one per supported
+# architecture: armhf (32-bit, armv7) and arm64 (64-bit, aarch64). PyInstaller
+# cannot cross-compile, so each binary is produced by running the selected
+# language's script inside an emulated python:3.12-bookworm container (Raspberry
+# Pi OS Bookworm is Debian 12 / glibc 2.36, matching the base image).
+#
+# Output: dist/rpi/<arch>/hsync-bootnode
+build_rpi() {
+    local version
+    version="$(get_version)"
+
+    log_step "Building ${APP_NAME} v${version} for Raspberry Pi OS (armhf, arm64)..."
+
+    if ! command -v docker >/dev/null 2>&1; then
+        log_error "docker is required for the rpi target."
+        exit 1
+    fi
+    if [[ ! -f "${RPI_DOCKERFILE}" ]]; then
+        log_error "Builder Dockerfile missing: ${RPI_DOCKERFILE}"
+        exit 1
+    fi
+
+    # Monorepo root: mounts hsync-bootnode AND hsync-common (the Poetry path
+    # dependency) into the container at /repo.
+    local repo_root
+    repo_root="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+    ensure_qemu_binfmt qemu-arm qemu-aarch64
+
+    local -A arch_docker_platform
+    arch_docker_platform["armhf"]="linux/arm/v7"
+    arch_docker_platform["arm64"]="linux/arm64"
+
+    local -a rpi_archs=("armhf" "arm64")
+    local arch
+    for arch in "${rpi_archs[@]}"; do
+        local docker_platform="${arch_docker_platform[${arch}]}"
+        local builder_tag="${RPI_BUILDER_IMAGE_PREFIX}:${arch}"
+        local out_dir="${RPI_OUTPUT_DIR}/${arch}"
+        local out_abs
+        mkdir -p "${out_dir}"
+        out_abs="$(cd "${out_dir}" && pwd)"
+
+        echo
+        log_step "─── ${arch} build ───────────────────────────────────────"
+
+        log_step "Building Docker image ${builder_tag}..."
+        DOCKER_BUILDKIT=1 docker build \
+            --platform "${docker_platform}" \
+            --build-arg TARGET_PLATFORM="${docker_platform}" \
+            -t "${builder_tag}" \
+            -f "${RPI_DOCKERFILE}" \
+            "${DEB_DIR}"
+
+        # The per-language script installs its dependencies into a
+        # container-local venv (HOME=/tmp) so the mounted source tree stays
+        # pristine; only the produced executable is written back under /out.
+        local build_cmd
+        build_cmd="$(_container_native_cmd "/out")"
+        log_step "Compiling ${arch} binary inside container (${DEB_LANGUAGE})..."
+        docker run --rm \
+            --platform "${docker_platform}" \
+            -u "$(id -u):$(id -g)" \
+            -e HOME=/tmp -e XDG_CACHE_HOME=/tmp \
+            -v "${repo_root}:/repo" \
+            -v "${out_abs}:/out" \
+            -w /repo/hsync-bootnode/python \
+            -e LC_ALL=C -e PYTHONWARNINGS=ignore \
+            -e PIP_DEFAULT_TIMEOUT=300 -e PIP_RETRIES=10 \
+            -e POETRY_REQUESTS_TIMEOUT=300 \
+            -e HSYNC_VERSION="${version}" \
+            "${builder_tag}" \
+            bash -c "${build_cmd}"
+
+        local bin_path="${out_dir}/${APP_NAME}"
+        if [[ ! -f "${bin_path}" ]]; then
+            log_error "${arch} executable not produced at ${bin_path}"
+            exit 1
+        fi
+        log_ok "  → ${RPI_OUTPUT_DIR}/${arch}/${APP_NAME} ($(du -h "${bin_path}" | cut -f1))"
+    done
+
+    echo
+    log_ok "Raspberry Pi executables built!"
+    echo
+    echo -e "  ${BOLD}Language:${RESET} ${DEB_LANGUAGE}"
+    echo -e "  ${BOLD}Version:${RESET}  ${version}"
+    echo -e "  ${BOLD}Output:${RESET}   ${RPI_OUTPUT_DIR}/<arch>/${APP_NAME}"
+    echo
+    local sep="────────────────────────────────────────────────────────────"
+    echo -e "${GREEN}${BOLD}${sep}${RESET}"
+    echo -e "${GREEN}${BOLD}  Raspberry Pi executables:${RESET}"
+    for arch in "${rpi_archs[@]}"; do
+        echo -e "${GREEN}${BOLD}      $(pwd)/${RPI_OUTPUT_DIR}/${arch}/${APP_NAME}${RESET}"
+    done
+    echo -e "${GREEN}${BOLD}${sep}${RESET}"
+}
+
+# -----------------------------------------------------------------------------
 # main
 # -----------------------------------------------------------------------------
 
 main() {
     local do_clean=false
-    local target="deb"
+    local target="native"
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -616,14 +805,36 @@ main() {
 
     cd "${SCRIPT_DIR}"
 
-    echo -e "${BOLD}HSYNC Bootnode - .deb Build${RESET}"
-    echo -e "${DIM}────────────────────────${RESET}"
+    echo -e "${BOLD}HSYNC Bootnode - Build${RESET}"
+    echo -e "${DIM}─────────────────────${RESET}"
     echo
 
     # The language must have a packaging path before any target runs.
     validate_language
 
     case "${target}" in
+        native)
+            if [[ ! -f "${PYPROJECT}" ]]; then
+                log_error "${PYPROJECT} not found. Run from the python/ project."
+                exit 1
+            fi
+            if [[ "${do_clean}" == true ]]; then
+                clean_artifacts
+                echo
+            fi
+            build_native
+            ;;
+        rpi)
+            if [[ "${do_clean}" == true ]]; then
+                log_step "Cleaning rpi artifacts..."
+                rm -rf "${RPI_OUTPUT_DIR}"
+                docker image rm -f \
+                    "${RPI_BUILDER_IMAGE_PREFIX}:armhf" \
+                    "${RPI_BUILDER_IMAGE_PREFIX}:arm64" >/dev/null 2>&1 || true
+                echo
+            fi
+            build_rpi
+            ;;
         deb)
             if [[ "${do_clean}" == true ]]; then
                 clean_artifacts
@@ -645,7 +856,7 @@ main() {
             ;;
         *)
             log_error "Unknown target: ${target}"
-            echo "Supported targets: deb, deb-all"
+            echo "Supported targets: native, rpi, deb, deb-all"
             exit 1
             ;;
     esac

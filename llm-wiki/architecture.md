@@ -103,22 +103,31 @@ UDP :443
 | Linux | `packaging/systemd/hsync-bootnode.service` | v1 |
 | macOS | `packaging/launchd/it.hsync.bootnode.plist` | v1 |
 | Windows | `packaging/windows/hsync-bootnode-service.xml` (WinSW) | v1 |
-| Linux `.deb` (amd64/arm64/armhf) | `../compile_deb.sh` (`-l/--language`, default `python`; `rust` rejected until that port exists) + `packaging/deb/` (control, maintainer scripts, deb unit, man page) | v1 |
+| Linux `.deb` (amd64/arm64/armhf) | `../compile.sh -t deb`/`deb-all` (`-l/--language`, default `python`; `rust` rejected until that port exists) + `packaging/deb/` (control, maintainer scripts, deb unit, man page) | v1 |
+| Raspberry Pi OS (armhf/arm64) | `../compile.sh -t rpi` (Docker + qemu, reuses `packaging/deb/Dockerfile.builder`) → `dist/rpi/<arch>/hsync-bootnode` | v1 |
 
 ## Packaging
 
-- `python/compile.sh` builds binaries only (`native` host standalone,
-  `onedir` bundle consumed by the root assembler). `python/dist/` and
-  `python/build/` are git-ignored build outputs.
-- `../compile_deb.sh -t deb` embeds the selected language's payload
+- `python/compile.sh` builds binaries only (`native` host standalone into
+  `-o/--output-dir`, `onedir` bundle consumed by the root entry point).
+  `python/dist/` and `python/build/` are git-ignored build outputs.
+- `../compile.sh -t native` wraps `python/compile.sh -t native` and places the
+  host executable at `dist/<os>-<arch>/hsync-bootnode`.
+- `../compile.sh -t rpi` cross-builds the onefile executable for Raspberry Pi
+  OS 32-bit (armhf/armv7) and 64-bit (arm64/aarch64) inside an emulated
+  debian:bookworm container, reusing `packaging/deb/Dockerfile.builder`; output
+  `dist/rpi/<arch>/hsync-bootnode`. PyInstaller's `build/` and `*.spec`
+  intermediates are redirected to `/tmp/work` (via `HSYNC_PYINSTALLER_WORKPATH`)
+  so nothing is written into the mounted host tree.
+- `../compile.sh -t deb` embeds the selected language's payload
   (today `python/compile.sh -t onedir`) as `/usr/lib/hsync-bootnode/` with a
   `/usr/bin/hsync-bootnode` symlink, the hardened deb systemd unit, and the
   gzipped man page; `DEBIAN/postinst` creates `/etc/hsync-bootnode/` (0750)
   for the out-of-package group-keys file and never enables the service.
-- `rust/` port plugs in by extending `validate_language()`,
-  `_build_binary()` and `_container_build_cmd()` in `../compile_deb.sh`
-  (dispatch points, fail-fast contract) — never by adding `deb` logic inside
-  the per-language script.
+- `rust/` port plugs in by extending `validate_language()`, `_build_native()`,
+  `_build_onedir()`, `_container_native_cmd()` and `_container_build_cmd()` in
+  `../compile.sh` (dispatch points, fail-fast contract) — never by adding
+  packaging logic inside the per-language script.
 
 ## Tests
 

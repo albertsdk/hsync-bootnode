@@ -39,6 +39,13 @@ every trace of your network is gone.
 ./compile.sh -t rpi    # Raspberry Pi armhf + arm64 (Docker + qemu-user-static)
 ```
 
+Both commands above are build-time targets of **this** machine, except `rpi`:
+`native` embeds the host Python and its C library, so a binary copied to a
+machine with an older glibc refuses to start. To run the node on another
+machine, build the Debian package with `./compile.sh -t deb-all` and install
+that — see
+[Why does the binary abort with "GLIBC … not found" on another machine?](faq.md).
+
 ## Install (Debian/Ubuntu — `.deb`)
 
 ```bash

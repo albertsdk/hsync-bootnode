@@ -124,6 +124,15 @@ UDP :443
   `/usr/bin/hsync-bootnode` symlink, the hardened deb systemd unit, and the
   gzipped man page; `DEBIAN/postinst` creates `/etc/hsync-bootnode/` (0750)
   for the out-of-package group-keys file and never enables the service.
+- **Binary portability floor**: `native` and `deb` build on the host, so their
+  executable embeds the build machine's CPython + glibc (incompatible with any
+  machine carrying an older glibc); `deb-all` and `rpi` build inside
+  `python:3.12-bookworm` and are the portable artifacts — measured on a produced
+  amd64 bundle: CPython 3.12, floor `libc6 (>= 2.35)` (`libpython3.12.so.1.0`,
+  `libgcc_s.so.1`), while the base image itself is glibc 2.36. `BASE_IMAGE` is a
+  Dockerfile `ARG` only — no CLI flag selects an older base. The `.deb`'s
+  `Depends: libc6` covers the launcher only, never the bundled Python.
+  Operator-facing procedure: `docs/faq.md`.
 - `rust/` port plugs in by extending `validate_language()`, `_build_native()`,
   `_build_onedir()`, `_container_native_cmd()` and `_container_build_cmd()` in
   `../compile.sh` (dispatch points, fail-fast contract) — never by adding

@@ -114,3 +114,58 @@ On the client host, in `bootnode_known_hosts.json` under `$XDG_STATE_HOME/hsync/
 (or `~/.local/state/hsync/`), overridable with `HSYNC_BOOTNODE_TRUST_FILE`; the
 client prints this path whenever it pins a fingerprint. It maps `<host>:<port>`
 to the current fingerprint and its `updated_at` timestamp.
+
+## Why does the binary abort with "GLIBC … not found" on another machine?
+
+**Symptom.** The standalone executable built with `./compile.sh` (the default
+`native` target) and copied to another machine dies before printing anything:
+
+```text
+[PYI-1111637:ERROR] Failed to load Python shared library
+'/tmp/_MEI0010f654EX8vvI/libpython3.14.so.1.0':
+/lib/x86_64-linux-gnu/libm.so.6: version `GLIBC_2.38' not found
+(required by /tmp/_MEI0010f654EX8vvI/libpython3.14.so.1.0)
+```
+
+**Why.** PyInstaller does not cross-compile: `native` freezes the **build
+machine's own** CPython (3.14 in that example) together with its C library, and
+glibc is compatible backwards only. A binary produced on glibc 2.43 therefore
+demands `GLIBC_2.38` and cannot start on a machine running 2.35 (Ubuntu 22.04)
+or 2.36 (Debian 12). `-t deb` is **not** a fix: it builds that same host payload
+and merely moves the failure from exec time to `dpkg -i`.
+
+**Fix.** Use the cross-build target, which compiles inside a Debian 12
+(bookworm) container with its own CPython 3.12 and has a glibc floor of **2.35**,
+then install that package on the machine:
+
+```bash
+uname -m   # x86_64 → amd64; aarch64 → arm64; armv7l → armhf
+./compile.sh -t deb-all
+# → dist/deb/hsync-bootnode_<ver>_<arch>.deb (needs Docker + qemu)
+scp dist/deb/hsync-bootnode_*_amd64.deb TARGET_HOST:/tmp/
+ssh TARGET_HOST 'sudo dpkg -i /tmp/hsync-bootnode_*_amd64.deb'
+```
+
+`TARGET_HOST` is the SSH host of the destination machine. Pick the architecture
+from the failing path in the error (`/lib/x86_64-linux-gnu/` → `amd64`).
+
+To run it without installing anything, unpack the same package instead:
+
+```bash
+dpkg-deb -x dist/deb/hsync-bootnode_*_amd64.deb /tmp/hsync-bootnode-bin
+/tmp/hsync-bootnode-bin/usr/lib/hsync-bootnode/hsync-bootnode --version
+```
+
+**Fix without Docker.** Build **on the destination machine**: `./compile.sh`
+run there freezes that machine's own interpreter and matches it by construction.
+It needs Python 3.12+ and the build dependencies (`CONTRIBUTING.md`).
+
+**Which targets work.** The container build reaches glibc 2.35, so Debian 12 and
+Ubuntu 22.04 or newer run it; Debian 11 and Ubuntu 20.04 (glibc 2.31) do not —
+build on the machine itself there. Check the glibc of the destination with
+`ldd --version | head -1`.
+
+**Do not trust `Depends:`.** The `libc6` dependency of the package is computed
+from the launcher only: the bundled Python and `libgcc_s` that actually need
+2.35 are invisible to `dpkg-shlibdeps`, so a successful `dpkg -i` does not prove
+the node will start.

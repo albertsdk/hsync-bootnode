@@ -37,7 +37,7 @@ def _poetry_install_lines() -> list[str]:
 
 def _build_group_requested(line: str) -> bool:
     """True when ``line`` installs the ``build`` group under Poetry 2.x rules."""
-    only = re.search(r"--only\s+(\S+)", line)
+    only = re.search(r"--only\s+([^\s;]+)", line)
     if only:
         # Inside --only the group list is exhaustive: --with cannot re-add it.
         return "build" in only.group(1).split(",")
@@ -48,6 +48,9 @@ def test_guard_rejects_the_pruned_build_group() -> None:
     """The guard must fail on the pre-fix form and pass on the fixed one."""
     assert not _build_group_requested(_BROKEN)
     assert _build_group_requested(_FIXED)
+    # The `;`-terminated form used inside the container retry loop.
+    assert not _build_group_requested("if poetry install --only main --with build; then :; fi")
+    assert _build_group_requested("if poetry install --only main,build; then :; fi")
 
 
 def test_every_container_build_installs_the_build_group() -> None:

@@ -273,13 +273,17 @@ build_binary() {
 }
 
 # Build the onedir bundle consumed by ../compile.sh for the .deb payload.
+# HSYNC_PYINSTALLER_WORKPATH, when set, relocates --workpath/--specpath exactly
+# like the native build; the container builds set it so the host-mounted source
+# tree stays pristine (intermediates go to /tmp/work).
 build_onedir() {
-    local version distpath bundle
+    local version distpath workpath bundle
     version="$(get_version)"
     distpath="${OUTPUT_DIR_OVERRIDE:-${ONEDIR_DEFAULT_DIR}}"
-    mkdir -p "${distpath}"
+    workpath="${HSYNC_PYINSTALLER_WORKPATH:-${BUILD_DIR}/onedir-work}"
+    mkdir -p "${distpath}" "${workpath}"
     log_step "Building ${APP_NAME} v${version} onedir bundle into ${distpath}..."
-    LC_ALL=C PYTHONWARNINGS=ignore "${PYINSTALLER}" --onedir --distpath "${distpath}" --workpath "${BUILD_DIR}/onedir-work" --specpath "${BUILD_DIR}/onedir-work" $(_pyi_flags) "${ENTRY_POINT}"
+    LC_ALL=C PYTHONWARNINGS=ignore "${PYINSTALLER}" --onedir --distpath "${distpath}" --workpath "${workpath}" --specpath "${workpath}" $(_pyi_flags) "${ENTRY_POINT}"
     bundle="${distpath}/${APP_NAME}"
     if [[ ! -d "${bundle}" ]]; then
         log_error "Build failed: onedir bundle not found at ${bundle}"

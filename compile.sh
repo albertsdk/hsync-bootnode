@@ -353,7 +353,7 @@ _container_build_cmd() {
     local deb_arch="$1"
     case "${DEB_LANGUAGE}" in
         python)
-            printf '%s' "poetry install --only main,build && HSYNC_PREFER_PATH_PYINSTALLER=1 poetry run ./compile.sh -t onedir -o build/deb-all/${deb_arch}/pyinstaller"
+            printf '%s' "poetry install --only main,build && HSYNC_PREFER_PATH_PYINSTALLER=1 HSYNC_PYINSTALLER_WORKPATH=/tmp/work poetry run ./compile.sh -t onedir -o /build/deb-all/${deb_arch}/pyinstaller"
             ;;
         *)
             validate_language
@@ -529,16 +529,25 @@ build_deb_all() {
     local -a deb_archs=("amd64" "arm64" "armhf")
     local out_abs
     out_abs="$(cd "${DEB_OUTPUT_DIR}" && pwd)"
+    # The container workdir is python/, so a relative distpath would land under
+    # python/ instead of the repo-root build/: the build tree and the package
+    # output are therefore mounted explicitly (/build and /out) and addressed
+    # with absolute paths inside the container.
+    local build_abs
+    mkdir -p "${BUILD_DIR}"
+    build_abs="$(cd "${BUILD_DIR}" && pwd)"
 
-    # Container-side staging script: everything is relative to the mounted
-    # /repo/hsync-bootnode/python workdir, so it is arch-independent.
+    # Container-side staging script: the staging tree and the built payload are
+    # addressed under the /build mount (the repo-root build/ dir, mounted
+    # because the container workdir is python/), and the finished package is
+    # written to the /out mount (the host dist/deb). Both are arch-independent.
     local stage_script
     stage_script=$(cat <<'EOS'
 set -eux
 deb_arch="$1"; deb_version="$2"; host_uid="$3"; host_gid="$4"
 APP_NAME=hsync-bootnode
-stage="build/deb-all/${deb_arch}/stage"
-built="build/deb-all/${deb_arch}/pyinstaller/${APP_NAME}"
+stage="/build/deb-all/${deb_arch}/stage"
+built="/build/deb-all/${deb_arch}/pyinstaller/${APP_NAME}"
 rm -rf "${stage}"
 mkdir -p "${stage}"
 cp -a ../packaging/deb/DEBIAN "${stage}/"
@@ -573,9 +582,9 @@ if command -v dpkg-shlibdeps >/dev/null 2>&1; then
         echo 'WARNING: dpkg-shlibdeps resolved no dependencies' >&2
     fi
 fi
-fakeroot dpkg-deb --build "${stage}" dist/deb
-chmod 0644 "dist/deb/${APP_NAME}_${deb_version}_${deb_arch}.deb"
-chown -R "${host_uid}:${host_gid}" build "dist/deb/${APP_NAME}_${deb_version}_${deb_arch}.deb"
+fakeroot dpkg-deb --build "${stage}" /out
+chmod 0644 "/out/${APP_NAME}_${deb_version}_${deb_arch}.deb"
+chown -R "${host_uid}:${host_gid}" /build "/out/${APP_NAME}_${deb_version}_${deb_arch}.deb"
 EOS
 )
 
@@ -583,8 +592,7 @@ EOS
         local docker_platform="${arch_docker_platform[${deb_arch}]}"
         local builder_tag="${DEB_ALL_BUILDER_IMAGE_PREFIX}:${deb_arch}"
         local bin_dir="${DEB_ALL_BUILD_DIR}/${deb_arch}/pyinstaller"
-        local work_dir="${DEB_ALL_BUILD_DIR}/${deb_arch}/work"
-        mkdir -p "${bin_dir}" "${work_dir}"
+        mkdir -p "${bin_dir}"
         echo
         log_step "─── ${deb_arch} build ───────────────────────────────────────"
 
@@ -592,22 +600,22 @@ EOS
         DOCKER_BUILDKIT=1 docker build --platform "${docker_platform}" --build-arg TARGET_PLATFORM="${docker_platform}" -t "${builder_tag}" -f "${DEB_DIR}/Dockerfile.builder" "${DEB_DIR}"
 
         # --- binary build in container (per-language dispatch) ----------------
-        # Run as the host uid:gid so the bundle written under build/deb-all and
-        # the poetry caches stay caller-owned; HOME/XDG_CACHE_HOME point at /tmp
-        # because an arbitrary uid has no writable home.
+        # Run as the host uid:gid so the bundle written under the mounted /build
+        # and the poetry caches stay caller-owned; HOME/XDG_CACHE_HOME point at
+        # /tmp because an arbitrary uid has no writable home.
         log_step "Compiling ${deb_arch} binary inside container (${DEB_LANGUAGE})..."
         local build_cmd
         build_cmd="$(_container_build_cmd "${deb_arch}")"
-        docker run --rm --platform "${docker_platform}" -u "$(id -u):$(id -g)" -e HOME=/tmp -e XDG_CACHE_HOME=/tmp -v "${repo_root}:/repo" -w /repo/hsync-bootnode/python -e LC_ALL=C -e PYTHONWARNINGS=ignore -e PIP_DEFAULT_TIMEOUT=300 -e PIP_RETRIES=10 -e POETRY_REQUESTS_TIMEOUT=300 "${builder_tag}" bash -c "${build_cmd}"
+        docker run --rm --platform "${docker_platform}" -u "$(id -u):$(id -g)" -e HOME=/tmp -e XDG_CACHE_HOME=/tmp -v "${repo_root}:/repo" -v "${build_abs}:/build" -w /repo/hsync-bootnode/python -e LC_ALL=C -e PYTHONWARNINGS=ignore -e PIP_DEFAULT_TIMEOUT=300 -e PIP_RETRIES=10 -e POETRY_REQUESTS_TIMEOUT=300 "${builder_tag}" bash -c "${build_cmd}"
 
-        if [[ ! -d "${DEB_ALL_BUILD_DIR}/${deb_arch}/pyinstaller/${APP_NAME}" ]]; then
+        if [[ ! -d "${bin_dir}/${APP_NAME}" ]]; then
             log_error "onedir bundle not produced for ${deb_arch}"
             exit 1
         fi
 
         # --- stage + dpkg-deb in container (target-arch dpkg environment) ------
         log_step "Staging .deb tree and building package for ${deb_arch}..."
-        docker run --rm --platform "${docker_platform}" -v "${repo_root}:/repo" -w /repo/hsync-bootnode/python "${builder_tag}" bash -c "${stage_script}" stage "${deb_arch}" "${deb_version}" "$(id -u)" "$(id -g)"
+        docker run --rm --platform "${docker_platform}" -v "${repo_root}:/repo" -v "${build_abs}:/build" -v "${out_abs}:/out" -w /repo/hsync-bootnode/python "${builder_tag}" bash -c "${stage_script}" stage "${deb_arch}" "${deb_version}" "$(id -u)" "$(id -g)"
 
         local deb_name="${DEB_PKG_NAME}_${deb_version}_${deb_arch}.deb"
         local deb_path="${out_abs}/${deb_name}"

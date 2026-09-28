@@ -131,16 +131,14 @@ persists the identity with `--identity` (so it survives restarts) and pins it:
 
 ```bash
 # First contact: trust the fingerprint on first use.
-HSYNC_BOOTNODE=boot.example.net \
-  HSYNC_BOOTNODE_TOFU=1 \
-  hsync p2p -b mybucket -p /srv/hsync
+hsync p2p -b mybucket -p /srv/hsync boot.example.net \
+  --bootnode-tofu
 ```
 
 ```bash
 # Stable setup: pin the fingerprint from `identity show`.
-HSYNC_BOOTNODE=boot.example.net \
-  HSYNC_BOOTNODE_FINGERPRINT=YOUR_BOOTNODE_FINGERPRINT \
-  hsync p2p -b mybucket -p /srv/hsync
+hsync p2p -b mybucket -p /srv/hsync boot.example.net \
+  --bootnode-fingerprint YOUR_BOOTNODE_FINGERPRINT
 ```
 
 Either way the client refuses an unpinned self-signed node, so one of the two

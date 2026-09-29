@@ -38,7 +38,7 @@ mutates it, and the sample is never ordered by it.
 **election advertisement** (decision #31): the same values the client's mDNS TXT
 record carries (SSOT: `hsync-common` `protocol.p2p`/`protocol.pairing`), copied from
 `register` onto the record and echoed on every `query` peer so a bootnode-discovered
-peer ranks in the client's master election exactly like a LAN-discovered one.
+peer ranks in the client's master election exactly like an mDNS-discovered one.
 Defaults when a peer advertises none: `false`, `false`, `false`, `0.0` (unknown;
 bounded by `STARTUP_TIME_MAX`, `protocol.py:71`) and `bidirectional`
 (`SyncDirection`, `protocol.py:69`). The node never interprets them, never orders the

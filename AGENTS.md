@@ -377,7 +377,7 @@ Fix issues found during verification and repeat the relevant checks, for at most
 
 Completion requires satisfied acceptance criteria, complete diff review, passing relevant checks, adequate tests, synchronized spec/fixtures/implementations/packaging/documentation, and no known correctness or security defect. The final response must state what changed, the commands executed and their outcomes, the checks not executed and why, and the remaining risks or limitations.
 
-For authentication, secrets (group keys), LAN/WAN trust, protocol contracts,
+For authentication, secrets (group keys), network trust, protocol contracts,
 destructive or privacy-relevant paths (the no-log invariant), persistence and
 concurrency changes, request an independent review when available; this does not
 replace self-verification or tests.

@@ -179,7 +179,7 @@ The monorepo `p2p`/bootnode migration is **complete**:
   `reachable` flag relayed `register` → record → `query` (decisions 23–24); the
   **election advertisement** (`server_ready`/`force_master`/`never_master`/
   `startup_time`/`sync_direction`) relayed the same way so a bootnode-discovered
-  peer ranks in the client's master election exactly like a LAN-discovered one
+  peer ranks in the client's master election exactly like an mDNS-discovered one
   (decision 31); the
   bootnode's opt-in **debug operation log** (decision 25); client `hsync p2p`
   with both discovery plans and its black-box suite; desktop mode, wd-os5

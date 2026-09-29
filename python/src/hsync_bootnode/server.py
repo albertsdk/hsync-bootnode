@@ -22,7 +22,7 @@ import re
 from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from aioquic.asyncio import serve
 from aioquic.asyncio.protocol import QuicConnectionProtocol
@@ -34,7 +34,7 @@ from cryptography.x509.oid import NameOID
 from hsync_common import ssl_utils
 
 from hsync_bootnode.diagnostics import debug_event, error_event
-from hsync_bootnode.handler import BootHandler, CertificateFingerprint
+from hsync_bootnode.handler import BootHandler
 
 __all__ = [
     "BOOT_ALPN",
@@ -82,24 +82,20 @@ class NodeIdentity:
         self.private_key = private_key
 
     @property
-    def fingerprint(self) -> CertificateFingerprint:
-        return CertificateFingerprint(ssl_utils.compute_cert_fingerprint(self.certificate))
+    def fingerprint(self) -> str:
+        return ssl_utils.compute_cert_fingerprint(self.certificate)
 
     @property
     def expires_at(self) -> datetime:
         """The certificate's ``NotAfter`` (UTC) — when the pinned identity lapses."""
         return self.certificate.not_valid_after_utc
 
-    @property
-    def is_ca(self) -> bool:
-        return False
 
+def _generate_identity(host: str, public_hosts: Sequence[str]) -> NodeIdentity:
+    """Build a fresh in-memory ECDSA P-256 identity (no disk writes).
 
-def make_identity(host: str = "0.0.0.0", *, public_hosts: Sequence[str] = ()) -> NodeIdentity:
-    """Build a fresh in-memory self-signed identity (no disk writes).
-
-    Used by ``run --ephemeral`` (read-only filesystems, throwaway nodes) and by
-    tests; the default run persists the identity via :func:`load_or_create_identity`.
+    One constructor for every path (`make_identity`, first-use creation,
+    rotation) so the subject, SANs and validity can never drift between them.
     """
     key = ssl_utils.generate_ecdsa_private_key()
     cert = ssl_utils.build_self_signed_certificate(
@@ -110,6 +106,24 @@ def make_identity(host: str = "0.0.0.0", *, public_hosts: Sequence[str] = ()) ->
         basic_constraints_ca=False,
     )
     return NodeIdentity(certificate=cert, private_key=key)
+
+
+def _identity_pem(identity: NodeIdentity) -> bytes:
+    """Serialize a combined cert + unencrypted PKCS#8 key PEM payload."""
+    return (
+        ssl_utils.serialize_cert_pem(identity.certificate)
+        + b"\n"
+        + ssl_utils.serialize_private_key_unencrypted(identity.private_key)
+    )
+
+
+def make_identity(host: str = "0.0.0.0", *, public_hosts: Sequence[str] = ()) -> NodeIdentity:
+    """Build a fresh in-memory self-signed identity (no disk writes).
+
+    Used by ``run --ephemeral`` (read-only filesystems, throwaway nodes) and by
+    tests; the default run persists the identity via :func:`load_or_create_identity`.
+    """
+    return _generate_identity(host, public_hosts)
 
 
 def load_or_create_identity(
@@ -130,23 +144,11 @@ def load_or_create_identity(
     if identity_path.exists():
         return load_identity(identity_path)
 
-    key = ssl_utils.generate_ecdsa_private_key()
-    cert = ssl_utils.build_self_signed_certificate(
-        key,
-        subject_attrs=[x509.NameAttribute(NameOID.COMMON_NAME, "hsync-bootnode")],
-        san_list=_sans_for(host, public_hosts),
-        validity_days=ssl_utils.SERVICE_CERT_VALIDITY_DAYS,
-        basic_constraints_ca=False,
-    )
+    identity = _generate_identity(host, public_hosts)
     identity_path.parent.mkdir(parents=True, exist_ok=True, mode=_IDENTITY_DIR_MODE)
     os.chmod(identity_path.parent, _IDENTITY_DIR_MODE)
-    payload = (
-        ssl_utils.serialize_cert_pem(cert)
-        + b"\n"
-        + ssl_utils.serialize_private_key_unencrypted(key)
-    )
-    _atomic_write_identity(identity_path, payload)
-    return NodeIdentity(certificate=cert, private_key=key)
+    _atomic_write_identity(identity_path, _identity_pem(identity))
+    return identity
 
 
 def rotate_identity(
@@ -165,21 +167,9 @@ def rotate_identity(
     if not identity_path.exists():
         raise IdentityError(f"identity file {identity_path} does not exist; nothing to rotate")
     load_identity(identity_path)  # fail early if the current file is unusable
-    key = ssl_utils.generate_ecdsa_private_key()
-    cert = ssl_utils.build_self_signed_certificate(
-        key,
-        subject_attrs=[x509.NameAttribute(NameOID.COMMON_NAME, "hsync-bootnode")],
-        san_list=_sans_for(host, public_hosts),
-        validity_days=ssl_utils.SERVICE_CERT_VALIDITY_DAYS,
-        basic_constraints_ca=False,
-    )
-    payload = (
-        ssl_utils.serialize_cert_pem(cert)
-        + b"\n"
-        + ssl_utils.serialize_private_key_unencrypted(key)
-    )
-    _atomic_write_identity(identity_path, payload)
-    return NodeIdentity(certificate=cert, private_key=key)
+    identity = _generate_identity(host, public_hosts)
+    _atomic_write_identity(identity_path, _identity_pem(identity))
+    return identity
 
 
 def load_identity(path: str | Path) -> NodeIdentity:
@@ -349,6 +339,21 @@ class BootQuicProtocol(QuicConnectionProtocol):
                 writer.close()
 
 
+def _protocol_factory(handler: BootHandler) -> Callable[[Any, Any], Any]:
+    """Build the aioquic ``create_protocol`` callable for one shared handler.
+
+    aioquic instantiates one protocol object per QUIC connection; the closure
+    binds the process-wide :class:`BootHandler` to each instance.
+    """
+
+    def _create(quic: Any, stream_handler: Any = None) -> BootQuicProtocol:
+        protocol = BootQuicProtocol(quic, stream_handler)
+        protocol.boot_handler = handler
+        return protocol
+
+    return _create
+
+
 async def start_server(
     host: str,
     port: int,
@@ -366,20 +371,12 @@ async def start_server(
     identity = identity or make_identity(host)
     config = build_quic_configuration(identity, idle_timeout=idle_timeout)
 
-    protocol_type = cast(
-        Callable[[Any, Any], Any],
-        type(
-            "BootQuicServerProtocol",
-            (BootQuicProtocol,),
-            {"boot_handler": handler},
-        ),
-    )
     server = await serve(
         host,
         port,
         configuration=config,
         retry=retry,
-        create_protocol=protocol_type,
+        create_protocol=_protocol_factory(handler),
     )
     transport = server._transport
     sockname = transport.get_extra_info("sockname") if transport is not None else None

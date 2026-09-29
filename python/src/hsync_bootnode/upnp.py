@@ -6,10 +6,10 @@ pure-Python IGD client keeps the v1 footprint dependency-free and byte-identical
 on Linux/macOS/Windows. The IGD protocol itself (SSDP + SOAP over HTTP)
 is platform-independent.
 
-Only the services a matchmaker needs are implemented: ``AddPortMapping`` /
-``DeletePortMapping`` (UDP, the QUIC listener port). The mapping is refreshable
-and every failure degrades to the documented "no UPnP" state (stateless) rather
-than crashing the node.
+Only the services a matchmaker needs are implemented: ``AddPortMapping``
+(UDP, the QUIC listener port). The mapping is refreshable and every failure
+degrades to the documented "no UPnP" state (stateless) rather than crashing the
+node.
 """
 
 from __future__ import annotations
@@ -33,8 +33,6 @@ __all__ = [
     "UpnpManager",
     "add_port_mapping",
     "build_add_mapping_soap",
-    "build_delete_mapping_soap",
-    "delete_port_mapping",
     "discover_igd",
     "parse_soap_error",
 ]
@@ -197,23 +195,6 @@ def build_add_mapping_soap(
     return _soap_envelope(inner)
 
 
-def build_delete_mapping_soap(
-    *,
-    service_type: str,
-    external_port: int,
-    protocol: str = "UDP",
-) -> bytes:
-    """Build the DeletePortMapping SOAP envelope (pure builder)."""
-    inner = (
-        f'    <u:DeletePortMapping xmlns:u="{service_type}">\n'
-        "      <NewRemoteHost></NewRemoteHost>\n"
-        f"      <NewExternalPort>{external_port}</NewExternalPort>\n"
-        f"      <NewProtocol>{protocol}</NewProtocol>\n"
-        "    </u:DeletePortMapping>\n"
-    )
-    return _soap_envelope(inner)
-
-
 def parse_soap_error(response_body: bytes) -> int | None:
     """Return the UPnP ``errorCode`` from a SOAP fault, or ``None`` if absent."""
     try:
@@ -234,8 +215,7 @@ def _soap_post(
     *,
     http_post: Callable[[str, str, bytes], None] | None = None,
 ) -> None:
-    action_name = action
-    soap_action = f"{service.service_type}#{action_name}"
+    soap_action = f"{service.service_type}#{action}"
     request = urllib.request.Request(
         service.control_url,
         data=soap_body,
@@ -253,12 +233,12 @@ def _soap_post(
             http_post(service.control_url, soap_action, soap_body)
     except urllib.error.HTTPError as exc:
         error_code = parse_soap_error(exc.read())
-        message = f"SOAP {action_name} failed (HTTP {exc.code})"
+        message = f"SOAP {action} failed (HTTP {exc.code})"
         if error_code is not None:
             message += f" — errorCode {error_code}"
         raise UpnpError(message) from exc
     except OSError as exc:
-        raise UpnpError(f"SOAP {action_name} transport failure: {exc}") from exc
+        raise UpnpError(f"SOAP {action} transport failure: {exc}") from exc
 
 
 def add_port_mapping(
@@ -283,22 +263,6 @@ def add_port_mapping(
         lease_duration=lease_duration,
     )
     _soap_post(service, "AddPortMapping", soap, http_post=http_post)
-
-
-def delete_port_mapping(
-    service: IgdService,
-    *,
-    external_port: int,
-    protocol: str = "UDP",
-    http_post: Callable[[str, str, bytes], None] | None = None,
-) -> None:
-    """Remove a previously added port mapping (shutdown hygiene)."""
-    soap = build_delete_mapping_soap(
-        service_type=service.service_type,
-        external_port=external_port,
-        protocol=protocol,
-    )
-    _soap_post(service, "DeletePortMapping", soap, http_post=http_post)
 
 
 class UpnpManager:

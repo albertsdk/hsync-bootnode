@@ -11,7 +11,7 @@ import random
 import time
 from dataclasses import dataclass, field
 
-from hsync_bootnode.protocol import BootPeer, BucketProto, Endpoint, SyncDirection
+from hsync_bootnode.protocol import BootPeer, BootRegister, BucketProto, Endpoint, SyncDirection
 
 __all__ = [
     "DEFAULT_SAMPLE_LIMIT",
@@ -63,6 +63,34 @@ class PeerRecord:
 
     def touch(self, ttl: float = DEFAULT_TTL) -> None:
         self.expires_at = time.monotonic() + ttl
+
+    @classmethod
+    def from_register(cls, model: BootRegister, *, peer_ip: str, peer_port: int) -> PeerRecord:
+        """Build a record from a validated ``register`` frame.
+
+        The observed source (``peer_ip``/``peer_port``) is the STUN-echo endpoint;
+        every other field is relayed verbatim from the frame (or its documented
+        default). One projector keeps ``register`` handling in sync with the model.
+        """
+        return cls(
+            cid=model.cid,
+            bucket=model.bucket,
+            group=model.group,
+            ip=peer_ip,
+            port=peer_port,
+            proto="udp",
+            cert_fp=model.cert_fp,
+            version=model.version,
+            endpoints=list(model.endpoints),
+            connected=model.connected or 0,
+            reachable=bool(model.endpoints),
+            capacity=model.capacity,
+            server_ready=model.server_ready,
+            force_master=model.force_master,
+            never_master=model.never_master,
+            startup_time=model.startup_time,
+            sync_direction=model.sync_direction,
+        )
 
 
 class RoutingTable:

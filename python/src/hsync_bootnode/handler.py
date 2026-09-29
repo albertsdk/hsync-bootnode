@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Iterable, Mapping
-from typing import Literal, cast
+from typing import Literal
 
 from pydantic import SecretStr, ValidationError
 
@@ -42,7 +42,6 @@ from hsync_bootnode.tokens import derive_bucket_token, verify_bucket_token
 __all__ = [
     "BootConfigError",
     "BootHandler",
-    "CertificateFingerprint",
 ]
 
 # Token authorization / spec rate limits (in-memory sliding windows).
@@ -60,10 +59,6 @@ _AuthResult = Literal["ok", "token_required", "rate_limited"]
 
 # TTL sweep cadence (spec: prune every 15 s).
 _PRUNE_INTERVAL_SECONDS = 15.0
-
-
-class CertificateFingerprint(str):
-    """SHA-256 DER fingerprint of the node's TLS certificate (64 hex chars)."""
 
 
 class BootConfigError(RuntimeError):
@@ -241,44 +236,19 @@ class BootHandler:
     # ------------------------------------------------------------- register
 
     def _register(self, model: BootRegister, peer_ip: str, peer_port: int) -> bytes:
-        if not self._limit_ok(self._register_bucket, model.bucket):
-            debug_event(
-                "register rate_limited bucket",
-                cid=model.cid,
-                bucket=model.bucket,
-                peer=f"{peer_ip}:{peer_port}",
-            )
-            return self._rate_limited(self._register_bucket, model.bucket)
-        result = self._authorize(model.bucket, model.bucket_token, peer_ip)
-        if result != "ok":
-            debug_event(
-                "register refused",
-                cid=model.cid,
-                bucket=model.bucket,
-                peer=f"{peer_ip}:{peer_port}",
-                reason=result,
-            )
-            return self._refusal(result, peer_ip)
-
-        record = PeerRecord(
+        refused = self._admit(
+            "register",
+            self._register_bucket,
+            model.bucket,
+            model.bucket_token,
+            peer_ip,
+            peer_port,
             cid=model.cid,
-            bucket=model.bucket,
-            group=model.group,
-            ip=peer_ip,
-            port=peer_port,
-            proto="udp",
-            cert_fp=model.cert_fp,
-            version=model.version,
-            endpoints=list(model.endpoints),
-            connected=model.connected or 0,
-            reachable=bool(model.endpoints),
-            capacity=model.capacity,
-            server_ready=model.server_ready,
-            force_master=model.force_master,
-            never_master=model.never_master,
-            startup_time=model.startup_time,
-            sync_direction=model.sync_direction,
         )
+        if refused is not None:
+            return refused
+
+        record = PeerRecord.from_register(model, peer_ip=peer_ip, peer_port=peer_port)
         record.touch(self.ttl)
         self.routing.upsert(record)
         debug_event(
@@ -295,24 +265,17 @@ class BootHandler:
         return self._ack(peer_ip, peer_port)
 
     def _refresh(self, model: BootRefresh, peer_ip: str, peer_port: int) -> bytes | None:
-        if not self._limit_ok(self._register_bucket, model.bucket):
-            debug_event(
-                "refresh rate_limited bucket",
-                cid=model.cid,
-                bucket=model.bucket,
-                peer=f"{peer_ip}:{peer_port}",
-            )
-            return self._rate_limited(self._register_bucket, model.bucket)
-        result = self._authorize(model.bucket, model.bucket_token, peer_ip)
-        if result != "ok":
-            debug_event(
-                "refresh refused",
-                cid=model.cid,
-                bucket=model.bucket,
-                peer=f"{peer_ip}:{peer_port}",
-                reason=result,
-            )
-            return self._refusal(result, peer_ip)
+        refused = self._admit(
+            "refresh",
+            self._register_bucket,
+            model.bucket,
+            model.bucket_token,
+            peer_ip,
+            peer_port,
+            cid=model.cid,
+        )
+        if refused is not None:
+            return refused
 
         record = self.routing.get(model.cid, model.bucket, model.group)
         if record is None:
@@ -363,10 +326,11 @@ class BootHandler:
         if not self._limit_ok(self._query_bucket, model.bucket):
             debug_event("query rate_limited bucket", bucket=model.bucket, peer=peer_ip)
             return self._rate_limited(self._query_bucket, model.bucket)
-        result = self._authorize(model.bucket, model.bucket_token, peer_ip)
-        if result != "ok":
-            debug_event("query refused", bucket=model.bucket, peer=peer_ip, reason=result)
-            return self._refusal(result, peer_ip)
+        refused = self._authorize_or_refuse(
+            "query", model.bucket, model.bucket_token, peer_ip, peer_display=peer_ip
+        )
+        if refused is not None:
+            return refused
 
         records = self.routing.sample(model.bucket, model.group, model.limit)
         peers = [self._to_peer(record, model) for record in records]
@@ -378,15 +342,7 @@ class BootHandler:
             peers=len(peers),
             cids=[p.cid for p in peers],
         )
-        return BOOT_RESPONSE_ADAPTER.dump_json(
-            BootResponse(
-                protocol_version=PROTOCOL_VERSION_BOOT,
-                type="response",
-                peers=peers,
-                count=len(peers),
-                ttl=int(self.ttl),
-            )
-        )
+        return self._response(peers=peers, error=None, retry_after=None)
 
     # -------------------------------------------------------------- helpers
 
@@ -410,15 +366,67 @@ class BootHandler:
             return "token_required"
         return "rate_limited"
 
-    def _refusal(self, result: _AuthResult, peer_ip: str) -> bytes:
-        error: Literal["token_required", "rate_limited"] = cast(
-            Literal["token_required", "rate_limited"], result
+    def _authorize_or_refuse(
+        self,
+        event: str,
+        bucket: str,
+        token: str | None,
+        peer_ip: str,
+        *,
+        peer_display: str,
+        cid: str | None = None,
+    ) -> bytes | None:
+        """Authorize a bucket; return the refusal bytes, or ``None`` when admitted.
+
+        One place owns the token policy's refusal shape (debug line + response), so
+        register/refresh/query cannot drift.
+        """
+        result = self._authorize(bucket, token, peer_ip)
+        if result == "ok":
+            return None
+        debug_event(
+            f"{event} refused",
+            cid=cid,
+            bucket=bucket,
+            peer=peer_display,
+            reason=result,
         )
+        return self._refusal(result, peer_ip)
+
+    def _admit(
+        self,
+        event: str,
+        limiter: TokenBucketLimiter,
+        bucket: str,
+        token: str | None,
+        peer_ip: str,
+        peer_port: int,
+        *,
+        cid: str | None = None,
+    ) -> bytes | None:
+        """Charge the bucket limiter, then authorize; ``None`` = admitted.
+
+        Shared by register and refresh (both bucket-rate-limited and answering a
+        refusal frame); query keeps its own pair/bucket limiter pair.
+        """
+        if not self._limit_ok(limiter, bucket):
+            debug_event(
+                f"{event} rate_limited bucket",
+                cid=cid,
+                bucket=bucket,
+                peer=f"{peer_ip}:{peer_port}",
+            )
+            return self._rate_limited(limiter, bucket)
+        return self._authorize_or_refuse(
+            event, bucket, token, peer_ip, peer_display=f"{peer_ip}:{peer_port}", cid=cid
+        )
+
+    def _refusal(self, error: Literal["token_required", "rate_limited"], peer_ip: str) -> bytes:
         return self._response(
             peers=[],
             error=error,
             retry_after=self._bad_token_ip.retry_after(peer_ip)
-            if result == "rate_limited"
+            if error == "rate_limited"
             else None,
         )
 

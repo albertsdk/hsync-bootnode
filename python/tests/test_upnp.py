@@ -17,8 +17,6 @@ from hsync_bootnode.upnp import (
     _parse_ssdp_response,
     add_port_mapping,
     build_add_mapping_soap,
-    build_delete_mapping_soap,
-    delete_port_mapping,
     parse_soap_error,
 )
 
@@ -41,12 +39,6 @@ def test_add_mapping_soap_contains_expected_fields() -> None:
     assert "<NewInternalClient>192.168.1.10</NewInternalClient>" in soap
     assert "<NewEnabled>1</NewEnabled>" in soap
     assert "hsync-bootnode" in soap
-
-
-def test_delete_mapping_soap_shape() -> None:
-    soap = build_delete_mapping_soap(service_type=NS, external_port=443).decode("utf-8")
-    assert "DeletePortMapping" in soap
-    assert "<NewExternalPort>443</NewExternalPort>" in soap
 
 
 def test_parse_soap_error_finds_error_code() -> None:
@@ -90,16 +82,6 @@ def test_add_port_mapping_injects_transport() -> None:
     assert url == SERVICE.control_url
     assert soap_action == f"{NS}#AddPortMapping"
     assert b"AddPortMapping" in body
-
-
-def test_delete_port_mapping_injects_transport() -> None:
-    calls: list[tuple[str, str, bytes]] = []
-
-    def fake_post(url: str, soap_action: str, body: bytes) -> None:
-        calls.append((url, soap_action, body))
-
-    delete_port_mapping(SERVICE, external_port=443, http_post=fake_post)
-    assert calls[0][1] == f"{NS}#DeletePortMapping"
 
 
 def test_upnp_error_code_downgrade_message() -> None:

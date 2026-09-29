@@ -20,7 +20,6 @@ import pytest
 from hsync_bootnode import diagnostics
 from hsync_bootnode.diagnostics import (
     configure_debug,
-    debug_enabled,
     debug_event,
     debug_log,
     error_event,
@@ -76,14 +75,12 @@ def _register(cid: str = CID, bucket: str = "shared") -> bytes:
 
 class TestDebugSink:
     def test_disabled_by_default_and_silent(self, capsys):
-        assert debug_enabled() is False
         debug_log("hello")
         debug_event("event", cid=CID)
         assert capsys.readouterr().err == ""
 
     def test_enabled_renders_structured_fields(self, capsys):
         configure_debug(True)
-        assert debug_enabled() is True
         debug_event("register ack", cid=CID, bucket="shared", reachable=True, group=None)
         err = capsys.readouterr().err
         (line,) = _lines(err)
@@ -120,7 +117,6 @@ class TestAlwaysOnChannel:
     """``warn``/``error`` are visible without ``--debug`` and never carry peer data."""
 
     def test_emitted_without_debug_opt_in(self, capsys):
-        assert debug_enabled() is False
         warn_event("upnp no igd on lan", port=443)
         error_event("session failed", exc="ValueError")
         warn_line, error_line = _lines(capsys.readouterr().err)

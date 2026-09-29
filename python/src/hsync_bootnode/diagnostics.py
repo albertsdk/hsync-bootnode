@@ -55,7 +55,6 @@ from hsync_common.time_utils import utc_now_iso
 
 __all__ = [
     "configure_debug",
-    "debug_enabled",
     "debug_event",
     "debug_log",
     "error_event",
@@ -92,11 +91,6 @@ def configure_debug(enabled: bool) -> None:
     """Enable or disable the stderr debug sink (process-wide)."""
     global _enabled
     _enabled = enabled
-
-
-def debug_enabled() -> bool:
-    """Whether the operator opted into the debug sink."""
-    return _enabled
 
 
 def _sanitize(value: object) -> str:

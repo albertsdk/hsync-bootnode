@@ -26,11 +26,10 @@ from hsync_bootnode.server import (
 )
 
 
-def test_make_identity_is_ecdsa_p256_and_not_ca():
+def test_make_identity_is_ecdsa_p256():
     node = make_identity(host="127.0.0.1")
     assert isinstance(node.private_key, ec.EllipticCurvePrivateKey)
     assert isinstance(node.private_key.curve, ec.SECP256R1)
-    assert node.is_ca is False
 
 
 def test_make_identity_san_includes_bind_and_public_hosts():

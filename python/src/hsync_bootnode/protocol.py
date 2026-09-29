@@ -50,7 +50,6 @@ PROTOCOL_VERSION_BOOT: Literal["boot/1"] = "boot/1"
 # ``^[A-Za-z0-9]{21}$``), re-exported here so ``from hsync_bootnode.protocol
 # import CID_PATTERN`` keeps working. The ``boot/1`` spec documents the same
 # value; ``test_cid_pattern_matches_boot1_spec`` pins the two together.
-_CID_RE = re.compile(CID_PATTERN)
 
 # hex(32 bytes) = 64 chars. Absent = open bucket.
 BUCKET_TOKEN_LEN = 64
@@ -261,5 +260,4 @@ BOOT_ACK_ADAPTER: TypeAdapter[BootAck] = TypeAdapter(BootAck)
 BOOT_RESPONSE_ADAPTER: TypeAdapter[BootResponse] = TypeAdapter(BootResponse)
 
 
-assert _CID_RE.fullmatch("A1b2C3d4E5f6G7h8I9j0K")
 assert _BUCKET_TOKEN_RE.fullmatch("a" * BUCKET_TOKEN_LEN)

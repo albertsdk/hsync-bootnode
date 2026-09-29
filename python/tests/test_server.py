@@ -36,7 +36,6 @@ FP = "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
 def test_make_identity_produces_self_signed_fingerprint() -> None:
     identity = make_identity(host="127.0.0.1")
     assert re.fullmatch(r"[0-9a-f]{64}", str(identity.fingerprint))
-    assert identity.is_ca is False
     config = build_quic_configuration(identity)
     assert config.alpn_protocols == [BOOT_ALPN]
     assert config.certificate is not None

@@ -262,7 +262,7 @@ def build_quic_configuration(
     *,
     idle_timeout: float = BOOT_IDLE_TIMEOUT,
 ) -> QuicConfiguration:
-    """Server-side QUIC/TLS configuration bound to the in-memory identity."""
+    """Server-side QUIC/TLS configuration bound to the given TLS identity."""
     config = QuicConfiguration(
         is_client=False,
         alpn_protocols=[BOOT_ALPN],

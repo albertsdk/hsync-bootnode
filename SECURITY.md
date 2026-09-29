@@ -34,14 +34,17 @@ days and to keep you informed of remediation progress.
   from a file descriptor (`--keys-fd`), never from a path inside the sandbox.
 - **Rate limiting** — in-memory per-IP/bucket sliding windows; over-limit
   requests receive `rate_limited` with `retry_after`.
-- **Identity** — the TLS identity is in-memory, regenerated per process by
-  default; the opt-in `--identity PATH` persists only the operator's own
-  key+cert (ADR-0034) so the fingerprint can be pinned.
+- **Identity** — the TLS identity is a persistent ECDSA P-256 key+cert, created
+  on first run and reused afterwards so the fingerprint is stable and can be
+  pinned (ADR-0034/ADR-0037); it is the node's only on-disk artifact.
+  `--identity PATH` overrides the path and `--ephemeral` keeps the identity in
+  memory instead.
 
 ## Hardening Recommendations
 
 - Run the node on UDP/443 via the packaged service unit and keep dependencies
   up to date.
-- If clients pin the fingerprint, use `--identity PATH` (stable, rotatable) and
-  distribute the `sha256:<hex>` fingerprint out of band.
+- If clients pin the fingerprint, keep the persistent identity (the default) or
+  an explicit `--identity PATH`, and distribute the `sha256:<hex>` fingerprint
+  out of band. Do not `--ephemeral` a node whose clients pin it.
 - Keep `--debug` disabled in production: it is stderr-only but peer-aware.

@@ -14,6 +14,9 @@ import errno
 import os
 import signal
 import sys
+from collections.abc import Sequence
+from datetime import UTC, datetime
+from pathlib import Path
 
 import typer
 from hsync_common import ssl_utils
@@ -62,6 +65,43 @@ _DEFAULT_NO_RATE_LIMIT_ENV = "HSYNC_BOOTNODE_NO_RATE_LIMIT"
 # Node-wide private mode: require a valid bucket_token on EVERY frame (
 # applied to the whole node). Service wrappers set the envvar form.
 _DEFAULT_PRIVATE_ENV = "HSYNC_BOOTNODE_PRIVATE"
+# Persistent TLS identity path (envvar form). The default is an XDG state path
+# (state, not config) so the fingerprint is stable and pin-able across restarts.
+_DEFAULT_IDENTITY_ENV = "HSYNC_BOOTNODE_IDENTITY"
+# Opt out of persistence: keep the TLS identity in memory (no disk writes).
+_DEFAULT_EPHEMERAL_ENV = "HSYNC_BOOTNODE_EPHEMERAL"
+# Warn this many days before the persisted identity's certificate expires.
+_IDENTITY_EXPIRY_WARN_DAYS = 30
+
+
+def default_identity_path() -> Path:
+    """Resolve the persistent identity path: ``$HSYNC_BOOTNODE_IDENTITY`` or an XDG state dir."""
+    override = os.environ.get(_DEFAULT_IDENTITY_ENV)
+    if override:
+        return Path(override)
+    base = os.environ.get("XDG_STATE_HOME") or os.path.join(Path.home(), ".local", "state")
+    return Path(base) / "hsync" / "bootnode" / "identity.pem"
+
+
+def _resolve_identity(
+    identity: str | None,
+    ephemeral: bool,
+    *,
+    host: str,
+    public_hosts: Sequence[str],
+) -> NodeIdentity | None:
+    """Resolve the TLS identity for ``run`` from ``--identity`` / ``--ephemeral``.
+
+    ``--identity`` and ``--ephemeral`` are mutually exclusive. With neither, the
+    identity persists at :func:`default_identity_path` (created on first run).
+    Returns a persisted/loaded identity, or ``None`` for the in-memory case.
+    """
+    if identity is not None and ephemeral:
+        raise BootConfigError("--identity and --ephemeral are mutually exclusive")
+    if ephemeral:
+        return None
+    path = identity if identity is not None else str(default_identity_path())
+    return load_or_create_identity(path, host=host, public_hosts=public_hosts)
 
 
 @app.callback()
@@ -171,10 +211,22 @@ def run(
     identity: str | None = typer.Option(
         None,
         "--identity",
+        envvar=_DEFAULT_IDENTITY_ENV,
         help=(
-            "Persist the TLS identity (key+cert) at this path, so the certificate "
-            "fingerprint is stable across restarts and can be pinned by clients. "
-            "Without it the identity stays in-memory (ephemeral, no-log default)."
+            "Path of the persistent TLS identity (key+cert). Defaults to "
+            "HSYNC_BOOTNODE_IDENTITY or an XDG state path, created on first run "
+            "so the certificate fingerprint is stable across restarts and can be "
+            "pinned by clients."
+        ),
+    ),
+    ephemeral: bool = typer.Option(
+        False,
+        "--ephemeral",
+        envvar=_DEFAULT_EPHEMERAL_ENV,
+        help=(
+            "Keep the TLS identity in memory and write no identity file "
+            "(read-only filesystems, throwaway nodes); the fingerprint changes on "
+            "every restart, so clients cannot pin it. Env: HSYNC_BOOTNODE_EPHEMERAL=1."
         ),
     ),
     public_host: list[str] = typer.Option(
@@ -197,10 +249,8 @@ def run(
             ttl=float(ttl),
             enforce_rate_limits=not no_rate_limit,
         )
-        node_identity = (
-            load_or_create_identity(identity, host=resolved_host, public_hosts=public_host)
-            if identity
-            else None
+        node_identity = _resolve_identity(
+            identity, ephemeral, host=resolved_host, public_hosts=public_host
         )
     except BootConfigError as exc:
         typer.echo(f"configuration error: {exc}", err=True)
@@ -219,11 +269,11 @@ def run(
     _install_uvloop()
     _install_sigterm_handler()
 
-    identity_line = (
-        f"  identity  : {identity} (persisted)"
-        if node_identity is not None
-        else "  identity  : in-memory (ephemeral; pinning needs --identity)"
-    )
+    if node_identity is not None:
+        identity_path_display = identity or str(default_identity_path())
+        identity_line = f"  identity  : {identity_path_display} (persisted)"
+    else:
+        identity_line = "  identity  : in-memory (ephemeral; clients cannot pin the fingerprint)"
     banner = (
         f"hsync-bootnode {__version__} — boot/1, no-log, in-memory\n"
         f"  listener : {resolved_host}:{resolved_port} (QUIC/UDP, TLS 1.3, RETRY+address-validation)\n"
@@ -237,6 +287,15 @@ def run(
         f"  upnp      : {'disabled' if no_upnp else 'enabled (zero-touch)'}"
     )
     typer.echo(banner)
+
+    if node_identity is not None:
+        days_left = (node_identity.expires_at - datetime.now(UTC)).days
+        if days_left <= _IDENTITY_EXPIRY_WARN_DAYS:
+            warn_event(
+                "identity certificate near expiry",
+                path=str(identity_path_display),
+                reason=f"{days_left}d remaining; rotate with 'hsync-bootnode identity rotate'",
+            )
     try:
         asyncio.run(
             _async_main(
@@ -260,14 +319,19 @@ app.add_typer(identity_app, name="identity")
 
 @identity_app.command("show")
 def identity_show(
-    identity: str = typer.Option(..., "--identity", help="Path of the persisted identity file."),
+    identity: str | None = typer.Option(
+        None,
+        "--identity",
+        envvar=_DEFAULT_IDENTITY_ENV,
+        help="Path of the persisted identity file (default: the standard state path).",
+    ),
     pem: bool = typer.Option(
         False, "--pem", help="Print the certificate PEM instead of the fingerprint."
     ),
 ) -> None:
     """Print the persisted identity fingerprint (or its certificate PEM)."""
     try:
-        node = load_identity(identity)
+        node = load_identity(identity or default_identity_path())
     except IdentityError as exc:
         typer.echo(f"configuration error: {exc}", err=True)
         raise typer.Exit(code=2) from exc
@@ -279,7 +343,12 @@ def identity_show(
 
 @identity_app.command("rotate")
 def identity_rotate(
-    identity: str = typer.Option(..., "--identity", help="Path of the persisted identity file."),
+    identity: str | None = typer.Option(
+        None,
+        "--identity",
+        envvar=_DEFAULT_IDENTITY_ENV,
+        help="Path of the persisted identity file (default: the standard state path).",
+    ),
     public_host: list[str] = typer.Option(
         [],
         "--public-host",
@@ -288,7 +357,9 @@ def identity_rotate(
 ) -> None:
     """Regenerate the persisted identity and print the new fingerprint."""
     try:
-        node = rotate_identity(identity, host="0.0.0.0", public_hosts=public_host)
+        node = rotate_identity(
+            identity or default_identity_path(), host="0.0.0.0", public_hosts=public_host
+        )
     except IdentityError as exc:
         typer.echo(f"configuration error: {exc}", err=True)
         raise typer.Exit(code=2) from exc

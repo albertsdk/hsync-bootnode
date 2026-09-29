@@ -1,9 +1,10 @@
 """No-log property tests: the boot/1 hot path never opens a file for writing.
 
-The bootnode is no-log by design: the register→query handler path, the
-in-memory identity and the QUIC configuration must be able to run under a filesystem
-guard that makes any write-mode open explode. Reading is allowed (libraries,
-locale data), writing is not.
+The bootnode is no-log by design: the register→query handler path (peer data),
+the QUIC configuration and the in-memory (``--ephemeral``) identity must be able
+to run under a filesystem guard that makes any write-mode open explode. Reading
+is allowed (libraries, locale data), writing is not. The *only* permitted write
+in the default run is the node's own persisted TLS identity file.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ import pytest
 from pydantic import SecretStr
 
 from hsync_bootnode.handler import BootHandler
-from hsync_bootnode.server import build_quic_configuration, make_identity
+from hsync_bootnode.server import build_quic_configuration, load_or_create_identity, make_identity
 from hsync_bootnode.tokens import derive_bucket_token
 
 CID = "A1b2C3d4E5f6G7h8I9j0K"
@@ -134,9 +135,21 @@ def test_private_register_query_leave_never_writes(read_only_fs: pytest.MonkeyPa
     handler.prune()
 
 
-def test_identity_and_config_never_write(read_only_fs: pytest.MonkeyPatch) -> None:
+def test_ephemeral_identity_and_config_never_write(read_only_fs: pytest.MonkeyPatch) -> None:
+    """``--ephemeral``: the in-memory identity configures QUIC with zero writes."""
     identity = make_identity(host="127.0.0.1")
     config = build_quic_configuration(identity)
     assert config.certificate is not None
     assert config.private_key is not None
     assert identity.fingerprint
+
+
+def test_persistence_requires_a_write(read_only_fs: pytest.MonkeyPatch, tmp_path) -> None:
+    """The persisted default is the one write the node performs (its own key+cert).
+
+    Under a filesystem that refuses every write, resolving the persisted identity
+    fails, while the in-memory (``--ephemeral``) path above succeeds — pinning the
+    fact that persistence is the write the default run is allowed to make.
+    """
+    with pytest.raises(_WriteAttempted):
+        load_or_create_identity(tmp_path / "state" / "identity.pem", host="127.0.0.1")

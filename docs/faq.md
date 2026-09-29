@@ -21,26 +21,29 @@ unblock the situation.
 **Why.** The client authenticates the node's **self-signed** certificate by
 fingerprint: at the prompt (the default `ask` policy) or, with
 `--bootnode-tofu`, it remembers the first fingerprint it sees for `<host>:<port>`
-and refuses any later change as a possible man-in-the-middle. By default the node
-generates a **fresh identity at every start** (the no-log invariant: the key
-lives only in RAM), so **restarting the node changes its fingerprint** and every
-client that pinned it then refuses it.
+and refuses any later change as a possible man-in-the-middle. The node keeps its
+identity stable by default (a persisted ECDSA P-256 key+cert), so a plain restart
+does **not** change the fingerprint; a mismatch means the operator rotated the
+identity (`hsync-bootnode identity rotate`), pointed the node at a different
+identity file, or ran it with `--ephemeral` (a fresh in-memory key each start).
+It can also indicate a real man-in-the-middle.
 
-**Fix — operator (recommended).** Give the node a stable identity so the
-fingerprint survives restarts, then distribute that fingerprint to clients:
+**Fix — operator (recommended).** Keep the node's persistent identity (the
+default) so the fingerprint survives restarts, then distribute that fingerprint
+to clients:
 
 ```bash
-# create on first run, reuse afterwards (0600 file, only the operator's key+cert)
+# default: persisted at $XDG_STATE_HOME/hsync/bootnode/identity.pem
+# pick an explicit path (0600 file, only the operator's key+cert) with --identity
 hsync-bootnode run --identity /var/lib/hsync-bootnode/identity.pem
-hsync-bootnode identity show --identity /var/lib/hsync-bootnode/identity.pem
+hsync-bootnode identity show
 ```
 
 Clients then pin it with `--bootnode-fingerprint <fingerprint>` (or confirm it
 once at the prompt on a terminal).
 
 **Fix — clients after an expected change.** If the new fingerprint is legitimate
-(e.g. the operator just provisioned `--identity`, or rotated it), accept it
-explicitly:
+(e.g. the operator rotated the identity), accept it explicitly:
 
 ```bash
 hsync p2p <host> -b <bucket> --bootnode-fingerprint <new-fingerprint>
@@ -78,19 +81,20 @@ hsync-bootnode run --identity /var/lib/hsync-bootnode/identity.pem \
 `--public-host` is repeatable. Changing the SAN requires regenerating the
 certificate, so the fingerprint changes too — see the rotation window above.
 
-## The fingerprint changed after a restart — how do I avoid that?
+## How do I rotate the node identity without breaking clients?
 
-Run the node with `--identity PATH` (see above). Without it the identity is
-ephemeral and *any* restart or redeploy changes the fingerprint. With it, the
-same fingerprint is reused until you deliberately rotate it.
+The identity is persisted by default (created on first run, reused afterwards), so
+a restart reuses the same fingerprint. To change it deliberately — e.g. after a
+suspected compromise — rotate it:
 
 ```bash
-hsync-bootnode identity rotate --identity /var/lib/hsync-bootnode/identity.pem
+hsync-bootnode identity rotate --public-host boot.example.com
 ```
 
 Rotation prints the new fingerprint; during the change window clients can be
 given both fingerprints (the client accepts up to two pins), then moved to the
-new one.
+new one. A node started with `--ephemeral` is the exception: it keeps the identity
+in memory, so *any* restart changes the fingerprint — do not pin such a node.
 
 ## I ran a *public* node — do clients need a fingerprint?
 

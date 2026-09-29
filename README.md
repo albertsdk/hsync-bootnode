@@ -84,13 +84,13 @@ network over the Internet** whose file data still flows only between peers. See
 
 ## Design invariants
 
-- **No-log** — the process never writes peer data (IPs, CIDs, timestamps)
-  to disk. The TLS identity is in-memory and regenerated per process by default;
-  `--identity PATH` is the single opt-in exception, persisting only the
-  operator's own key+cert for a stable, pin-able fingerprint. Diagnostics on
-  stderr come in two channels: an always-on, **peer-free** operational one
-  (warnings/errors about the node itself) and the opt-in `--debug` operation log,
-  the only one that can contain peer identity.
+- **No-log** — the process never writes peer data (IPs, CIDs, timestamps) to
+  disk; the only on-disk artifact is the node's own TLS key+cert, kept by default
+  (ECDSA P-256, `0600`) so its fingerprint is stable and pin-able across restarts.
+  `--ephemeral` replaces it with an in-memory identity for read-only filesystems
+  or throwaway nodes. Diagnostics on stderr come in two channels: an always-on,
+  **peer-free** operational one (warnings/errors about the node itself) and the
+  opt-in `--debug` operation log, the only one that can contain peer identity.
 - **Zero-knowledge / protected buckets** — group tokens are HMAC-SHA256
   capabilities compared in constant time; refusals are uniform and never reveal
   whether a bucket exists.
@@ -128,11 +128,11 @@ python3 -m venv .venv
 ```
 
 The node prints its effective configuration and TLS certificate fingerprint,
-then serves forever. Point the clients of a P2P group at the node — on a
-terminal the first contact shows the fingerprint and asks you to confirm it once
-(like `ssh`), and an unattended run states the trust explicitly. For a stable
-setup, persist the node identity with `--identity` (so it survives restarts) and
-pin the printed fingerprint:
+then serves forever. On first run it creates a persistent identity (stable across
+restarts, so clients can pin its fingerprint); read it with
+`hsync-bootnode identity show`. Point the clients of a P2P group at the node — on
+a terminal the first contact shows the fingerprint and asks you to confirm it
+once (like `ssh`), and an unattended run states the trust explicitly:
 
 ```bash
 # First contact on a terminal: confirm the fingerprint at the prompt.

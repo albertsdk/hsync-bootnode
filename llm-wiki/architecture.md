@@ -1,6 +1,7 @@
 # Architecture — hsync-bootnode
 
-One QUIC/UDP listener, in-memory state, no persistence, no logs. The v1
+One QUIC/UDP listener, in-memory routing state, no logs; the only persisted
+artifact is the node's own TLS identity. The v1
 implementation is Python (aioquic); the Rust implementation planned in
 the repo root `README.md` will share the same wire protocol SSOT
 (`protocol-spec/boot-1.md`) and the same fixtures.
@@ -9,9 +10,9 @@ the repo root `README.md` will share the same wire protocol SSOT
 
 ```
 UDP :443
-  └─ server.py    QUIC transport (aioquic): TLS 1.3 identity (in-memory by
-                  default, opt-in persisted via --identity), mandatory RETRY +
-                  address-validation tokens, ALPN "hsync-boot/1", NDJSON frames
+  └─ server.py    QUIC transport (aioquic): TLS 1.3 identity (ECDSA P-256,
+                  persisted by default, in-memory via --ephemeral), mandatory RETRY
+                  + address-validation tokens, ALPN "hsync-boot/1", NDJSON frames
                   on one bidi stream
        └─ handler.py   BootHandler: transport-agnostic core — routing table,
                        token authorization (declared protected buckets or
@@ -34,7 +35,7 @@ UDP :443
 | `python/src/hsync_bootnode/handler.py` | Request pipeline: rate-limit → validate (single pass) → authorize (protected-bucket policy: declared protected buckets, or every bucket when `private=True`) → mutate → reply | `BootHandler.handle`, `BootConfigError`, `OP_IP_BURST`, `WINDOW_SECONDS` |
 | `python/src/hsync_bootnode/ratelimit.py` | Sliding windows; `evict_stale` bounds memory (evicts fully-refilled buckets, behaviour-identical) | `TokenBucketLimiter` (`allow`, `retry_after`, `evict_stale`) |
 | `python/src/hsync_bootnode/tokens.py` | token derivation `HMAC-SHA256(key, "boot/1" || bucket)[:32]` | `derive_bucket_token`, `verify_bucket_token` |
-| `python/src/hsync_bootnode/server.py` | QUIC adapter: self-signed TLS identity (`hsync_common.ssl_utils`, ECDSA P-256 by default), RETRY, frame IO bound to 8 KiB (framing only — parsing/validation lives in `handler.py`); opt-in persistent identity (ADR-0034) | `start_server`, `NodeIdentity`, `make_identity`, `load_or_create_identity`, `load_identity`, `rotate_identity`, `IdentityError`, `BootQuicProtocol` |
+| `python/src/hsync_bootnode/server.py` | QUIC adapter: self-signed TLS identity (`hsync_common.ssl_utils`, ECDSA P-256), RETRY, frame IO bound to 8 KiB (framing only — parsing/validation lives in `handler.py`); persistent by default, in-memory via `--ephemeral` (ADR-0034/ADR-0037) | `start_server`, `NodeIdentity`, `make_identity`, `load_or_create_identity`, `load_identity`, `rotate_identity`, `IdentityError`, `BootQuicProtocol` |
 | `python/src/hsync_bootnode/upnp.py` | SSDP IGD discovery + SOAP `AddPortMapping`/`DeletePortMapping`; stateless when no IGD | `UpnpManager.run`, `add_port_mapping`, `discover_igd` |
 | `python/src/hsync_bootnode/diagnostics.py` | Two stderr channels: **always-on `warn`/`error`** node health (peer-free by construction, field allow-list, error dedup with `suppressed=<n>`) and the opt-in **full operation log** (decisions #25, #35, #36); never on disk (no-log invariant); line format `<ISO-8601 UTC Z> - hsync-bootnode[<pid>] <level>: …` | `configure_debug`, `debug_enabled`, `debug_log`, `debug_event`, `warn_event`, `error_event`, `_emit`, `_sanitize`, `_PUBLIC_FIELDS` |
 | `python/src/hsync_bootnode/cli.py` | Typer multi-command app; group keys from `--keys-fd` / `HSYNC_BOOTNODE_KEYS_FD` (read once); fail-fast config; `--ttl`/`--debug`/`--ready-file` seams; `--identity`/`--public-host` + `identity show`/`rotate` | `run`, `identity_show`, `identity_rotate`, `main` (`--version`), `_load_keys` |
@@ -73,10 +74,11 @@ UDP :443
 
 ## Security model
 
-- **No-log**: nothing peer-related is written to disk; the TLS identity is
-  generated per process by default and persisted only with the opt-in
-  `--identity PATH` (the operator's own key+cert, ADR-0034 — not peer data).
-  Verified by `python/tests/test_nolog.py` under a read-only filesystem.
+- **No-log**: nothing peer-related is written to disk; the node's TLS identity
+  (the operator's own key+cert, ADR-0034/ADR-0037 — not peer data) is kept by
+  default as a stable, pin-able, rotatable identity, and `--ephemeral` keeps it
+  in memory instead. Verified by `python/tests/test_nolog.py` under a read-only
+  filesystem.
 - **Anti-amplification**: QUIC RETRY + address-validation before connection
   state (`start_server(..., retry=True)`, `python/src/hsync_bootnode/server.py:365`).
 - **Protected buckets**: the group key never enters any record; only the derived token.
@@ -145,7 +147,7 @@ UDP :443
 | `python/tests/test_handler.py` | Routing, TTL (frozen clock), protected buckets, private policy (every bucket gated, unkeyed bucket, gated `leave`), rate limits, STUN-echo, frame rejection |
 | `python/tests/test_scaffold.py` | Fixtures / spec contract + frame schema positives/negatives (rigid schema) |
 | `python/tests/test_server.py` | QUIC loopback: register/query/protected refusal, private-node refusal, garbage frames, pipelined frames on one stream |
-| `python/tests/test_identity.py` | Opt-in persistent identity: create/load/rotate, `0600`/`0700` permissions, ECDSA P-256, SAN from bind + `--public-host` |
+| `python/tests/test_identity.py` | Persistent identity (default): create/load/rotate, `0600`/`0700` permissions, ECDSA P-256 only, SAN from bind + `--public-host`, 20-year validity |
 | `python/tests/test_nolog.py` | Zero-write invariant under read-only fs |
 | `python/tests/test_upnp.py` | SSDP/SOAP shapes, error downgrade, stateless no-IGD |
 | `python/tests/test_cli.py` | CLI version/fail-fast/keys-fd contract |

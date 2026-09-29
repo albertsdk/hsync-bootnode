@@ -4,13 +4,18 @@
 #
 # Copyright (C) 2025 Alberto Basso
 
-"""White-box tests for the persistent bootnode TLS identity (ADR-0034)."""
+"""White-box tests for the persistent bootnode TLS identity (ADR-0034/ADR-0037).
+
+Service identities are ECDSA P-256, stored unencrypted under ``0600``/``0700``
+permissions, with a 20-year validity; the loader accepts nothing else.
+"""
 
 import ipaddress
 
 import pytest
 from cryptography import x509
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import dsa, ec
+from hsync_common import ssl_utils
 
 from hsync_bootnode.server import (
     IdentityError,
@@ -42,6 +47,14 @@ def test_make_identity_wildcard_bind_uses_dns_name():
     san = node.certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
     names = {n.value for n in san}
     assert "hsync-bootnode" in names
+
+
+def test_make_identity_validity_is_twenty_years():
+    from datetime import UTC, datetime, timedelta
+
+    node = make_identity(host="127.0.0.1")
+    assert node.expires_at == node.certificate.not_valid_after_utc
+    assert node.expires_at > datetime.now(UTC) + timedelta(days=365 * 19)
 
 
 def test_load_or_create_creates_with_restricted_permissions(tmp_path):
@@ -96,8 +109,6 @@ def test_load_identity_rejects_cert_without_key(tmp_path):
 
 
 def _write_identity(path, key) -> None:
-    from hsync_common import ssl_utils
-
     cert = ssl_utils.build_self_signed_certificate(
         key,
         subject_attrs=[x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, "hsync-bootnode")],
@@ -111,30 +122,17 @@ def _write_identity(path, key) -> None:
     )
 
 
-def test_load_identity_accepts_legacy_ed25519(tmp_path):
-    from cryptography.hazmat.primitives.asymmetric import ed25519
-    from hsync_common import ssl_utils
-
-    path = tmp_path / "legacy-ed25519.pem"
-    _write_identity(path, ssl_utils.generate_ed25519_private_key())
-    node = load_identity(path)
-    assert isinstance(node.private_key, ed25519.Ed25519PrivateKey)
-
-
-def test_rotate_legacy_ed25519_yields_ecdsa(tmp_path):
-    from hsync_common import ssl_utils
-
-    path = tmp_path / "legacy-ed25519.pem"
-    _write_identity(path, ssl_utils.generate_ed25519_private_key())
-    rotated = rotate_identity(path, host="127.0.0.1")
-    assert isinstance(rotated.private_key, ec.EllipticCurvePrivateKey)
-    assert isinstance(load_identity(path).private_key, ec.EllipticCurvePrivateKey)
-
-
-def test_load_identity_rejects_unsupported_key_type(tmp_path):
-    from cryptography.hazmat.primitives.asymmetric import dsa
-
-    path = tmp_path / "dsa.pem"
-    _write_identity(path, dsa.generate_private_key(key_size=2048))
+@pytest.mark.parametrize(
+    "key_factory",
+    [
+        lambda: ssl_utils.generate_rsa_private_key(),
+        lambda: ssl_utils.generate_ed25519_private_key(),
+        lambda: dsa.generate_private_key(key_size=2048),
+    ],
+)
+def test_load_identity_rejects_non_ecdsa(tmp_path, key_factory):
+    """Service identities are ECDSA P-256 only; any other key type is refused."""
+    path = tmp_path / "non-ecdsa.pem"
+    _write_identity(path, key_factory())
     with pytest.raises(IdentityError):
         load_identity(path)

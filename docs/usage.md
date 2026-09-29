@@ -11,8 +11,8 @@ top-level `--version` flag):
 
 ```text
 hsync-bootnode run [OPTIONS]
-hsync-bootnode identity show --identity PATH [--pem]
-hsync-bootnode identity rotate --identity PATH [--public-host NAME]...
+hsync-bootnode identity show [--identity PATH] [--pem]
+hsync-bootnode identity rotate [--identity PATH] [--public-host NAME]...
 hsync-bootnode --version
 ```
 
@@ -22,7 +22,8 @@ hsync-bootnode --version
 |---|---|---|
 | `--host` | `0.0.0.0` | Address to bind the QUIC/UDP listener to. Accepts an optional port (`HOST[:PORT]`, e.g. `0.0.0.0:443` or `[::1]:443`). |
 | `--port` | `443` | UDP port (1–65535). 443 is the QUIC/HTTP3 default; ports below 1024 need root or `CAP_NET_BIND_SERVICE` (the systemd unit grants it). Mutually exclusive with a port in `--host HOST:PORT`. |
-| `--identity` | *(none)* | Persist the TLS identity (key+cert) at this path, so the certificate fingerprint is stable across restarts and can be pinned by clients. Without it the identity stays in-memory (ephemeral, no-log default). |
+| `--identity` | XDG state path | Path of the persistent TLS identity (key+cert). Created on first run and reused afterwards, so the certificate fingerprint is stable across restarts and can be pinned by clients. Default: `$HSYNC_BOOTNODE_IDENTITY` or `$XDG_STATE_HOME/hsync/bootnode/identity.pem` (`~/.local/state/…`). |
+| `--ephemeral` | *(disabled flag)* | Keep the TLS identity in memory and write no identity file (read-only filesystems, throwaway nodes); the fingerprint changes on every restart, so clients cannot pin it. Mutually exclusive with `--identity`. Environment variable form: `HSYNC_BOOTNODE_EPHEMERAL=1`. |
 | `--public-host` | *(none)* | Public hostname or IP to add to the certificate SAN (repeatable). |
 | `--protected-bucket` | *(none)* | Bucket that requires a valid `bucket_token`. Repeatable. Declaring a protected bucket without provisioning its key fails fast at startup (exit code 2). |
 | `--keys-fd` | *(none)* | File descriptor carrying the group keys (see below). Environment variable form: `HSYNC_BOOTNODE_KEYS_FD`. |
@@ -36,22 +37,23 @@ hsync-bootnode --version
 ### `identity show`
 
 Prints the persisted identity fingerprint (or, with `--pem`, the public
-certificate). `--identity PATH` is required; the private key is never printed.
+certificate). `--identity PATH` is optional and defaults to the standard state
+path; the private key is never printed.
 
 ```bash
-hsync-bootnode identity show --identity /var/lib/hsync-bootnode/identity.pem
+hsync-bootnode identity show
 # sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
 
 ### `identity rotate`
 
 Regenerates the persisted key+cert and prints the new fingerprint, which the
-operator distributes to clients. `--identity PATH` is required; the old
-fingerprint stays accepted by clients during the rotation window (two-pin
-window).
+operator distributes to clients. `--identity PATH` is optional and defaults to
+the standard state path; the old fingerprint stays accepted by clients during the
+rotation window (two-pin window).
 
 ```bash
-hsync-bootnode identity rotate --identity /var/lib/hsync-bootnode/identity.pem
+hsync-bootnode identity rotate --public-host boot.example.com
 ```
 
 ### `--version`
@@ -72,6 +74,8 @@ Prints the version and the protocol, e.g.
 | Variable | Meaning |
 |---|---|
 | `HSYNC_BOOTNODE_KEYS_FD` | Same as `--keys-fd`; the env-var form is what service wrappers set. |
+| `HSYNC_BOOTNODE_IDENTITY` | Same as `--identity`; overrides the default state path of the persistent TLS identity. |
+| `HSYNC_BOOTNODE_EPHEMERAL` | Same as `--ephemeral`; set to `1` to keep the identity in memory (no identity file). |
 | `HSYNC_BOOTNODE_PRIVATE` | Same as `--private`; set to `1` to require a valid `bucket_token` on every frame. |
 | `HSYNC_BOOTNODE_DEBUG` | Same as `--debug`; set to `1` for the full opt-in operation log (peer identity included; stderr only). |
 | `HSYNC_BOOTNODE_READY_FILE` | Same as `--ready-file`; the readiness PID path used by tests/orchestrators. |
@@ -218,10 +222,11 @@ can rely on.
   RAM with the configured `--ttl` (default 60 s, max 3600 s); the routing table,
   the group keys and the rate-limit windows are all in memory. Stop the process and
   every trace of the network is gone.
-- **No peer data on disk, ever** — the TLS certificate is self-signed and generated
-  at startup by default. `--identity PATH` is the single opt-in exception and
-  persists **only the operator's own key+cert** (never peer data), `0600` inside a
-  `0700` directory, so the fingerprint can be pinned.
+- **No peer data on disk, ever** — the routing table, the group keys and the
+  rate-limit windows live only in memory. The single on-disk artifact is the
+  node's own self-signed key+cert (ECDSA P-256, `0600` inside a `0700`
+  directory), kept by default so the fingerprint is stable and clients can pin
+  it; `--ephemeral` drops even that and writes nothing to disk.
 - **Uniform refusals (no enumeration oracle)** — a wrong/missing token and a bucket
   with no key loaded are answered with the same `token_required` (then
   `rate_limited` with `retry_after`), so a client cannot tell which buckets exist,
@@ -264,9 +269,12 @@ can rely on.
 
 ## TLS identity & pinning
 
-By default the node generates a fresh self-signed certificate at every start, so
-its fingerprint changes with each restart and a client cannot pin it. For a
-self-hosted node whose clients pin the fingerprint, persist the identity:
+The node keeps a persistent, self-signed TLS identity (ECDSA P-256), created on
+first run and reused afterwards, so its fingerprint is stable across restarts and
+clients can pin it. Its key+cert is the node's **only** on-disk artifact (never
+peer data). By default it lives at
+`$XDG_STATE_HOME/hsync/bootnode/identity.pem` (`~/.local/state/…`); set an
+explicit path (e.g. a service directory) with `--identity`:
 
 ```bash
 # create (first run) and reuse (subsequent runs) the identity:
@@ -274,23 +282,26 @@ hsync-bootnode run --identity /var/lib/hsync-bootnode/identity.pem \
     --public-host boot.example.com
 ```
 
-The file is written with `0600` permissions in a `0700` directory and contains
-only the operator's own key+cert — never peer data, so the no-log invariant is
-preserved. Read the fingerprint and distribute it to clients out of band:
+Each name/IP clients dial should be added with `--public-host` (repeatable) so a
+TLS client that validates the hostname — not only the fingerprint — accepts the
+handshake. The file is written with `0600` permissions in a `0700` directory.
+Read the fingerprint and distribute it to clients out of band:
 
 ```bash
-hsync-bootnode identity show --identity /var/lib/hsync-bootnode/identity.pem
+hsync-bootnode identity show
 ```
 
-Clients authenticate the node by fingerprint: a terminal confirms the first
-contact at the prompt, an unattended client pins it with
+`--ephemeral` writes no identity file: the fingerprint then changes on every
+restart and clients cannot pin it — use it on a read-only filesystem or for a
+throwaway node. Clients authenticate the node by fingerprint: a terminal confirms
+the first contact at the prompt, an unattended client pins it with
 `--bootnode-fingerprint` (or trusts the first sighting with `--bootnode-tofu`);
 see the client `p2p-bootnode` documentation. To rotate the key
 (e.g. after a suspected compromise), regenerate it and move clients to the new
 fingerprint in a two-pin window:
 
 ```bash
-hsync-bootnode identity rotate --identity /var/lib/hsync-bootnode/identity.pem
+hsync-bootnode identity rotate --public-host boot.example.com
 ```
 
 ## Diagnostics

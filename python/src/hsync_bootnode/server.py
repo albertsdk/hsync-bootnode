@@ -6,8 +6,11 @@ aioquic flag), per-connection peer tracking (STUN-echo source) and the
 NDJSON-over-bidi-stream framing. All business rules live in
 ``hsync_bootnode.handler.BootHandler`` and are fully testable without sockets.
 
-TLS identity: an in-memory, per-process self-signed certificate built from
-``hsync_common.ssl_utils`` — nothing is ever written to disk (no-log).
+TLS identity: a self-signed certificate built from ``hsync_common.ssl_utils``
+(ECDSA P-256 — ADR-0037). It persists by default at a state path (``0600`` in a
+``0700`` directory) so its fingerprint is stable and pin-able across restarts;
+``run --ephemeral`` keeps it in memory instead. Either way, no peer data is ever
+written to disk (no-log).
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ import ipaddress
 import os
 import re
 from collections.abc import Callable, Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -25,8 +29,7 @@ from aioquic.asyncio.protocol import QuicConnectionProtocol
 from aioquic.quic.configuration import QuicConfiguration
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ec, ed25519
-from cryptography.hazmat.primitives.asymmetric import rsa as rsa_key
+from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 from hsync_common import ssl_utils
 
@@ -55,9 +58,8 @@ BOOT_IDLE_TIMEOUT = 30.0
 # One boot/1 frame must not exceed 8 KiB (register carries at most 16 endpoints).
 MAX_FRAME_BYTES = 8192
 
-# A TLS identity may use ECDSA P-256 (default for new identities, ADR-0034), or
-# RSA / Ed25519 (pre-existing identity files, kept until rotated).
-PrivateKey = rsa_key.RSAPrivateKey | ec.EllipticCurvePrivateKey | ed25519.Ed25519PrivateKey
+# HSYNC service identities are always ECDSA P-256 (ADR-0037).
+PrivateKey = ec.EllipticCurvePrivateKey
 
 # PEM block extractors for the combined ``identity.pem`` (cert + private key).
 _CERT_PEM_RE = re.compile(rb"-----BEGIN CERTIFICATE-----.+?-----END CERTIFICATE-----", re.DOTALL)
@@ -84,18 +86,27 @@ class NodeIdentity:
         return CertificateFingerprint(ssl_utils.compute_cert_fingerprint(self.certificate))
 
     @property
+    def expires_at(self) -> datetime:
+        """The certificate's ``NotAfter`` (UTC) — when the pinned identity lapses."""
+        return self.certificate.not_valid_after_utc
+
+    @property
     def is_ca(self) -> bool:
         return False
 
 
 def make_identity(host: str = "0.0.0.0", *, public_hosts: Sequence[str] = ()) -> NodeIdentity:
-    """Build a fresh ephemeral self-signed identity for this process (no disk writes)."""
+    """Build a fresh in-memory self-signed identity (no disk writes).
+
+    Used by ``run --ephemeral`` (read-only filesystems, throwaway nodes) and by
+    tests; the default run persists the identity via :func:`load_or_create_identity`.
+    """
     key = ssl_utils.generate_ecdsa_private_key()
     cert = ssl_utils.build_self_signed_certificate(
         key,
         subject_attrs=[x509.NameAttribute(NameOID.COMMON_NAME, "hsync-bootnode")],
         san_list=_sans_for(host, public_hosts),
-        validity_days=365,
+        validity_days=ssl_utils.SERVICE_CERT_VALIDITY_DAYS,
         basic_constraints_ca=False,
     )
     return NodeIdentity(certificate=cert, private_key=key)
@@ -110,11 +121,10 @@ def load_or_create_identity(
     """Load the persistent identity at ``path``, generating it on first use.
 
     The file is a combined PEM (certificate followed by the unencrypted PKCS#8
-    private key), written with ``0600`` permissions in a ``0700`` directory —
-    the same model as SSH host keys. When the file exists it is loaded as-is
-    (RSA, ECDSA, or Ed25519); when absent a fresh ECDSA P-256 identity is
-    generated and written. This is the only code path that ever persists key
-    material; the default run stays ephemeral via :func:`make_identity`.
+    private key), written with ``0600`` permissions in a ``0700`` directory — the
+    same model as SSH host keys. When the file exists it is loaded as-is; when
+    absent a fresh ECDSA P-256 identity is generated and written. This is the
+    default code path: :func:`make_identity` is used only for ``run --ephemeral``.
     """
     identity_path = Path(path)
     if identity_path.exists():
@@ -125,7 +135,7 @@ def load_or_create_identity(
         key,
         subject_attrs=[x509.NameAttribute(NameOID.COMMON_NAME, "hsync-bootnode")],
         san_list=_sans_for(host, public_hosts),
-        validity_days=365,
+        validity_days=ssl_utils.SERVICE_CERT_VALIDITY_DAYS,
         basic_constraints_ca=False,
     )
     identity_path.parent.mkdir(parents=True, exist_ok=True, mode=_IDENTITY_DIR_MODE)
@@ -160,7 +170,7 @@ def rotate_identity(
         key,
         subject_attrs=[x509.NameAttribute(NameOID.COMMON_NAME, "hsync-bootnode")],
         san_list=_sans_for(host, public_hosts),
-        validity_days=365,
+        validity_days=ssl_utils.SERVICE_CERT_VALIDITY_DAYS,
         basic_constraints_ca=False,
     )
     payload = (
@@ -200,10 +210,8 @@ def _load_identity_file(identity_path: Path) -> NodeIdentity:
         )
     cert = x509.load_pem_x509_certificate(cert_match.group(0))
     key = serialization.load_pem_private_key(key_match.group(0), password=None)
-    if not isinstance(
-        key, (rsa_key.RSAPrivateKey, ec.EllipticCurvePrivateKey, ed25519.Ed25519PrivateKey)
-    ):
-        raise IdentityError(f"identity file {identity_path} has an unsupported key type")
+    if not isinstance(key, ec.EllipticCurvePrivateKey):
+        raise IdentityError(f"identity file {identity_path} must hold an ECDSA P-256 private key")
     return NodeIdentity(certificate=cert, private_key=key)
 
 

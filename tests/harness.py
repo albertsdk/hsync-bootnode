@@ -79,10 +79,11 @@ def free_udp_port() -> int:
 def client_config() -> QuicConfiguration:
     """QUIC client configuration for ``boot/1``.
 
-    The bootnode's TLS identity is self-signed and generated per process, so the
-    client cannot verify it; only ALPN ``hsync-boot/1`` is asserted. Single
-    definition shared by the black-box suite and every benchmark that opens a
-    ``boot/1`` connection.
+    The bootnode's TLS identity is self-signed, so the client cannot verify it by
+    chain; only ALPN ``hsync-boot/1`` is asserted (the fingerprint pin is the
+    trust anchor, exercised by the identity black-box tests). Single definition
+    shared by the black-box suite and every benchmark that opens a ``boot/1``
+    connection.
     """
     return QuicConfiguration(is_client=True, alpn_protocols=[BOOT_ALPN], verify_mode=ssl.CERT_NONE)
 
@@ -238,6 +239,7 @@ def start_bootnode(
     ready: bool = True,
     no_rate_limit: bool = False,
     private: bool = False,
+    ephemeral: bool = True,
     env_extra: Mapping[str, str] | None = None,
 ) -> BootnodeProc:
     """Start a bootnode subprocess; ``keys`` are provisioned via ``--keys-fd``.
@@ -245,11 +247,16 @@ def start_bootnode(
     ``private`` appends ``--private``; ``env_extra`` adds environment variables on
     top of the scrubbed environment (used to exercise the envvar form of a flag,
     e.g. ``HSYNC_BOOTNODE_PRIVATE=1``, exactly as the service units set it).
+    ``ephemeral`` (default) appends ``--ephemeral`` so black-box tests never write
+    to the operator's/CI's XDG state dir; pass ``ephemeral=False`` (with an
+    explicit ``--identity``/``HSYNC_BOOTNODE_IDENTITY``) to test persistence.
     """
     port = port or free_udp_port()
     ready_file = tmp_path / "ready.pid" if ready else None
 
     cmd = [resolve_bin(), "run", "--host", "127.0.0.1", "--port", str(port), "--no-upnp"]
+    if ephemeral:
+        cmd += ["--ephemeral"]
     if ttl is not None:
         cmd += ["--ttl", str(ttl)]
     for bucket in protected:

@@ -2,8 +2,9 @@
 
 `hsync-bootnode` is the Internet discovery node of the HSYNC sync network: it
 tells P2P clients which peers are currently online, without storing anything.
-It runs an in-memory, no-log, zero-knowledge bootstrap service speaking the
-`boot/1` protocol over QUIC (UDP port 443).
+It runs a no-log, zero-knowledge bootstrap service speaking the `boot/1` protocol
+over QUIC (UDP port 443): the routing table lives only in RAM, and the node's own
+TLS key is its only on-disk artifact.
 
 > **Status**: v1 complete and stable (Python). The `boot/1` protocol is versioned
 > and specified in `protocol-spec/boot-1.md`.
@@ -79,9 +80,14 @@ python3 -m venv .venv
 ```
 
 The node prints its effective configuration and the TLS certificate
-fingerprint, then serves forever. For protected buckets, a **private node**
-(every frame authenticated), service deployment (systemd/launchd/Windows) and
-the full option list, see the [Usage reference](usage.md).
+fingerprint, then serves forever. On first run it creates a persistent identity
+at `$XDG_STATE_HOME/hsync/bootnode/identity.pem` (override the path with
+`--identity PATH`), so its fingerprint is stable across restarts and clients can
+pin it; read it with `hsync-bootnode identity show`. Add `--ephemeral` for a
+throwaway node that keeps the identity in memory and writes nothing to disk. For
+protected buckets, a **private node** (every frame authenticated), service
+deployment (systemd/launchd/Windows) and the full option list, see the
+[Usage reference](usage.md).
 
 ## Further reading
 

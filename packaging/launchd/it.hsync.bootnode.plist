@@ -8,9 +8,9 @@ Install (system-wide daemon):
   sudo launchctl bootstrap system /Library/LaunchDaemons/it.hsync.bootnode.plist
 
 The shell wrapper exposes the group-keys file as fd 3 (read once at startup
-via HSYNC_BOOTNODE_KEYS_FD); nothing is ever written to disk (no-log) except the
-opt-in persistent TLS identity under /usr/local/var/hsync-bootnode (create the
-directory first, e.g. `sudo install -d -m 0700 /usr/local/var/hsync-bootnode`).
+via HSYNC_BOOTNODE_KEYS_FD); the only thing written to disk (no-log) is the
+persistent TLS identity under /usr/local/var/hsync-bootnode (create the directory
+first, e.g. `sudo install -d -m 0700 /usr/local/var/hsync-bootnode`).
 -->
 <plist version="1.0">
 <dict>

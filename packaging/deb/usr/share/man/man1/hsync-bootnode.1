@@ -1,6 +1,6 @@
-.TH HSYNC-BOOTNODE 1 "2026-09-30" "hsync-bootnode 0.1.0" "User Commands"
+.TH HSYNC-BOOTNODE 1 "2026-10-01" "hsync-bootnode 0.1.0" "User Commands"
 .SH NAME
-hsync-bootnode \- HSYNC P2P bootstrap node (no-log, in-memory, zero-knowledge)
+hsync-bootnode \- HSYNC P2P bootstrap node (no-log, zero-knowledge)
 .SH SYNOPSIS
 .B hsync-bootnode
 .I COMMAND
@@ -16,11 +16,13 @@ protocol over QUIC/UDP port 443 (TLS 1.3 inside QUIC, mandatory RETRY and
 address-validation tokens).
 .PP
 The routing table lives exclusively in RAM with a configurable TTL (default
-60 seconds, 1\-3600): nothing peer-related is ever written to disk, no log file
-is produced, and the TLS identity is generated per process unless the operator
-opts into persistence with
-.BR "run \-\-identity" .
-Stopping the process erases every trace of the network.
+60 seconds, 1\-3600): nothing peer-related is ever written to disk and no log
+file is produced. The node's TLS identity (a self-signed ECDSA P\-256 key+cert)
+persists by default so its fingerprint is stable across restarts and can be
+pinned by clients;
+.BR "run \-\-ephemeral"
+keeps it in memory instead. Stopping the process erases every trace of the
+network except the node's own key+cert.
 .PP
 Diagnostics go to stderr in two channels: an always\-on, peer\-free operational
 channel (\fBwarn\fP/\fBerror\fP: a UPnP mapping that could not be created, an
@@ -58,11 +60,22 @@ Mutually exclusive with a port in
 .BR \-\-host .
 .TP
 .BI run\ \fR--identity\fP= PATH
-Persist the TLS identity (key+cert) at
-.I PATH
-so the certificate fingerprint is stable across restarts and can be pinned by
-clients. Without it the identity stays in-memory (ephemeral default). The file
-is written with 0600 permissions in a 0700 directory and contains no peer data.
+Path of the persistent TLS identity (key+cert), created on first run and reused
+afterwards, so the certificate fingerprint is stable across restarts and can be
+pinned by clients. Defaults to
+.B HSYNC_BOOTNODE_IDENTITY
+or
+.IR $XDG_STATE_HOME/hsync/bootnode/identity.pem ,
+and is created on first run. The file is written with 0600 permissions in a 0700
+directory and contains no peer data.
+.TP
+.B run\ \fR--ephemeral\fP
+Keep the TLS identity in memory and write no identity file (read-only
+filesystems, throwaway nodes); the fingerprint then changes on every restart, so
+clients cannot pin it. Mutually exclusive with
+.BR \-\-identity .
+Env form:
+.BR HSYNC_BOOTNODE_EPHEMERAL=1 .
 .TP
 .BI run\ \fR--public-host\fP= NAME
 Public hostname or IP to add to the certificate SAN; repeatable for multiple
@@ -119,13 +132,23 @@ form:
 .BR HSYNC_BOOTNODE_READY_FILE .
 .TP
 .B run\ \fR--no-rate-limit\fP
-Disable rate limiting entirely (benchmark/test seam; never in production — it
+Disable rate limiting entirely (benchmark/test seam; never in production \[em] it
 removes the anti\-abuse limits the spec requires). Env form:
 .BR HSYNC_BOOTNODE_NO_RATE_LIMIT=1 .
 .TP
 .B \fR--version\fP
 Print the version and the protocol, then exit.
 .SH ENVIRONMENT
+.TP
+.B HSYNC_BOOTNODE_IDENTITY
+Path of the persistent TLS identity; same as
+.BR "run \-\-identity" .
+.TP
+.B HSYNC_BOOTNODE_EPHEMERAL
+Set to
+.I 1
+to keep the TLS identity in memory (no identity file); same as
+.BR "run \-\-ephemeral" .
 .TP
 .B HSYNC_BOOTNODE_KEYS_FD
 Integer file descriptor carrying the group keys; same as
@@ -171,15 +194,17 @@ only through the systemd credential mechanism (see
 .BR HSYNC_BOOTNODE_KEYS_FD ).
 .TP
 .I /var/lib/hsync-bootnode/identity.pem
-Example opt-in path for the persistent TLS identity (certificate + private
-key, 0600), created by
+Example explicit path for the persistent TLS identity (certificate + private
+key, 0600), used with
 .BR "run \-\-identity" ;
 contains no peer data. Rotate it with
 .BR "identity rotate" .
 .B \-\-identity
-accepts any writable path: with the packaged unit's DynamicUser sandbox the
-node cannot persist it itself, so provision the file out of band or relax the
-sandbox with an override.
+accepts any writable path; the packaged systemd unit's StateDirectory gives the
+DynamicUser sandbox a writable
+.IR /var/lib/hsync-bootnode
+for the identity file, whose default location is
+.IR $XDG_STATE_HOME/hsync/bootnode/identity.pem .
 .TP
 .I /usr/lib/systemd/system/hsync-bootnode.service
 Hardened systemd unit (DynamicUser, ProtectSystem=strict, SystemCallFilter,
@@ -207,16 +232,24 @@ clients:
 .br
 .B hsync-bootnode run --port 443
 .TP
-Run with a persistent identity so the fingerprint is stable across restarts,
-then read the fingerprint to distribute to clients:
+Read the persisted fingerprint to distribute to clients (the identity is created
+on first run):
+.br
+.B hsync-bootnode identity show
+.TP
+Run with an explicit identity path and a public SAN, then show the fingerprint:
 .br
 .B hsync-bootnode run --identity /var/lib/hsync-bootnode/identity.pem --public-host boot.example.com
 .br
-.B hsync-bootnode identity show --identity /var/lib/hsync-bootnode/identity.pem
+.B hsync-bootnode identity show
+.TP
+Run a throwaway node that writes no identity file:
+.br
+.B hsync-bootnode run --ephemeral
 .TP
 Rotate the identity after a suspected compromise:
 .br
-.B hsync-bootnode identity rotate --identity /var/lib/hsync-bootnode/identity.pem
+.B hsync-bootnode identity rotate
 .TP
 Unprivileged port (no root or capability needed):
 .br

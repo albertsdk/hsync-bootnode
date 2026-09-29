@@ -2,8 +2,9 @@
 opt-in peer-aware debug stream.
 
 The node is **no-log by design**: nothing peer-related is ever written to
-**disk**. The routing table is RAM-only, the TLS identity is regenerated per
-process, and without ``--debug`` no peer data leaves memory at all.
+**disk**. The routing table is RAM-only, the TLS identity is the operator's own
+key+cert (persisted by default, kept in memory under ``--ephemeral``), and
+without ``--debug`` no peer data leaves memory at all.
 
 Two channels
 ------------

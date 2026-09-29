@@ -40,10 +40,12 @@
   client-side default) — **before** writing any frame. The
   `bucket_token` travels inside `register`/`query`, so trust is decided pre-write;
   a mismatch closes the connection with zero application bytes sent.
-- **Identity persistence is opt-in**: by default the identity is in-memory and
-  regenerated per process (the no-log invariant is unchanged). `--identity PATH`
-  persists a key+cert so the fingerprint is stable across restarts and rotatable
-  with `identity rotate`; the packaged service units pass `--identity`.
+- **Identity persists by default**: the node keeps a self-signed ECDSA P-256
+  key+cert (created on first run, reused afterwards) so the fingerprint is stable
+  across restarts and rotatable with `identity rotate`; `run --ephemeral` keeps
+  the identity in memory instead (no identity file is written). The key+cert is
+  the node's only on-disk artifact — never peer data (the no-log invariant is
+  unchanged).
 - **Rotation**: a client accepts up to two pins (old + new) during the rotation
   window; the trust store records whichever matched. `identity rotate` prints the
   new fingerprint.

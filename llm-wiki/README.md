@@ -1,7 +1,7 @@
 # hsync-bootnode — LLM Wiki
 
 Internal, agent-optimized knowledge base for the `hsync-bootnode` project
-(in-memory, zero-knowledge P2P bootstrap node speaking `boot/1`).
+(no-log, zero-knowledge P2P bootstrap node speaking `boot/1`).
 
 ## Table of contents
 
@@ -25,9 +25,10 @@ Internal, agent-optimized knowledge base for the `hsync-bootnode` project
 ## Hard invariants (read before touching any module)
 
 1. **No-log**: the process NEVER writes peer data (IPs, CIDs, timestamps) to
-   disk. TLS identity is in-memory, per-process **by default**; `--identity PATH`
-   is the single opt-in exception that persists only the operator's own key+cert
-   (ADR-0034) for a stable, rotatable fingerprint. Enforced by
+   disk. The TLS identity is a persistent ECDSA P-256 key+cert kept **by default**
+   (`run --identity PATH` overrides the XDG state path; `run --ephemeral` keeps
+   it in memory instead) — the operator's own key+cert (ADR-0034/ADR-0037), never
+   peer data, and the node's only on-disk artifact. Enforced by
    `python/tests/test_nolog.py` (read-only filesystem sandbox). Diagnostics
    come in two stderr channels: an **always-on**, peer-free operational one
    (`warn`/`error`, decisions #36) and the opt-in peer-aware `--debug` sink
@@ -50,7 +51,7 @@ Internal, agent-optimized knowledge base for the `hsync-bootnode` project
    `hsync-common` (`hsync_common.models.event.CID_PATTERN`,
    `hsync_common.path_validation.is_valid_bucket_name`), not re-declared locally;
    the boot/1 spec + fixtures stay the cross-language contract. The daemon also
-   reuses `hsync_common.ssl_utils` for its in-memory TLS identity (see
-   `decisions.md` #26 and hsync-common ADR-0033); ADR-0034 adds the opt-in
-   persistent identity (`--identity`, `identity show`/`rotate`) and the
-   `sha256:<hex>` trust fingerprint.
+   reuses `hsync_common.ssl_utils` for its TLS identity (see
+   `decisions.md` #26 and hsync-common ADR-0033); ADR-0034/ADR-0037 define the
+   persistent identity (`--identity`, `--ephemeral`, `identity show`/`rotate`)
+   and the `sha256:<hex>` trust fingerprint.

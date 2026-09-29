@@ -7,9 +7,20 @@ import os
 
 from typer.testing import CliRunner
 
-from hsync_bootnode.cli import _load_keys, _remove_ready_file, _write_ready_file, app
+from hsync_bootnode.cli import (
+    _load_keys,
+    _remove_ready_file,
+    _resolve_identity,
+    _write_ready_file,
+    app,
+    default_identity_path,
+)
 
 runner = CliRunner()
+
+# Keep the CLI tests hermetic: without this the default identity would be created
+# in the real XDG state dir. Tests that exercise persistence set their own path.
+_EPHEMERAL_ENV = {"HSYNC_BOOTNODE_EPHEMERAL": "1"}
 
 
 def test_version_flag() -> None:
@@ -115,7 +126,7 @@ def test_bind_permission_denied_is_actionable(monkeypatch) -> None:
         )
 
     _patch_run_no_side_effects(monkeypatch, _boom)
-    result = runner.invoke(app, ["run", "--port", "443"])
+    result = runner.invoke(app, ["run", "--port", "443"], env=_EPHEMERAL_ENV)
     assert result.exit_code == 3
     out = _combined(result)
     assert "permission denied" in out
@@ -129,7 +140,7 @@ def test_bind_address_in_use_is_actionable(monkeypatch) -> None:
         raise OSError(errno.EADDRINUSE, "Address already in use")
 
     _patch_run_no_side_effects(monkeypatch, _boom)
-    result = runner.invoke(app, ["run", "--port", "443"])
+    result = runner.invoke(app, ["run", "--port", "443"], env=_EPHEMERAL_ENV)
     assert result.exit_code == 3
     out = _combined(result)
     assert "already in use" in out
@@ -142,7 +153,7 @@ def test_bind_bad_host_is_actionable(monkeypatch) -> None:
         raise OSError(errno.EADDRNOTAVAIL, "Cannot assign requested address")
 
     _patch_run_no_side_effects(monkeypatch, _boom)
-    result = runner.invoke(app, ["run", "--host", "127.0.0.1", "--port", "443"])
+    result = runner.invoke(app, ["run", "--host", "127.0.0.1", "--port", "443"], env=_EPHEMERAL_ENV)
     assert result.exit_code == 3
     out = _combined(result)
     assert "not available" in out
@@ -207,7 +218,9 @@ def test_ready_file_failure_is_actionable_exit_4(monkeypatch, tmp_path) -> None:
 
     _patch_run_no_side_effects(monkeypatch, _start)
     ready = tmp_path / "missing-dir" / "ready.pid"
-    result = runner.invoke(app, ["run", "--port", "8443", "--ready-file", str(ready)])
+    result = runner.invoke(
+        app, ["run", "--port", "8443", "--ready-file", str(ready)], env=_EPHEMERAL_ENV
+    )
 
     assert result.exit_code == 4
     out = _combined(result)
@@ -228,7 +241,9 @@ def test_ready_file_conflict_leaves_the_existing_file_alone(monkeypatch, tmp_pat
     ready = tmp_path / "ready.pid"
     ready.write_text("stale", encoding="utf-8")
 
-    result = runner.invoke(app, ["run", "--port", "8443", "--ready-file", str(ready)])
+    result = runner.invoke(
+        app, ["run", "--port", "8443", "--ready-file", str(ready)], env=_EPHEMERAL_ENV
+    )
 
     assert result.exit_code == 4
     assert "already exists" in _combined(result)
@@ -250,8 +265,51 @@ def test_debug_run_announces_the_peer_aware_stream(monkeypatch, tmp_path) -> Non
     result = runner.invoke(
         app,
         ["run", "--port", "8443", "--debug", "--no-rate-limit", "--ready-file", str(ready)],
+        env=_EPHEMERAL_ENV,
     )
 
     out = _combined(result)
     assert "warn: peer data logging enabled reason=--debug" in out
     assert "warn: rate limiting disabled reason=--no-rate-limit" in out
+
+
+def test_default_identity_path_uses_xdg_state(monkeypatch, tmp_path) -> None:
+    """With no override the path is an XDG *state* path (stable across restarts)."""
+    monkeypatch.delenv("HSYNC_BOOTNODE_IDENTITY", raising=False)
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    assert default_identity_path() == tmp_path / "hsync" / "bootnode" / "identity.pem"
+
+
+def test_default_identity_path_honours_the_env_override(monkeypatch, tmp_path) -> None:
+    target = tmp_path / "custom" / "id.pem"
+    monkeypatch.setenv("HSYNC_BOOTNODE_IDENTITY", str(target))
+    assert default_identity_path() == target
+
+
+def test_resolve_identity_returns_none_for_ephemeral() -> None:
+    assert _resolve_identity(None, True, host="127.0.0.1", public_hosts=[]) is None
+
+
+def test_resolve_identity_rejects_identity_and_ephemeral() -> None:
+    import pytest
+
+    from hsync_bootnode.handler import BootConfigError
+
+    with pytest.raises(BootConfigError, match="mutually exclusive"):
+        _resolve_identity("id.pem", True, host="127.0.0.1", public_hosts=[])
+
+
+def test_resolve_identity_defaults_to_the_state_path(monkeypatch, tmp_path) -> None:
+    state = tmp_path / "state" / "identity.pem"
+    monkeypatch.setenv("HSYNC_BOOTNODE_IDENTITY", str(state))
+    node = _resolve_identity(None, False, host="127.0.0.1", public_hosts=[])
+    assert node is not None
+    assert state.is_file()
+
+
+def test_identity_options_are_documented_in_help() -> None:
+    result = runner.invoke(app, ["run", "--help"])
+    assert result.exit_code == 0
+    assert "--identity" in result.output
+    assert "--ephemeral" in result.output
+    assert "HSYNC_BOOTNODE_EPHEMERAL" in result.output

@@ -157,10 +157,11 @@ documentation-engineering rules:
 
 * **No-log invariant**
   Identical in every language: the process NEVER writes peer data (IPs, CIDs,
-  timestamps) to disk. The routing table is RAM-only; the TLS identity is
-  in-memory and regenerated per process **by default**, with an opt-in
-  `--identity PATH` exception that persists only the operator's own key+cert
-  (ADR-0034) so the fingerprint is stable and rotatable; diagnostics are
+  timestamps) to disk. The routing table is RAM-only; the TLS identity is a
+  persistent ECDSA P-256 key+cert kept **by default** (`--identity PATH`
+  overrides the XDG state path; `--ephemeral` keeps it in memory) — the
+  operator's own key+cert (ADR-0034/ADR-0037), never peer data, so the
+  fingerprint is stable and rotatable; diagnostics are
   stderr-only and split in two: an always-on, peer-free operational channel
   (`warn`/`error`) and the opt-in, peer-aware full operation log (`--debug` /
   `HSYNC_BOOTNODE_DEBUG=1`). Enforced for

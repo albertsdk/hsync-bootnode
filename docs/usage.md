@@ -59,7 +59,7 @@ hsync-bootnode identity rotate --public-host boot.example.com
 ### `--version`
 
 Prints the version and the protocol, e.g.
-`hsync-bootnode 0.1.0 (boot/1, Python v1)`, then exits.
+`hsync-bootnode 1.0.0 (boot/1, Python v1)`, then exits.
 
 ## Exit codes
 

@@ -67,8 +67,8 @@ UDP :443
    regardless of group and returns no frame (in private mode it is token-gated
    too, and a refusal is a silent drop — the spec has no `leave` response).
 6. Reply: `ack` (register/refresh, carries `observed_endpoint`) or `response`
-   (query, random sample up to `limit`, prefer advertised endpoints, every
-   advisory field relayed verbatim); returned
+   (query, random sample up to `limit`, every advertised endpoint relayed as the
+   peer's candidate list, every advisory field relayed verbatim); returned
    as already-serialized JSON **bytes** (Pydantic `TypeAdapter.dump_json`),
    written verbatim by the transport.
 

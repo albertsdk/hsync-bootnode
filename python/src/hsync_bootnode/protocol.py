@@ -218,9 +218,7 @@ class BootPeer(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     cid: str = Field(pattern=CID_PATTERN)
-    ip: str
-    port: int = Field(ge=1, le=65535)
-    proto: BucketProto = "tcp"
+    endpoints: list[Endpoint] = Field(min_length=1, max_length=16)
     cert_fp: str = Field(min_length=1, max_length=256)
     bucket: BucketName
     group: str | None = None

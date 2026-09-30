@@ -170,6 +170,21 @@ Trade-offs (by design, not defects):
 - No account system and no persistence: routing table, keys and limits live in
   RAM only (see "Privacy and anonymity model").
 
+## Endpoint candidates (`endpoints`)
+
+`register` carries the peer's data-plane endpoint candidates. The node stores
+them and relays the **full list, verbatim and in order**, on every peer of a
+`query` response (a peer that advertised none is relayed as a single-element
+list with its observed source endpoint).
+
+The list is **advisory only** and the node never interprets or orders by it. A
+requester tries the candidates, preferring one reachable from its own network
+(a host/LAN address) over the NATed public one, so two peers behind the same NAT
+— where the public endpoint has no hairpin route on most home routers — still
+connect over the local path. The candidates are unauthenticated hints: the data
+plane authenticates the peer by certificate pinning before any file is
+exchanged.
+
 ## Peer capacity hint (`capacity`)
 
 `register` may carry an advisory `capacity` hint (integer `0..32`, default `0`;

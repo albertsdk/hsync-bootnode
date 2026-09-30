@@ -137,17 +137,56 @@ def test_query_returns_advertised_endpoint_random_sample() -> None:
     assert response["type"] == "response"
     assert response["count"] == 2
     assert response["error"] is None
-    peers = {(p["cid"], p["ip"], p["port"]) for p in response["peers"]}
+    peers = {
+        (p["cid"], p["endpoints"][0]["host"], p["endpoints"][0]["port"]) for p in response["peers"]
+    }
     assert peers == {
         (CID, "198.51.100.7", 443),
         (CID2, "198.51.100.8", 443),
     }
 
 
+def test_query_relays_every_advertised_endpoint_in_order() -> None:
+    """The candidate list is relayed verbatim: no hairpin for same-NAT peers.
+
+    Regression for the NAT-hairpin failure: the node used to relay only
+    ``endpoints[0]`` (the public one), so a requester behind the same NAT had no
+    local candidate to fall back to. Every advertised endpoint must survive, in
+    order, including the observed-source fallback for a peer that advertised
+    none.
+    """
+    h = make_handler()
+    send(
+        h,
+        register_frame(
+            cid=CID,
+            endpoints=[
+                {"proto": "tcp", "host": "203.0.113.7", "port": 443},
+                {"proto": "tcp", "host": "192.168.1.42", "port": 443},
+            ],
+        ),
+        peer_ip="198.51.100.7",
+        peer_port=54321,
+    )
+    no_endpoint = register_frame(cid=CID2, host="198.51.100.8")
+    no_endpoint.pop("endpoints")
+    send(h, no_endpoint, peer_ip="198.51.100.8", peer_port=54322)
+    response = decoded(send(h, query_frame(limit=10), peer_ip="10.0.0.1", peer_port=1111))
+    assert response is not None
+    relayed = {p["cid"]: p for p in response["peers"]}
+    assert relayed[CID]["endpoints"] == [
+        {"proto": "tcp", "host": "203.0.113.7", "port": 443},
+        {"proto": "tcp", "host": "192.168.1.42", "port": 443},
+    ]
+    assert relayed[CID]["reachable"] is True
+    assert relayed[CID2]["endpoints"] == [{"proto": "udp", "host": "198.51.100.8", "port": 54322}]
+    assert relayed[CID2]["reachable"] is False
+
+
 def test_capacity_hint_round_trips_through_query() -> None:
     """The advisory capacity hint is stored and echoed in the query peer list."""
     h = make_handler()
-    # endpoint branch: the advertised endpoints[0] is preferred
+    # endpoint branch: the advertised candidate list is relayed
     send(h, register_frame(cid=CID, capacity=32), peer_ip="198.51.100.7", peer_port=54321)
     # fallback branch: no advertised endpoint → the observed source is used
     no_endpoint = register_frame(cid=CID2, capacity=5, host="198.51.100.8")
@@ -195,7 +234,7 @@ def test_election_advertisement_round_trips_through_query() -> None:
     (``server_ready``) and a never-master seeder must stay distinguishable.
     """
     h = make_handler()
-    # endpoint branch: the advertised endpoints[0] is preferred
+    # endpoint branch: the advertised candidate list is relayed
     send(
         h,
         register_frame(
@@ -278,7 +317,7 @@ def test_reachable_is_derived_from_endpoints() -> None:
     assert reachable == {CID: True, CID2: False}
     # the endpoint-less peer falls back to its observed UDP source endpoint
     fallback = next(p for p in response["peers"] if p["cid"] == CID2)
-    assert (fallback["ip"], fallback["port"], fallback["proto"]) == ("198.51.100.8", 54322, "udp")
+    assert fallback["endpoints"] == [{"proto": "udp", "host": "198.51.100.8", "port": 54322}]
     # refresh never flips reachable (the record still advertises no endpoint)
     send(
         h,
@@ -742,9 +781,7 @@ def test_wire_serialization_is_compact_and_spec_ordered() -> None:
     ]
     assert list(decoded_ok["peers"][0]) == [
         "cid",
-        "ip",
-        "port",
-        "proto",
+        "endpoints",
         "cert_fp",
         "bucket",
         "group",
@@ -757,7 +794,7 @@ def test_wire_serialization_is_compact_and_spec_ordered() -> None:
         "startup_time",
         "sync_direction",
     ]
-    assert decoded_ok["peers"][0]["ip"] == "198.51.100.7"  # advertised endpoint wins
+    assert decoded_ok["peers"][0]["endpoints"][0]["host"] == "198.51.100.7"
     assert decoded_ok["peers"][0]["capacity"] == 20  # relayed advisory hint
     assert decoded_ok["peers"][0]["server_ready"] is False  # relayed election advert
     assert decoded_ok["peers"][0]["sync_direction"] == "bidirectional"

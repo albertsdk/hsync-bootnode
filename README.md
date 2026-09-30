@@ -52,10 +52,13 @@ network peers find each other with mDNS; when devices are spread across the
 Internet they need a rendezvous point. The bootnode is exactly that, and nothing
 more:
 
-- Clients **register** their public (NAT-mapped) endpoint with the node every
-  ~30 s and receive it back in an `ack`.
+- Clients **register** their endpoint candidate list (the NAT-mapped public
+  address and the local/LAN address) with the node every ~30 s and receive the
+  observed endpoint back in an `ack`.
 - Clients **query** the node and get a random sample of the peers currently
-  registered in their bucket.
+  registered in their bucket, each with the full candidate list the node relays
+  verbatim; the requester tries the candidates, preferring one reachable from its
+  own network.
 - The routing table is **RAM-only** with a 60-second TTL: stop the process and
   every trace of the network is gone.
 

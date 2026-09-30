@@ -33,6 +33,7 @@ from hsync_bootnode.protocol import (
     BootRefresh,
     BootRegister,
     BootResponse,
+    Endpoint,
     ObservedEndpoint,
 )
 from hsync_bootnode.ratelimit import TokenBucketLimiter
@@ -472,26 +473,26 @@ class BootHandler:
 
     @staticmethod
     def _to_peer(record: PeerRecord, model: BootQuery) -> BootPeer:
-        """Prefer the peer's advertised listen endpoint over the observed source.
+        """Relay the peer's full advertised candidate list over the observed source.
 
-        Both endpoint sources share one projection so the relayed advisory
+        Every declared ``endpoints[]`` element is relayed verbatim and in order;
+        only a register that carried no endpoint at all (the first STUN
+        register) falls back to a single-element list with the observed source
+        endpoint. Both branches share one projection so the relayed advisory
         fields (``capacity``, ``reachable`` and the election advertisement)
-        cannot drift between the two branches; the whole record is relayed
-        verbatim and never interpreted.
+        cannot drift; the whole record is relayed verbatim and never
+        interpreted.
         """
         cached = record.wire
         if cached is not None:
             return cached
         if record.endpoints:
-            endpoint = record.endpoints[0]
-            host, port, proto = endpoint.host, endpoint.port, endpoint.proto
+            endpoints = list(record.endpoints)
         else:
-            host, port, proto = record.ip, record.port, record.proto
+            endpoints = [Endpoint(proto=record.proto, host=record.ip, port=record.port)]
         peer = BootPeer(
             cid=record.cid,
-            ip=host,
-            port=port,
-            proto=proto,
+            endpoints=endpoints,
             cert_fp=record.cert_fp,
             bucket=model.bucket,
             group=record.group,

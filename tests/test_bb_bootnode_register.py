@@ -38,8 +38,7 @@ async def test_query_returns_advertised_endpoint(bootnode_factory, bucket, rng) 
     assert response["count"] == 1
     peer = response["peers"][0]
     assert peer["cid"] == cid
-    assert peer["ip"] == "198.51.100.7"
-    assert peer["port"] == 8443
+    assert peer["endpoints"] == [{"proto": "tcp", "host": "198.51.100.7", "port": 8443}]
 
 
 @pytest.mark.asyncio
@@ -52,8 +51,8 @@ async def test_query_falls_back_to_observed_source(bootnode_factory, bucket, rng
     assert response["type"] == "response"
     assert response["count"] == 1
     peer = response["peers"][0]
-    assert peer["ip"] == "127.0.0.1"  # observed loopback source, no advertised endpoint
-    assert peer["proto"] == "udp"
+    assert peer["endpoints"][0]["host"] == "127.0.0.1"  # observed loopback source
+    assert peer["endpoints"][0]["proto"] == "udp"
 
 
 @pytest.mark.asyncio

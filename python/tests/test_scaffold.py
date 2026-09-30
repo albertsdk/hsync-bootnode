@@ -77,8 +77,7 @@ def test_bucket_uses_canonical_hsync_name_rule() -> None:
     with pytest.raises(ValueError):
         BootPeer(
             cid=CID,
-            ip="198.51.100.7",
-            port=443,
+            endpoints=[{"proto": "tcp", "host": "198.51.100.7", "port": 443}],
             cert_fp="AA:BB",
             bucket="has space",
             version="1.0.0",
@@ -133,8 +132,7 @@ def test_capacity_hint_domain_bounds() -> None:
 
     peer = {
         "cid": CID,
-        "ip": "198.51.100.7",
-        "port": 443,
+        "endpoints": [{"proto": "tcp", "host": "198.51.100.7", "port": 443}],
         "cert_fp": "AA:BB",
         "bucket": "shared",
         "version": "1.0.0",
@@ -197,8 +195,7 @@ def test_election_advertisement_domain_bounds() -> None:
 
     peer = {
         "cid": CID,
-        "ip": "198.51.100.7",
-        "port": 443,
+        "endpoints": [{"proto": "tcp", "host": "198.51.100.7", "port": 443}],
         "cert_fp": "AA:BB",
         "bucket": "shared",
         "version": "1.0.0",

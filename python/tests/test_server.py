@@ -76,7 +76,7 @@ async def test_loopback_register_query_and_protected_refusal() -> None:
             assert response["error"] is None
             assert response["count"] == 1
             assert response["peers"][0]["cid"] == CID
-            assert response["peers"][0]["ip"] == "198.51.100.7"
+            assert response["peers"][0]["endpoints"][0]["host"] == "198.51.100.7"
     finally:
         server.close()
 

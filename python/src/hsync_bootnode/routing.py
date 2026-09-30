@@ -52,9 +52,9 @@ class PeerRecord:
     # Materialized wire projection, lazily built by BootHandler._to_peer. Valid for
     # this object's lifetime: register always creates a NEW PeerRecord, and refresh
     # only mutates connected/expires_at (neither is part of BootPeer). Every other
-    # field IS part of BootPeer (capacity, reachable and the election
-    # advertisement), so none of them may be mutated in place after the wire
-    # cache is built; a changed value requires a fresh register (new
+    # field IS part of BootPeer (the endpoints list, capacity, reachable and the
+    # election advertisement), so none of them may be mutated in place after the
+    # wire cache is built; a changed value requires a fresh register (new
     # PeerRecord), or the cache goes stale.
     wire: BootPeer | None = field(default=None, repr=False, compare=False)
 

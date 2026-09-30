@@ -20,10 +20,11 @@ still flows only between peers. See
 ## How it works in one paragraph
 
 A client registers itself with the node every 30 seconds and gets back an
-`ack` with its public (NAT-mapped) endpoint. To find peers, clients query the
-node and receive a random sample of the currently registered peers in their
-bucket. Everything lives in RAM with a 60-second TTL: stop the process and
-every trace of your network is gone.
+`ack` with its observed public (NAT-mapped) endpoint; its full endpoint
+candidate list (public and local/LAN) is relayed to querying peers. To find
+peers, clients query the node and receive a random sample of the currently
+registered peers in their bucket. Everything lives in RAM with a 60-second TTL:
+stop the process and every trace of your network is gone.
 
 ## Requirements
 

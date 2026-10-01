@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 import os
+import re
 
 from typer.testing import CliRunner
 
@@ -21,6 +22,17 @@ runner = CliRunner()
 # Keep the CLI tests hermetic: without this the default identity would be created
 # in the real XDG state dir. Tests that exercise persistence set their own path.
 _EPHEMERAL_ENV = {"HSYNC_BOOTNODE_EPHEMERAL": "1"}
+
+# Rich highlights option names by splitting them into styled segments (e.g.
+# ``--private`` becomes ``-`` + ``-private`` with an ANSI reset between) whenever
+# it emits color — as a CI runner that forces it does. Strip the escapes before
+# substring assertions so the help checks do not depend on color detection.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(text: str) -> str:
+    """Return *text* without ANSI styling (for help/substring assertions)."""
+    return _ANSI_RE.sub("", text)
 
 
 def test_version_flag() -> None:
@@ -88,8 +100,9 @@ def test_private_envvar_is_equivalent_to_the_flag() -> None:
 def test_private_option_is_documented_in_help() -> None:
     result = runner.invoke(app, ["run", "--help"])
     assert result.exit_code == 0
-    assert "--private" in result.output
-    assert "HSYNC_BOOTNODE_PRIVATE" in result.output
+    output = _plain(result.output)
+    assert "--private" in output
+    assert "HSYNC_BOOTNODE_PRIVATE" in output
 
 
 def test_ready_file_helpers_write_pid_and_remove(tmp_path) -> None:
@@ -310,6 +323,7 @@ def test_resolve_identity_defaults_to_the_state_path(monkeypatch, tmp_path) -> N
 def test_identity_options_are_documented_in_help() -> None:
     result = runner.invoke(app, ["run", "--help"])
     assert result.exit_code == 0
-    assert "--identity" in result.output
-    assert "--ephemeral" in result.output
-    assert "HSYNC_BOOTNODE_EPHEMERAL" in result.output
+    output = _plain(result.output)
+    assert "--identity" in output
+    assert "--ephemeral" in output
+    assert "HSYNC_BOOTNODE_EPHEMERAL" in output

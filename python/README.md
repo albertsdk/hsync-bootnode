@@ -1,4 +1,4 @@
-# hsync-bootnode — Python implementation (v1)
+# HSYNC Bootnode — Python implementation (v1)
 
 In-memory, zero-knowledge P2P bootstrap node for HSYNC, sharing the single wire
 protocol `boot/1` (see [`../protocol-spec/boot-1.md`](../protocol-spec/boot-1.md)).

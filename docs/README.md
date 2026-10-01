@@ -1,4 +1,4 @@
-# hsync-bootnode — Welcome
+# HSYNC Bootnode — Welcome
 
 `hsync-bootnode` is the Internet discovery node of the HSYNC sync network: it
 tells P2P clients which peers are currently online, without storing anything.

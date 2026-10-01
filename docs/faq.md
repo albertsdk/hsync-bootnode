@@ -1,4 +1,4 @@
-# FAQ — hsync-bootnode
+# HSYNC Bootnode — FAQ
 
 Operational questions about running the node and about the clients that connect
 to it. For the CLI itself see [usage.md](usage.md).

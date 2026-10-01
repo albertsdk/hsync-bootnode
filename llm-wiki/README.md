@@ -1,4 +1,4 @@
-# hsync-bootnode — LLM Wiki
+# HSYNC Bootnode — LLM Wiki
 
 Internal, agent-optimized knowledge base for the `hsync-bootnode` project
 (no-log, zero-knowledge P2P bootstrap node speaking `boot/1`).

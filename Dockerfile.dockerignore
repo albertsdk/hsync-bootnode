@@ -1,0 +1,35 @@
+# Build context is the repository root (see Dockerfile header). BuildKit reads
+# this per-Dockerfile ignore file when building with -f hsync-bootnode/Dockerfile;
+# patterns are relative to the context root. Only hsync-bootnode/python/ and
+# hsync-common/ are needed for the node image, so everything heavy or unrelated
+# is excluded.
+
+# Version control
+**/.git
+**/.gitignore
+
+# Virtualenvs
+**/.venv
+
+# Python caches / build artifacts
+**/__pycache__
+**/*.py[cod]
+**/*$py.class
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/*.egg-info
+**/build
+**/dist
+
+# Editor / tooling
+**/.vscode
+**/.idea
+
+# Other hsync projects not needed by the node image
+hsync-client/
+hsync-server/
+hsync-desktop/
+
+# Bootnode runtime data
+hsync-bootnode/hsync-data/

@@ -1,0 +1,26 @@
+name: hsync-bootnode
+
+services:
+  bootnode:
+    image: ${HSYNC_BOOTNODE_IMAGE:?Set HSYNC_BOOTNODE_IMAGE in .env}
+    restart: unless-stopped
+    # Run under the invoking user's ids so the bind-mounted identity directory
+    # stays writable.
+    user: "${HSYNC_UID:-1000}:${HSYNC_GID:-1000}"
+    # The container binds the unprivileged UDP port 8443 (the image runs as a
+    # non-root user); the host's public QUIC port is mapped to it. Clients use
+    # HSYNC_BOOTNODE_PORT (default 443) on the host.
+    command: ["run", "--host", "0.0.0.0", "--port", "8443"]
+    ports:
+      - "${HSYNC_BOOTNODE_PORT:-443}:8443/udp"
+    env_file:
+      - .env
+    volumes:
+      # Persistent TLS identity (the only on-disk artifact) and the readiness PID.
+      - ${HSYNC_BOOTNODE_DATA_DIR:-./hsync-data}:/var/lib/hsync-bootnode
+      # Optional protected-bucket group keys, mounted read-only; the entrypoint
+      # opens HSYNC_BOOTNODE_KEYS_FILE as fd 3 (see .env).
+      - ${HSYNC_BOOTNODE_KEYS_PATH:-/dev/null}:/keys:ro
+    read_only: true
+    tmpfs:
+      - /tmp

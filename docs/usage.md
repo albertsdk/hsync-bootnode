@@ -362,6 +362,11 @@ an actionable message instead of a traceback.
 
 ## Deploying as a service
 
+The [Debian package](getting-started-deb.md) installs and manages the systemd
+unit automatically; the [Docker](getting-started-docker.md) and
+[installer-script](getting-started-script.md) methods run the node in a
+container. The ready-made units below are for a manual [source install](getting-started-source.md):
+
 Ready-made units are in `packaging/`:
 
 | OS | Unit | Install |

@@ -13,87 +13,68 @@ Run it as-is and it is a **public** rendezvous point. Run it with `--private` an
 it becomes the closed rendezvous point of a single community: every frame is
 authenticated against a group key, there is no account to create and nothing is
 stored — a **private, pseudonymous P2P network over the Internet** whose file data
-still flows only between peers. See
-[Private node](usage.md#private-node-authenticated-bootstrap) and the
-[privacy and anonymity model](usage.md#privacy-and-anonymity-model).
+still flows only between peers.
 
 ## How it works in one paragraph
 
-A client registers itself with the node every 30 seconds and gets back an
-`ack` with its observed public (NAT-mapped) endpoint; its full endpoint
-candidate list (public and local/LAN) is relayed to querying peers. To find
-peers, clients query the node and receive a random sample of the currently
-registered peers in their bucket. Everything lives in RAM with a 60-second TTL:
-stop the process and every trace of your network is gone.
+A client registers itself with the node every 30 seconds and gets back an `ack`
+with its observed public (NAT-mapped) endpoint; its full endpoint candidate list
+is relayed to querying peers. To find peers, clients query the node and receive a
+random sample of the currently registered peers in their bucket. Everything lives
+in RAM with a 60-second TTL: stop the process and every trace of your network is
+gone.
 
 ## Requirements
 
 - Python 3.12+ (Linux, macOS, Windows)
 - UDP port 443 (or any other UDP port) reachable from the Internet — the 443
-  default is privileged: run as root, grant `CAP_NET_BIND_SERVICE` (the systemd
-  unit does), or use a port ≥ 1024 (e.g. `--port 8443`)
+  default is privileged: run as root, grant `CAP_NET_BIND_SERVICE` (the `.deb`
+  and systemd unit do), or use a port ≥ 1024 (e.g. `--port 8443`)
 - Optional: a UPnP-capable router for zero-touch UDP port mapping
 
-## Build the executable
+## Start here
 
-```bash
-./compile.sh           # host standalone → dist/<os>-<arch>/hsync-bootnode
-./compile.sh -t rpi    # Raspberry Pi armhf + arm64 (Docker + qemu-user-static)
-```
+This guide is organised as a linear journey; pick the step that matches where
+you are.
 
-Both commands above are build-time targets of **this** machine, except `rpi`:
-`native` embeds the host Python and its C library, so a binary copied to a
-machine with an older glibc refuses to start. To run the node on another
-machine, build the Debian package with `./compile.sh -t deb-all` and install
-that — see
-[Why does the binary abort with "GLIBC … not found" on another machine?](faq.md).
+### 1. Choose your install method
 
-## Install (Debian/Ubuntu — `.deb`)
+Methods are ordered from the simplest and most immediate to the most involved:
 
-```bash
-./compile.sh -t deb            # host arch → dist/deb/hsync-bootnode_<ver>_<arch>.deb
-sudo dpkg -i dist/deb/hsync-bootnode_*.deb
-sudo systemctl enable --now hsync-bootnode.service
-```
+- [Method 1 — Installer script](getting-started-script.md): `install.sh` via
+  `curl`, released container image. **Best for a host with Docker, least
+  setup.**
+- [Method 2 — Docker / Compose](getting-started-docker.md): manual Compose,
+  direct `docker run`, or a source image build. **Best if you manage
+  containers.**
+- [Method 3 — Debian/Ubuntu package](getting-started-deb.md): the node packaged
+  as a `.deb` (hardened systemd unit, group keys as a systemd credential). **Best
+  for a Debian/Ubuntu host without Docker.**
+- [Method 4 — From source](getting-started-source.md): clone and run with
+  `run.sh` / Poetry, or a standalone binary. **Best for development or a host you
+  control.**
 
-`./compile.sh -t deb-all` cross-builds amd64/arm64/armhf via Docker +
-`qemu-user-static`. The `-l/--language` flag (default `python`,
-also `DEB_LANGUAGE`) selects which implementation the artifact embeds;
-`rust` is rejected until that port exists. Protected buckets need a
-group-keys file (never shipped in the package):
+Start from the [Getting Started](getting-started.md) chooser for a comparison
+table that helps you pick.
 
-```bash
-sudo install -m 0640 /path/to/group-keys /etc/hsync-bootnode/group-keys
-```
+### 2. Configure the node
 
-## Install (from source)
+- **Public node** — the default; no configuration.
+- **Private node / protected buckets** — provision group keys; see
+  [usage.md → Private node](usage.md#private-node-authenticated-bootstrap) and
+  [usage.md → Group keys](usage.md#group-keys---keys-fd--hsync_bootnode_keys_fd).
 
-```bash
-cd hsync-bootnode/python
-python3 -m venv .venv
-.venv/bin/pip install .
-```
+### 3. Point clients at it
 
-## Quick start (open mode — no protected buckets)
+Set `HSYNC_BOOTNODE=<host>` on each client (with the group key for a private
+node). The client side is covered by the
+[client p2p bootnode guide](https://github.com/albertsdk/hsync-client/blob/main/docs/p2p-bootnode.md).
 
-```bash
-.venv/bin/hsync-bootnode run --host 0.0.0.0 --port 443
-```
-
-The node prints its effective configuration and the TLS certificate
-fingerprint, then serves forever. On first run it creates a persistent identity
-at `$XDG_STATE_HOME/hsync/bootnode/identity.pem` (override the path with
-`--identity PATH`), so its fingerprint is stable across restarts and clients can
-pin it; read it with `hsync-bootnode identity show`. Add `--ephemeral` for a
-throwaway node that keeps the identity in memory and writes nothing to disk. For
-protected buckets, a **private node** (every frame authenticated), service
-deployment (systemd/launchd/Windows) and the full option list, see the
-[Usage reference](usage.md).
-
-## Further reading
+### 4. Reference & internals
 
 | Document | Content |
 |---|---|
 | [usage.md](usage.md) | CLI reference, protected buckets and private nodes, keys provisioning, privacy/security model, OS services |
 | [faq.md](faq.md) | Operational FAQ: certificate pin/TOFU mismatches, stable identity, client-side recovery |
+| [usage.md](usage.md#deploying-as-a-service) | Deploying as a service (systemd/launchd/Windows) |
 | `protocol-spec/boot-1.md` | Wire protocol specification |

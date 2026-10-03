@@ -38,7 +38,7 @@ them.
 [![Status: v1](https://img.shields.io/badge/Status-v1-yellow.svg)](docs/README.md)
 
 **Quick navigation:**
-- **New to HSYNC?** Start with [What it is](#what-it-is) and the [Getting Started guide](docs/README.md)
+- **New to HSYNC?** Start with [What it is](#what-it-is) and the [Getting Started guide](docs/getting-started.md)
 - **Deploying a node?** See the [Usage reference](docs/usage.md) and [Deploying as a service](docs/usage.md#deploying-as-a-service)
 - **Writing an implementation?** Read the [`boot/1` specification](protocol-spec/boot-1.md)
 - **Want to contribute?** See [Contributing](CONTRIBUTING.md)
@@ -165,7 +165,7 @@ for the client-side setup.
 
 | Document | What it covers |
 | -------- | -------------- |
-| [Getting Started](docs/README.md) | Requirements, install (`.deb` / source), quick start |
+| [Getting Started](docs/getting-started.md) | Choose an install method (installer script, Docker, `.deb`, source) and run the node |
 | [Usage reference](docs/usage.md) | `run` options, environment variables, group keys, private nodes, privacy/security model, services, diagnostics |
 | [`boot/1` specification](protocol-spec/boot-1.md) | Wire protocol — the single source of truth |
 | [Internal wiki](llm-wiki/README.md) | Architecture, data models, decisions, hard invariants |

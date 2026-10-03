@@ -140,6 +140,18 @@ UDP :443
   `../compile.sh` (dispatch points, fail-fast contract) — never by adding
   packaging logic inside the per-language script.
 
+### Distribution & install entry points
+
+Four consumer-facing ways to run a node, kept identical in shape to
+`hsync-server` (decisions #41):
+
+| Method | Files | Notes |
+|---|---|---|
+| Installer script | `install.sh` | Resolves the latest release (or a pinned `--version`), writes `.env` + a self-contained `compose.yaml` under `~/.local/share/hsync-bootnode`, runs `docker compose up -d` and waits for the readiness PID. Docker Compose only; never `sudo`. |
+| Docker / Compose | `Dockerfile`, `Dockerfile.dockerignore`, `python/entrypoint.sh`, `compose.yaml`, `docker.sh` | Build context = repo parent (needs the sibling `hsync-common`); the entrypoint opens the mounted group-keys file as fd 3; the container binds the unprivileged UDP 8443, the host maps `HSYNC_BOOTNODE_PORT` (default 443); no new env vars. `docker.sh` builds/runs from source. |
+| Debian package | `packaging/deb/` (see above) | Hardened systemd unit, `DynamicUser`, `CAP_NET_BIND_SERVICE`, group keys as a systemd credential. |
+| From source | `run.sh` | Uniform clone-and-run: checks `../hsync-common`, creates `python/.venv` via Poetry, `exec hsync-bootnode`. Mirrors `hsync-server/run.sh`. |
+
 ## Tests
 
 | Suite | Scope |

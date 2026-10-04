@@ -106,6 +106,7 @@ UDP :443
 | macOS | `packaging/launchd/it.hsync.bootnode.plist` | v1 |
 | Windows | `packaging/windows/hsync-bootnode-service.xml` (WinSW) | v1 |
 | Linux `.deb` (amd64/arm64/armhf) | `../compile.sh -t deb`/`deb-all` (`-l/--language`, default `python`; `rust` rejected until that port exists) + `packaging/deb/` (control, maintainer scripts, deb unit, man page) | v1 |
+| Linux `.rpm` (x86_64/aarch64) | `../compile.sh -t rpm`/`rpm-all` + `packaging/rpm/` (`.spec`, Rocky Linux 9 builder); `python/compile.sh -t onedir` payload staged for `/usr/lib/hsync-bootnode` | v1 |
 | Raspberry Pi OS (armhf/arm64) | `../compile.sh -t rpi` (Docker + qemu, reuses `packaging/deb/Dockerfile.builder`) → `dist/rpi/<arch>/hsync-bootnode` | v1 |
 
 ## Packaging
@@ -126,10 +127,18 @@ UDP :443
   `/usr/bin/hsync-bootnode` symlink, the hardened deb systemd unit, and the
   gzipped man page; `DEBIAN/postinst` creates `/etc/hsync-bootnode/` (0750)
   for the out-of-package group-keys file and never enables the service.
+- `../compile.sh -t rpm` builds a `.rpm` from a staged buildroot
+  (`_stage_rpm_buildroot`) reusing the deb man page + unit, and runs `rpmbuild`
+  with an absolute `_topdir` and a writable `_dbpath` (a relative `_topdir`
+  breaks `%{buildroot}`, and non-root rpmbuild cannot open `/var/lib/rpm`).
+  `packaging/rpm/Dockerfile.builder` (Rocky Linux 9) provides the cross-build;
+  the spec uses `DynamicUser` (no system user) and creates `/etc/hsync-bootnode`
+  (0750) in `%post`.
 - **Binary portability floor**: `native` and `deb` build on the host, so their
   executable embeds the build machine's CPython + glibc (incompatible with any
-  machine carrying an older glibc); `deb-all` and `rpi` build inside
-  `python:3.12-bookworm` and are the portable artifacts — measured on a produced
+  machine carrying an older glibc); `deb-all`/`rpi` build inside
+  `python:3.12-bookworm` (glibc 2.36) and `rpm-all` inside `rockylinux:9`
+  (glibc 2.34), so those are the portable artifacts — measured on a produced
   amd64 bundle: CPython 3.12, floor `libc6 (>= 2.35)` (`libpython3.12.so.1.0`,
   `libgcc_s.so.1`), while the base image itself is glibc 2.36. `BASE_IMAGE` is a
   Dockerfile `ARG` only — no CLI flag selects an older base. The `.deb`'s

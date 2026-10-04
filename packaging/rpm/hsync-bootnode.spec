@@ -1,0 +1,67 @@
+%global _hsync_pkgdir %{pkgdir}
+
+Name:           hsync-bootnode
+Version:        __VERSION__
+Release:        1%{?dist}
+Summary:        HSYNC - P2P bootstrap node (no-log)
+
+License:        MPL-2.0
+URL:            https://github.com/albertsdk/hsync-bootnode
+Packager:       Alberto Basso <17047798+albertsdk@users.noreply.github.com>
+
+# PyInstaller onedir bundle carries its own Python runtime and private shared
+# libraries; rpm's automatic dependency scanner would mis-detect them. Declare
+# the real runtime requirements explicitly.
+AutoReqProv:    no
+Requires:       glibc
+Requires:       systemd
+
+%description
+hsync-bootnode is the Internet discovery node of the HSYNC sync network. It
+tells P2P clients which peers are currently online, speaking the boot/1
+protocol over QUIC/UDP 443 (TLS 1.3, RETRY + address validation).
+
+Everything lives in RAM with a 60-second TTL: no persistence, no logs, no PII
+on disk.
+
+%prep
+exit 0
+
+%install
+rm -rf %{buildroot}
+mkdir -p %{buildroot}
+cp -a %{_hsync_pkgdir}/. %{buildroot}/
+# The group-keys directory is never shipped (the operator provisions it), but
+# the package owns it so it is removed cleanly.
+mkdir -p %{buildroot}/etc/hsync-bootnode
+
+%post
+mkdir -p %{_sysconfdir}/hsync-bootnode
+chown root:root %{_sysconfdir}/hsync-bootnode 2>/dev/null || true
+chmod 0750 %{_sysconfdir}/hsync-bootnode
+command -v restorecon >/dev/null 2>&1 && \
+    restorecon -R %{_sysconfdir}/hsync-bootnode /usr/lib/systemd/system/hsync-bootnode.service 2>/dev/null || true
+# Register the unit but do NOT enable or start it: opt-in
+# ``systemctl enable --now hsync-bootnode.service``.
+systemctl daemon-reload 2>/dev/null || true
+exit 0
+
+%preun
+if [ "$1" -eq 0 ]; then
+    systemctl stop hsync-bootnode.service 2>/dev/null || true
+    systemctl disable hsync-bootnode.service 2>/dev/null || true
+fi
+exit 0
+
+%postun
+systemctl daemon-reload 2>/dev/null || true
+exit 0
+
+%files
+%dir %attr(0750,root,root) %{_sysconfdir}/hsync-bootnode
+%attr(0755,root,root) %{_prefix}/lib/hsync-bootnode
+/usr/bin/hsync-bootnode
+%{_mandir}/man1/hsync-bootnode.1.gz
+/usr/lib/systemd/system/hsync-bootnode.service
+
+%changelog

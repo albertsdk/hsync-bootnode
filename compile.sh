@@ -27,6 +27,9 @@
 #                               deb       .deb for the host architecture
 #                               deb-all   .deb for amd64, arm64 and armhf
 #                                         (via Docker)
+#                               rpm       .rpm for the host architecture
+#                               rpm-all   .rpm for x86_64 and aarch64
+#                                         (via Docker, Rocky Linux 9 baseline)
 #   -l, --language LANG     Implementation language of the executable
 #                           (default: python). Values:
 #                               python    current bootnode (implemented)
@@ -46,7 +49,8 @@
 #     committed python/.venv with PyInstaller)
 #   - deb target: the selected language's toolchain + dpkg-deb (dpkg-dev);
 #     fakeroot optional
-#   - rpi / deb-all: Docker with qemu-user-static (binfmt) configured
+#   - rpm target: the selected language's toolchain + rpmbuild (rpm-build)
+#   - rpi / deb-all / rpm-all: Docker with qemu-user-static (binfmt) configured
 #
 # Output:
 #   native:   dist/<os>-<arch>/hsync-bootnode[.exe]
@@ -55,6 +59,9 @@
 #   deb:      dist/deb/hsync-bootnode_<ver>_<arch>.deb
 #             Installable with dpkg -i / apt install
 #   deb-all:  dist/deb/hsync-bootnode_<ver>_{amd64,arm64,armhf}.deb
+#   rpm:      dist/rpm/hsync-bootnode-<ver>-1.<dist>.<arch>.rpm
+#             Installable with dnf install
+#   rpm-all:  dist/rpm/hsync-bootnode-<ver>-1.el9.{x86_64,aarch64}.rpm
 #
 # Author: Alberto Basso
 # =============================================================================
@@ -194,7 +201,7 @@ ${BOLD}Usage:${RESET}
 ${BOLD}Options:${RESET}
     -c, --clean              Clean build artifacts before building
     -t, --target TARGET      Build target (default: native)
-                             Supported: native, rpi, deb, deb-all
+                             Supported: native, rpi, deb, deb-all, rpm, rpm-all
     -l, --language LANGUAGE  Implementation language of the executable
                              (default: python). Supported: python, rust
     -v, --version VERSION    Override the artifact version (default: the
@@ -208,6 +215,8 @@ ${BOLD}Examples:${RESET}
     ./compile.sh -t rpi                               # Raspberry Pi armhf+arm64
     ./compile.sh -t deb                               # .deb for the host arch
     ./compile.sh -t deb-all                           # amd64, arm64, armhf
+    ./compile.sh -t rpm                               # .rpm for the host arch
+    ./compile.sh -t rpm-all                           # x86_64 + aarch64
     ./compile.sh -l python -t deb                     # explicit language
     DEB_LANGUAGE=rust ./compile.sh -t deb             # rejected until the
                                                       # Rust port exists
@@ -218,6 +227,8 @@ ${BOLD}Output:${RESET}
               ${RPI_OUTPUT_DIR}/arm64/${APP_NAME}
     deb:      ${DEB_OUTPUT_DIR}/${DEB_PKG_NAME}_<ver>_<arch>.deb
     deb-all:  ${DEB_OUTPUT_DIR}/${DEB_PKG_NAME}_<ver>_{amd64,arm64,armhf}.deb
+    rpm:      ${RPM_OUTPUT_DIR}/${DEB_PKG_NAME}-<ver>-1.<dist>.<arch>.rpm
+    rpm-all:  ${RPM_OUTPUT_DIR}/${DEB_PKG_NAME}-<ver>-1.el9.{x86_64,aarch64}.rpm
 EOF
 }
 
@@ -260,12 +271,29 @@ _semver_to_debian() {
     printf '%s' "$1" | sed 's/-/~/'
 }
 
+# Translate a SemVer version into an RPM Version: field (same '~' rule as
+# Debian: 1.2.0-alpha.1 -> 1.2.0~alpha.1). The Release: field stays a plain
+# number (`1%{?dist}`), so the prerelease marker lives in Version, not Release.
+_semver_to_rpm() {
+    _semver_to_debian "$1"
+}
+
 # Map uname -m to Debian architecture name.
 _arch_to_deb() {
     case "$1" in
         x86_64|amd64)   echo "amd64" ;;
         aarch64|arm64)  echo "arm64" ;;
         armv7l|armv7)   echo "armhf" ;;
+        *)              echo "$1" ;;
+    esac
+}
+
+# Map uname -m to RPM architecture name. RHEL/Rocky is 64-bit only, so only
+# x86_64 and aarch64 are supported (no armv7hl); anything else is echoed as-is.
+_arch_to_rpm() {
+    case "$1" in
+        x86_64|amd64)   echo "x86_64" ;;
+        aarch64|arm64)  echo "aarch64" ;;
         *)              echo "$1" ;;
     esac
 }
@@ -354,6 +382,20 @@ _container_build_cmd() {
     case "${DEB_LANGUAGE}" in
         python)
             printf '%s' "poetry install --only main,build && HSYNC_PREFER_PATH_PYINSTALLER=1 HSYNC_PYINSTALLER_WORKPATH=/tmp/work poetry run ./compile.sh -t onedir -o /build/deb-all/${deb_arch}/pyinstaller"
+            ;;
+        *)
+            validate_language
+            ;;
+    esac
+}
+
+# In-container command producing the onedir bundle for the RPM target of $1
+# (rpm_arch). The bundle MUST land at /build/rpm-all/<arch>/pyinstaller/<APP_NAME>.
+_container_rpm_build_cmd() {
+    local rpm_arch="$1"
+    case "${DEB_LANGUAGE}" in
+        python)
+            printf '%s' "poetry install --only main,build && HSYNC_PREFER_PATH_PYINSTALLER=1 HSYNC_PYINSTALLER_WORKPATH=/tmp/work poetry run ./compile.sh -t onedir -o /build/rpm-all/${rpm_arch}/pyinstaller"
             ;;
         *)
             validate_language
@@ -639,6 +681,229 @@ EOS
 }
 
 # -----------------------------------------------------------------------------
+# RPM package build (RHEL/Rocky/Alma/Fedora)
+# -----------------------------------------------------------------------------
+
+readonly RPM_DIR="packaging/rpm"
+readonly RPM_SPEC="${RPM_DIR}/hsync-bootnode.spec"
+readonly RPM_PKG_NAME="${APP_NAME}"
+readonly RPM_OUTPUT_DIR="${OUTPUT_BASE}/rpm"
+readonly RPM_BUILD_DIR="${BUILD_DIR}/rpm"
+readonly RPM_ALL_BUILD_DIR="${BUILD_DIR}/rpm-all"
+readonly RPM_BUILDER_IMAGE_PREFIX="hsync-bootnode-rpm-builder"
+
+# Stage a buildroot for rpmbuild: Debian payload (usr/) + the PyInstaller
+# --onedir bundle under /usr/lib/hsync-bootnode + /usr/bin symlink + gzipped man
+# page. No /etc conffile is shipped (the group-keys dir is created in %post).
+# $1 = stage_dir   $2 = built onedir dir
+_stage_rpm_buildroot() {
+    local stage_dir="$1" built_dir="$2"
+    rm -rf "${stage_dir}"
+    mkdir -p "${stage_dir}"
+
+    local item bn
+    for item in "${DEB_SRC_DATA}"/*; do
+        bn="$(basename "${item}")"
+        if [[ "${bn}" == "DEBIAN" || "${bn}" == "Dockerfile.builder" ]]; then
+            continue
+        fi
+        cp -a "${item}" "${stage_dir}/"
+    done
+
+    mkdir -p "${stage_dir}/usr/lib"
+    cp -a "${built_dir}" "${stage_dir}/usr/lib/${APP_NAME}"
+    chmod 0755 "${stage_dir}/usr/lib/${APP_NAME}/${APP_NAME}"
+
+    mkdir -p "${stage_dir}/usr/bin"
+    ln -sf "../lib/${APP_NAME}/${APP_NAME}" "${stage_dir}/usr/bin/${APP_NAME}"
+
+    find "${stage_dir}/usr" -type d -exec chmod 0755 {} + 2>/dev/null || true
+    find "${stage_dir}/usr" -type f -exec chmod 0644 {} + 2>/dev/null || true
+    chmod 0755 "${stage_dir}/usr/lib/${APP_NAME}/${APP_NAME}"
+    local man="${stage_dir}/usr/share/man/man1/${APP_NAME}.1"
+    [[ -f "${man}" ]] && gzip -n -9 -f "${man}"
+}
+
+# Render the spec with the resolved RPM version and echo its path.
+# $1 = version (SemVer)   $2 = work dir
+_render_rpm_spec() {
+    local version="$1" work_dir="$2"
+    local rpm_version rendered
+    rpm_version="$(_semver_to_rpm "${version}")"
+    rendered="${work_dir}/hsync-bootnode.spec"
+    sed "s/__VERSION__/${rpm_version}/g" "${RPM_SPEC}" > "${rendered}"
+    printf '%s' "${rendered}"
+}
+
+# Build a .rpm package for the host architecture (native build, no Docker).
+build_rpm() {
+    local version rpm_arch
+    version="$(get_version)"
+    rpm_arch="$(_arch_to_rpm "${ARCH_NAME}")"
+
+    log_step "Building ${RPM_PKG_NAME} v${version} for ${rpm_arch} (host build)..."
+
+    if ! command -v rpmbuild >/dev/null 2>&1; then
+        log_error "rpmbuild is required for the rpm target."
+        log_info "Install it with: dnf install rpm-build (RHEL/Rocky/Fedora)."
+        exit 1
+    fi
+    mkdir -p "${RPM_OUTPUT_DIR}" "${RPM_BUILD_DIR}"
+
+    local bin_distpath="${RPM_BUILD_DIR}/pyinstaller"
+    log_step "Building the ${DEB_LANGUAGE} executable payload..."
+    _build_onedir "$(pwd)/${bin_distpath}"
+    local built_dir="${bin_distpath}/${APP_NAME}"
+
+    _stage_rpm_buildroot "${RPM_BUILD_DIR}/pkg" "${built_dir}"
+    local stage_dir
+    stage_dir="$(cd "${RPM_BUILD_DIR}/pkg" && pwd)"
+    local spec_path
+    spec_path="$(_render_rpm_spec "${version}" "${RPM_BUILD_DIR}")"
+
+    log_step "Building .rpm with rpmbuild..."
+    rpmbuild -bb "${spec_path}" \
+        --define "pkgdir ${stage_dir}" \
+        --define "_topdir ${RPM_BUILD_DIR}/rpmbuild"
+
+    local rpm_file
+    rpm_file="$(ls "${RPM_BUILD_DIR}/rpmbuild/RPMS"/*/*.rpm 2>/dev/null | head -1)"
+    [[ -n "${rpm_file}" ]] || { log_error "rpmbuild produced no package"; exit 1; }
+    mv -f "${rpm_file}" "${RPM_OUTPUT_DIR}/"
+
+    rm -rf "${RPM_BUILD_DIR}/pyinstaller" 2>/dev/null || true
+
+    local rpm_name rpm_path size
+    rpm_name="$(basename "$(ls "${RPM_OUTPUT_DIR}"/*.rpm 2>/dev/null | head -1)")"
+    rpm_path="${RPM_OUTPUT_DIR}/${rpm_name}"
+    size="$(du -h "${rpm_path}" | cut -f1)"
+    echo
+    log_ok "RPM package built!"
+    echo
+    echo -e "  ${BOLD}Package:${RESET}  ${rpm_name}"
+    echo -e "  ${BOLD}Language:${RESET} ${DEB_LANGUAGE}"
+    echo -e "  ${BOLD}Arch:${RESET}     ${rpm_arch}"
+    echo -e "  ${BOLD}Size:${RESET}     ${size}"
+    echo
+    echo -e "${DIM}Install with:  sudo dnf install ${rpm_path}${RESET}"
+}
+
+# Build .rpm packages for x86_64 and aarch64 via Docker + qemu on the Rocky 9
+# baseline (separate binary build from the Debian one).
+build_rpm_all() {
+    local version
+    version="$(get_version)"
+
+    log_step "Building ${RPM_PKG_NAME} v${version} for x86_64 and aarch64..."
+
+    if ! command -v docker >/dev/null 2>&1; then
+        log_error "docker is required for the rpm-all target."
+        exit 1
+    fi
+    mkdir -p "${RPM_OUTPUT_DIR}"
+
+    local repo_root
+    repo_root="$(cd "${SCRIPT_DIR}/.." && pwd)"
+    local out_abs
+    out_abs="$(cd "${RPM_OUTPUT_DIR}" && pwd)"
+    local build_abs
+    mkdir -p "${BUILD_DIR}"
+    build_abs="$(cd "${BUILD_DIR}" && pwd)"
+
+    ensure_qemu_binfmt qemu-aarch64
+
+    local -A arch_docker_platform
+    arch_docker_platform["x86_64"]="linux/amd64"
+    arch_docker_platform["aarch64"]="linux/arm64"
+
+    local -a rpm_archs=("x86_64" "aarch64")
+
+    for rpm_arch in "${rpm_archs[@]}"; do
+        local docker_platform="${arch_docker_platform[${rpm_arch}]}"
+        local builder_tag="${RPM_BUILDER_IMAGE_PREFIX}:${rpm_arch}"
+        local bin_dir="${RPM_ALL_BUILD_DIR}/${rpm_arch}/pyinstaller"
+        mkdir -p "${bin_dir}"
+
+        echo
+        log_step "─── ${rpm_arch} build ───────────────────────────────────────"
+
+        log_step "Building Docker image ${builder_tag}..."
+        DOCKER_BUILDKIT=1 docker build \
+            --platform "${docker_platform}" \
+            --build-arg TARGET_PLATFORM="${docker_platform}" \
+            -t "${builder_tag}" \
+            -f "${RPM_DIR}/Dockerfile.builder" \
+            "${RPM_DIR}"
+
+        log_step "Compiling ${rpm_arch} binary inside container (${DEB_LANGUAGE})..."
+        local build_cmd
+        build_cmd="$(_container_rpm_build_cmd "${rpm_arch}")"
+        docker run --rm \
+            --platform "${docker_platform}" \
+            -u "$(id -u):$(id -g)" \
+            -e HOME=/tmp -e XDG_CACHE_HOME=/tmp \
+            -v "${repo_root}:/repo" \
+            -v "${build_abs}:/build" \
+            -w /repo/hsync-bootnode/python \
+            -e LC_ALL=C -e PYTHONWARNINGS=ignore \
+            -e PIP_DEFAULT_TIMEOUT=300 -e PIP_RETRIES=10 \
+            -e POETRY_REQUESTS_TIMEOUT=300 \
+            -e HSYNC_VERSION="${version}" \
+            "${builder_tag}" \
+            bash -c "${build_cmd}"
+
+        local built_dir="${bin_dir}/${APP_NAME}"
+        [[ -d "${built_dir}" ]] || { log_error "onedir bundle not produced for ${rpm_arch}"; exit 1; }
+        log_ok "${rpm_arch} binary ready ($(du -sh "${built_dir}" | cut -f1))"
+
+        local stage_dir="${RPM_ALL_BUILD_DIR}/${rpm_arch}/pkg"
+        local spec_path
+        spec_path="$(_render_rpm_spec "${version}" "${RPM_ALL_BUILD_DIR}/${rpm_arch}")"
+        _stage_rpm_buildroot "${stage_dir}" "${built_dir}"
+        stage_dir="$(cd "${stage_dir}" && pwd)"
+        local spec_abs
+        spec_abs="$(cd "$(dirname "${spec_path}")" && pwd)/$(basename "${spec_path}")"
+
+        log_step "Building .rpm for ${rpm_arch}..."
+        docker run --rm \
+            --platform "${docker_platform}" \
+            -u "$(id -u):$(id -g)" \
+            -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
+            -v "${stage_dir}:/pkg:ro" \
+            -v "${spec_abs}:/hsync.spec:ro" \
+            -v "${out_abs}:/out" \
+            -w /tmp \
+            "${builder_tag}" \
+            bash -c "
+                set -euo pipefail
+                topdir=/tmp/rpmbuild-\$\$
+                rpmbuild -bb /hsync.spec \
+                    --define 'pkgdir /pkg' \
+                    --define \"_topdir \${topdir}\"
+                out_rpm=\$(ls \${topdir}/RPMS/*/*.rpm | head -1)
+                cp \"\${out_rpm}\" /out/
+                chmod 0644 \"/out/\$(basename \"\${out_rpm}\")\"
+                chown \"\${HOST_UID}:\${HOST_GID}\" \"/out/\$(basename \"\${out_rpm}\")\"
+                rm -rf \"\${topdir}\"
+            "
+
+        local rpm_file
+        rpm_file="$(ls "${out_abs}/${RPM_PKG_NAME}-"*".${rpm_arch}.rpm" 2>/dev/null | head -1)"
+        [[ -n "${rpm_file}" ]] || { log_error ".rpm not produced for ${rpm_arch}"; exit 1; }
+        log_ok "  → $(basename "${rpm_file}") ($(du -h "${rpm_file}" | cut -f1))"
+    done
+
+    echo
+    log_ok "RPM packages built!"
+    echo
+    echo -e "  ${BOLD}Version:${RESET}   ${version}"
+    echo -e "  ${BOLD}Language:${RESET}  ${DEB_LANGUAGE}"
+    echo -e "  ${BOLD}Output:${RESET}    ${out_abs}/"
+    echo
+    echo -e "${DIM}Install with:  sudo dnf install ${out_abs}/${RPM_PKG_NAME}-${version}-1.el9.<arch>.rpm${RESET}"
+}
+
+# -----------------------------------------------------------------------------
 # Standalone executables
 # -----------------------------------------------------------------------------
 
@@ -862,9 +1127,32 @@ main() {
             fi
             build_deb_all
             ;;
+        rpm)
+            if [[ "${do_clean}" == true ]]; then
+                log_step "Cleaning rpm artifacts..."
+                rm -rf "${RPM_OUTPUT_DIR}" "${RPM_BUILD_DIR}"
+                echo
+            fi
+            build_rpm
+            ;;
+        rpm-all)
+            if ! command -v docker >/dev/null 2>&1; then
+                log_error "docker is required for the rpm-all target."
+                exit 1
+            fi
+            if [[ "${do_clean}" == true ]]; then
+                log_step "Cleaning rpm-all artifacts..."
+                rm -rf "${RPM_OUTPUT_DIR}" "${RPM_ALL_BUILD_DIR}"
+                docker image rm -f \
+                    "${RPM_BUILDER_IMAGE_PREFIX}:x86_64" \
+                    "${RPM_BUILDER_IMAGE_PREFIX}:aarch64" >/dev/null 2>&1 || true
+                echo
+            fi
+            build_rpm_all
+            ;;
         *)
             log_error "Unknown target: ${target}"
-            echo "Supported targets: native, rpi, deb, deb-all"
+            echo "Supported targets: native, rpi, deb, deb-all, rpm, rpm-all"
             exit 1
             ;;
     esac

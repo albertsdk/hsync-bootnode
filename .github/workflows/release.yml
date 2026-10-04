@@ -1,8 +1,8 @@
 name: Release
 
-# Publish prebuilt bootnode binaries, .deb packages, the install.sh installer and
-# compose.yaml as GitHub Release assets, and a multi-arch container image to
-# GHCR. Two triggers:
+# Publish prebuilt bootnode binaries, .deb and .rpm packages, the install.sh
+# installer and compose.yaml as GitHub Release assets, and a multi-arch
+# container image to GHCR. Two triggers:
 #
 # 1. vX.Y.Z tag pushed  →  create a formal Release (bumped version).
 # 2. workflow_dispatch  →  build artifacts without a tag (useful for testing;
@@ -11,7 +11,7 @@ name: Release
 # Only the Python v1 implementation is built (`-l python`, the default); the
 # rust/ port is wired into compile.sh once it exists. PyInstaller cannot
 # cross-compile, so native binaries are built on per-OS matrix runners; the
-# Linux-only .deb packages are cross-built via Docker + qemu.
+# Linux-only .deb/.rpm packages are cross-built via Docker + qemu.
 on:
   push:
     tags: ["v*"]
@@ -192,15 +192,19 @@ jobs:
           platforms: arm,arm64
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
-      - name: Build .deb packages
+      - name: Build .deb and .rpm packages
         working-directory: hsync-bootnode
         env:
           HSYNC_VERSION: ${{ steps.version.outputs.version }}
-        run: ./compile.sh --target deb-all
+        run: |
+          ./compile.sh --target deb-all
+          ./compile.sh --target rpm-all
       - uses: actions/upload-artifact@v7
         with:
           name: packages
-          path: hsync-bootnode/dist/deb/*.deb
+          path: |
+            hsync-bootnode/dist/deb/*.deb
+            hsync-bootnode/dist/rpm/*.rpm
 
   image:
     needs: gate

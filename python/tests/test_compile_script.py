@@ -106,3 +106,34 @@ def test_deb_is_built_into_the_out_mount() -> None:
     assert 'fakeroot dpkg-deb --build "${stage}" /out' in script
     assert '-v "${out_abs}:/out"' in script
     assert 'deb_path="${out_abs}/${deb_name}"' in script
+
+
+def test_rpm_version_mapping_is_registered() -> None:
+    """RPM >= 4.10 uses ``~`` for "sorts before everything"; ``_semver_to_rpm``
+    must delegate to ``_semver_to_debian`` rather than re-encode the rule."""
+    script = _script()
+    assert "_semver_to_rpm()" in script
+    assert "_semver_to_debian \"$1\"" in script
+
+
+def test_rpm_arch_mapping_is_64_bit_only() -> None:
+    """RHEL/Rocky is 64-bit only: only x86_64 and aarch64 are mapped."""
+    script = _script()
+    assert 'x86_64|amd64)   echo "x86_64"' in script
+    assert 'aarch64|arm64)  echo "aarch64"' in script
+
+
+def test_rpm_targets_are_registered_in_dispatch() -> None:
+    script = _script()
+    assert "rpm)" in script
+    assert "rpm-all)" in script
+    assert "Supported targets:" in script
+    assert "rpm-all" in script
+
+
+def test_rpm_container_onedir_distpath_is_under_rpm_all() -> None:
+    """The RPM container build writes its onedir under /build/rpm-all/<arch>."""
+    script = _script()
+    assert "_container_rpm_build_cmd() {" in script
+    assert "-o /build/rpm-all/${rpm_arch}/pyinstaller" in script
+    assert 'local bin_dir="${RPM_ALL_BUILD_DIR}/${rpm_arch}/pyinstaller"' in script

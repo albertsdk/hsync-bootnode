@@ -130,14 +130,14 @@ clients at the node with `HSYNC_BOOTNODE` (see the client
 
 ## Associated Ecosystem Components
 
-`hsync-bootnode` is an optional component of the HSYNC ecosystem:
+The other components of the HSYNC ecosystem:
 
 - [HSYNC Main](https://github.com/albertsdk/hsync/blob/main/README.md) — Umbrella repository and project overview.
-- [HSYNC Client](https://github.com/albertsdk/hsync-client/blob/main/README.md) — Sync client; the consumer of the `boot/1` protocol *(Stable)*.
-- [HSYNC Common](https://github.com/albertsdk/hsync-common/blob/main/README.md) — Shared library; mirrors the `boot/1` contract for the Python side.
-- [HSYNC Desktop](https://github.com/albertsdk/hsync-desktop/blob/main/docs/README.md) — Desktop client GUI front-end, exposes the bootnode setting *(in development)*.
-- [HSYNC Android](https://github.com/albertsdk/hsync-android/blob/main/docs/README.md) — Android client app, mirrors the `boot/1` protocol *(in development)*.
-- [HSYNC Server](https://github.com/albertsdk/hsync-server/blob/main/README.md) — Central synchronization hub (Server Mode).
+- [HSYNC Common](https://github.com/albertsdk/hsync-common/blob/main/README.md) — Shared library: data models, protocol, delta transfer, hashing.
+- [HSYNC Server](https://github.com/albertsdk/hsync-server/blob/main/README.md) — Central sync hub: REST API, WebSocket relay, file storage.
+- [HSYNC Client](https://github.com/albertsdk/hsync-client/blob/main/README.md) — CLI client: Server Mode and p2p Mode.
+- [HSYNC Desktop](https://github.com/albertsdk/hsync-desktop/blob/main/README.md) — Desktop GUI front-end. *(in development)*
+- [HSYNC Android](https://github.com/albertsdk/hsync-android/blob/main/README.md) — Android client app. *(in development)*
 
 ## Security & Vulnerability Reporting
 

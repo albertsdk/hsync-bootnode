@@ -12,6 +12,11 @@
 #ifndef AppVersion
   #define AppVersion "0.0.0"
 #endif
+; Numeric file version (up to four dot-separated numbers). The workflow passes
+; the SemVer stripped of its prerelease/build suffix.
+#ifndef VersionInfoVersion
+  #define VersionInfoVersion "0.0.0.0"
+#endif
 #ifndef SourceExe
   #define SourceExe "hsync-bootnode.exe"
 #endif
@@ -27,6 +32,7 @@ AppId={{A1B2C3D4-E5F6-4A7B-8C9D-0E1F2A3B4C5D}
 AppName=HSYNC Bootnode
 AppVersion={#AppVersion}
 AppVerName=HSYNC Bootnode {#AppVersion}
+VersionInfoVersion={#VersionInfoVersion}
 AppPublisher=HSYNC
 AppPublisherURL=https://github.com/albertsdk/hsync-bootnode
 DefaultDirName={autopf}\HSYNC Bootnode

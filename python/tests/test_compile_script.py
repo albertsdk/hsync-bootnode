@@ -113,7 +113,7 @@ def test_rpm_version_mapping_is_registered() -> None:
     must delegate to ``_semver_to_debian`` rather than re-encode the rule."""
     script = _script()
     assert "_semver_to_rpm()" in script
-    assert "_semver_to_debian \"$1\"" in script
+    assert '_semver_to_debian "$1"' in script
 
 
 def test_rpm_arch_mapping_is_64_bit_only() -> None:
@@ -158,7 +158,9 @@ def test_docs_latest_download_names_are_created_by_the_release() -> None:
     workflow = (repo / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     names: set[str] = set()
     for md in (repo / "docs").rglob("*.md"):
-        for name in re.findall(r"releases/latest/download/([A-Za-z0-9._-]+)", md.read_text(encoding="utf-8")):
+        for name in re.findall(
+            r"releases/latest/download/([A-Za-z0-9._-]+)", md.read_text(encoding="utf-8")
+        ):
             if name.startswith(repo.name) and "VERSION" not in name and "ARCH" not in name:
                 names.add(name)
     names -= {"install.sh", "SHA256SUMS"}

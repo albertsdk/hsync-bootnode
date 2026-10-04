@@ -140,6 +140,11 @@ UDP :443
   `hsync-bootnode-service.exe`) + `hsync-bootnode-service-frozen.xml`, grants
   LocalService modify on `%ProgramData%\hsync-bootnode`, then installs and starts
   the service. Uninstall stops and removes it.
+- The release workflow (`../.github/workflows/release.yml`) also publishes
+  fixed-name `latest` aliases (e.g. `hsync-bootnode-x86_64.rpm`,
+  `hsync-bootnode-amd64.deb`, `hsync-bootnode-windows-amd64-setup.exe`) so the
+  docs can link `releases/latest/download/<name>` without a version
+  (`RELEASES.md` §5.8); guarded by `python/tests/test_compile_script.py`.
 - **Binary portability floor**: `native` and `deb` build on the host, so their
   executable embeds the build machine's CPython + glibc (incompatible with any
   machine carrying an older glibc); `deb-all`/`rpi` build inside

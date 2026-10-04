@@ -302,6 +302,31 @@ jobs:
           # to the top level for flat release assets.
           find . -mindepth 2 -type f -exec mv -t . {} +
           find . -mindepth 1 -type d -empty -delete
+      - name: Create latest aliases
+        # Fixed-name copies so `releases/latest/download/<name>` is a stable link.
+        # A missing source is skipped (that format was not built in this run).
+        run: |
+          cd assets
+          mk_alias() {
+            for spec in "$@"; do
+              src="${spec%%|*}"
+              dst="${spec##*|}"
+              # shellcheck disable=SC2086
+              if ls $src >/dev/null 2>&1; then cp $src "$dst"; fi
+            done
+          }
+          mk_alias \
+            "hsync-bootnode-*-linux-amd64.tar.gz|hsync-bootnode-linux-amd64.tar.gz" \
+            "hsync-bootnode-*-linux-arm64.tar.gz|hsync-bootnode-linux-arm64.tar.gz" \
+            "hsync-bootnode-*-darwin-arm64.tar.gz|hsync-bootnode-darwin-arm64.tar.gz" \
+            "hsync-bootnode-*-darwin-amd64.tar.gz|hsync-bootnode-darwin-amd64.tar.gz" \
+            "hsync-bootnode-*-windows-amd64.zip|hsync-bootnode-windows-amd64.zip" \
+            "hsync-bootnode_*_amd64.deb|hsync-bootnode-amd64.deb" \
+            "hsync-bootnode_*_arm64.deb|hsync-bootnode-arm64.deb" \
+            "hsync-bootnode_*_armhf.deb|hsync-bootnode-armhf.deb" \
+            "hsync-bootnode-*-1.el9.x86_64.rpm|hsync-bootnode-x86_64.rpm" \
+            "hsync-bootnode-*-1.el9.aarch64.rpm|hsync-bootnode-aarch64.rpm" \
+            "hsync-bootnode-*-windows-amd64-setup.exe|hsync-bootnode-windows-amd64-setup.exe"
       - name: Prepare installer and Compose file
         run: |
           # Pin the published installer to this release tag, and ship the

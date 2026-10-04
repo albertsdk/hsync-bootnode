@@ -17,13 +17,13 @@ as a systemd credential. No Docker and no Python are required.
 ## Install
 
 ```bash
-curl -fLO "https://github.com/albertsdk/hsync-bootnode/releases/latest/download/hsync-bootnode-VERSION-1.el9.ARCH.rpm"
-sudo dnf install hsync-bootnode-VERSION-1.el9.ARCH.rpm
+curl -fLO "https://github.com/albertsdk/hsync-bootnode/releases/latest/download/hsync-bootnode-x86_64.rpm"
+sudo dnf install hsync-bootnode-x86_64.rpm
 ```
 
-Replace `VERSION` and `ARCH` with the release you downloaded (for example
-`1.0.0` and `x86_64`). To install a specific version, use that release's URL
-(replace `latest/download` with `download/vX.Y.Z`).
+The URL always points to the **latest stable** release; use `aarch64` instead of
+`x86_64` on ARM. To pin a version, use
+`https://github.com/albertsdk/hsync-bootnode/releases/download/vX.Y.Z/hsync-bootnode-<version>-1.el9.<arch>.rpm`.
 
 To build from the checkout instead:
 

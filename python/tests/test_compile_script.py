@@ -148,3 +148,20 @@ def test_windows_installer_is_wired() -> None:
     workflow = (repo / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     assert "hsync-bootnode.iss" in workflow
     assert "innosetup" in workflow
+
+
+def test_docs_latest_download_names_are_created_by_the_release() -> None:
+    """Every fixed-name asset the docs download from releases/latest/download must
+    be created as an alias by the release workflow, so the link cannot 404. Names
+    with the VERSION/ARCH placeholders are pinned examples, not aliases."""
+    repo = COMPILE_SH.parent
+    workflow = (repo / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    names: set[str] = set()
+    for md in (repo / "docs").rglob("*.md"):
+        for name in re.findall(r"releases/latest/download/([A-Za-z0-9._-]+)", md.read_text(encoding="utf-8")):
+            if name.startswith(repo.name) and "VERSION" not in name and "ARCH" not in name:
+                names.add(name)
+    names -= {"install.sh", "SHA256SUMS"}
+    assert names, "expected at least one fixed latest/download asset in the docs"
+    missing = sorted(n for n in names if n not in workflow)
+    assert not missing, f"docs reference latest aliases the workflow does not create: {missing}"

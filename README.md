@@ -33,6 +33,7 @@ them.
 ---
 
 [![License: MPL 2.0](https://img.shields.io/badge/License-MPL_2.0-brightgreen.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/albertsdk/hsync-bootnode)](https://github.com/albertsdk/hsync-bootnode/releases/latest)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/)
 [![Rust 1.98+ (planned)](https://img.shields.io/badge/Rust-1.98+_(planned)-DEA584.svg)](rust/)
 [![Status: v1](https://img.shields.io/badge/Status-v1-yellow.svg)](docs/README.md)

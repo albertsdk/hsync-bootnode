@@ -12,10 +12,13 @@ and registers it as the Windows service **`hsync-bootnode`** through
 
 ## Install
 
-1. Download `hsync-bootnode-VERSION-windows-amd64-setup.exe` from the release
-   page (replace `VERSION` with the release you want).
-2. Run it (the wizard prompts for elevation). The service is installed and
-   started automatically.
+Download the latest installer:
+
+[Download hsync-bootnode-windows-amd64-setup.exe](https://github.com/albertsdk/hsync-bootnode/releases/latest/download/hsync-bootnode-windows-amd64-setup.exe)
+
+Run it (the wizard prompts for elevation). The service is installed and started
+automatically. The link always points to the **latest stable** release; to pin a
+version, use the [Releases page](https://github.com/albertsdk/hsync-bootnode/releases).
 
 ## Manage the service
 

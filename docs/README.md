@@ -50,7 +50,13 @@ Methods are ordered from the simplest and most immediate to the most involved:
 - [Method 3 — Debian/Ubuntu package](getting-started-deb.md): the node packaged
   as a `.deb` (hardened systemd unit, group keys as a systemd credential). **Best
   for a Debian/Ubuntu host without Docker.**
-- [Method 4 — From source](getting-started-source.md): clone and run with
+- [Method 4 — RPM package](getting-started-rpm.md): the node packaged as a
+  `.rpm` (hardened systemd unit). **Best for a RHEL/Rocky/Alma/Fedora host
+  without Docker.**
+- [Method 5 — Windows installer](getting-started-windows.md): per-machine
+  installer that registers the node as a Windows service (WinSW). **Best for a
+  Windows Server host.**
+- [Method 6 — From source](getting-started-source.md): clone and run with
   `run.sh` / Poetry, or a standalone binary. **Best for development or a host you
   control.**
 

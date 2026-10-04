@@ -137,3 +137,14 @@ def test_rpm_container_onedir_distpath_is_under_rpm_all() -> None:
     assert "_container_rpm_build_cmd() {" in script
     assert "-o /build/rpm-all/${rpm_arch}/pyinstaller" in script
     assert 'local bin_dir="${RPM_ALL_BUILD_DIR}/${rpm_arch}/pyinstaller"' in script
+
+
+def test_windows_installer_is_wired() -> None:
+    """The Inno Setup installer + WinSW service XML must exist and be built."""
+    repo = COMPILE_SH.parent
+    win = repo / "packaging" / "windows"
+    assert (win / "hsync-bootnode.iss").is_file()
+    assert (win / "hsync-bootnode-service-frozen.xml").is_file()
+    workflow = (repo / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "hsync-bootnode.iss" in workflow
+    assert "innosetup" in workflow

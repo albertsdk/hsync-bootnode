@@ -35,3 +35,7 @@ group-keys
 
 # Benchmark result artifacts
 bench_result.txt
+
+# Windows installer — WinSW binary downloaded at build time.
+packaging/windows/WinSW-x64.exe
+packaging/windows/icon.ico

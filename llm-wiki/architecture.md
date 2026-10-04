@@ -105,6 +105,7 @@ UDP :443
 | Linux | `packaging/systemd/hsync-bootnode.service` | v1 |
 | macOS | `packaging/launchd/it.hsync.bootnode.plist` | v1 |
 | Windows | `packaging/windows/hsync-bootnode-service.xml` (WinSW) | v1 |
+| Windows installer (x64) | `packaging/windows/hsync-bootnode.iss` (Inno Setup, built in CI) + `hsync-bootnode-service-frozen.xml`; per-machine, registers the WinSW service | v1 |
 | Linux `.deb` (amd64/arm64/armhf) | `../compile.sh -t deb`/`deb-all` (`-l/--language`, default `python`; `rust` rejected until that port exists) + `packaging/deb/` (control, maintainer scripts, deb unit, man page) | v1 |
 | Linux `.rpm` (x86_64/aarch64) | `../compile.sh -t rpm`/`rpm-all` + `packaging/rpm/` (`.spec`, Rocky Linux 9 builder); `python/compile.sh -t onedir` payload staged for `/usr/lib/hsync-bootnode` | v1 |
 | Raspberry Pi OS (armhf/arm64) | `../compile.sh -t rpi` (Docker + qemu, reuses `packaging/deb/Dockerfile.builder`) → `dist/rpi/<arch>/hsync-bootnode` | v1 |
@@ -134,6 +135,11 @@ UDP :443
   `packaging/rpm/Dockerfile.builder` (Rocky Linux 9) provides the cross-build;
   the spec uses `DynamicUser` (no system user) and creates `/etc/hsync-bootnode`
   (0750) in `%post`.
+- The Windows installer (`packaging/windows/hsync-bootnode.iss`, built in CI on
+  `windows-latest`) is per-machine: it installs the frozen `.exe` + WinSW (as
+  `hsync-bootnode-service.exe`) + `hsync-bootnode-service-frozen.xml`, grants
+  LocalService modify on `%ProgramData%\hsync-bootnode`, then installs and starts
+  the service. Uninstall stops and removes it.
 - **Binary portability floor**: `native` and `deb` build on the host, so their
   executable embeds the build machine's CPython + glibc (incompatible with any
   machine carrying an older glibc); `deb-all`/`rpi` build inside

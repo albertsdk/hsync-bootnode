@@ -93,6 +93,8 @@ Pick an install method and follow it to a running node:
   released container image;
 - [Docker / Compose](docs/getting-started-docker.md) — manual container setup;
 - [Debian package](docs/getting-started-deb.md) — `.deb` with a hardened systemd unit;
+- [RPM package](docs/getting-started-rpm.md) — `.rpm` for RHEL/Rocky/Alma/Fedora;
+- [Windows installer](docs/getting-started-windows.md) — per-machine service installer;
 - [From source](docs/getting-started-source.md) — clone and run.
 
 The [Getting Started](docs/getting-started.md) chooser compares the methods; point

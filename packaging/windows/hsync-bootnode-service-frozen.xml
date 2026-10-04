@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- hsync-bootnode — Windows service definition for the FROZEN .exe (WinSW v2).
+
+     Installed and registered by hsync-bootnode.iss. WinSW reads the XML whose
+     basename matches the service wrapper executable: the installer installs
+     WinSW as hsync-bootnode-service.exe, so it reads this file renamed to
+     hsync-bootnode-service.xml in the same directory.
+
+     %BASE% is the wrapper's own directory (the install dir); %ProgramData% is
+     expanded by WinSW to the machine-wide data directory created by the
+     installer. The node writes its TLS identity there because the install dir
+     under Program Files is not writable by the LocalService account.
+-->
+<service>
+  <id>hsync-bootnode</id>
+  <name>HSYNC bootnode</name>
+  <description>HSYNC P2P bootstrap node (boot/1, QUIC/UDP 443, no-log)</description>
+
+  <executable>%BASE%\hsync-bootnode.exe</executable>
+  <arguments>run --host 0.0.0.0 --port 443 --identity %ProgramData%\hsync-bootnode\identity.pem</arguments>
+  <workingdirectory>%BASE%</workingdirectory>
+
+  <startmode>Automatic</startmode>
+  <onfailure action="restart" delay="5000"/>
+
+  <!-- Private node (protected-bucket policy node-wide): require a valid
+       bucket_token on every frame. Uncomment and set the group keys to enable.
+  <env name="HSYNC_BOOTNODE_PRIVATE" value="1"/>
+  -->
+
+  <serviceaccount>
+    <domain>NT AUTHORITY</domain>
+    <user>LocalService</user>
+  </serviceaccount>
+
+  <!-- Stderr carries the always-on operational channel (warn/error). -->
+  <log mode="append"/>
+</service>

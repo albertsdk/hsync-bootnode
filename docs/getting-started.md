@@ -13,7 +13,8 @@ methods are ordered from the simplest and most immediate to the most involved.
 | 2 | **Docker / Compose** (manual) | You already manage containers, or want to build the image yourself | [Docker](getting-started-docker.md) |
 | 3 | **Debian/Ubuntu package** (`.deb`) | A Debian/Ubuntu host without Docker, managed by systemd | [Debian package](getting-started-deb.md) |
 | 4 | **RPM package** (`.rpm`) | A RHEL/Rocky/Alma/Fedora host without Docker, managed by systemd | [RPM package](getting-started-rpm.md) |
-| 5 | **From source** (clone and run) | Development, or a host where you control the toolchain | [Run from source](getting-started-source.md) |
+| 5 | **Windows installer** (`.exe`) | A Windows Server x64 host: per-machine install, registers a Windows service | [Windows installer](getting-started-windows.md) |
+| 6 | **From source** (clone and run) | Development, or a host where you control the toolchain | [Run from source](getting-started-source.md) |
 
 All methods result in the same node. The QUIC/UDP port must be reachable from
 the Internet (443 is the default; ports below 1024 need elevated privileges —

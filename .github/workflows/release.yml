@@ -1,8 +1,8 @@
 name: Release
 
-# Publish prebuilt bootnode binaries, .deb and .rpm packages, the install.sh
-# installer and compose.yaml as GitHub Release assets, and a multi-arch
-# container image to GHCR. Two triggers:
+# Publish prebuilt bootnode binaries, a Windows installer (Inno Setup), .deb and
+# .rpm packages, the install.sh installer and compose.yaml as GitHub Release
+# assets, and a multi-arch container image to GHCR. Two triggers:
 #
 # 1. vX.Y.Z tag pushed  →  create a formal Release (bumped version).
 # 2. workflow_dispatch  →  build artifacts without a tag (useful for testing;
@@ -139,6 +139,22 @@ jobs:
           else
             tar czf "../../release-out/hsync-bootnode-${version}-${{ matrix.target }}.tar.gz" hsync-bootnode
           fi
+      - name: Build the Windows installer (Inno Setup)
+        # Per-machine installer (admin): installs the daemon + WinSW and
+        # registers the hsync-bootnode Windows service.
+        if: runner.os == 'Windows'
+        working-directory: hsync-bootnode
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          $winsw = Join-Path (Get-Location) "packaging/windows/WinSW-x64.exe"
+          Invoke-WebRequest -Uri "https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe" -OutFile $winsw
+          & $iscc "/DAppVersion=${{ steps.version.outputs.version }}" `
+                  "/DSourceExe=$((Resolve-Path 'dist/windows-amd64/hsync-bootnode.exe').Path)" `
+                  "/DWinSWPath=$((Resolve-Path $winsw).Path)" `
+                  "/DOutDir=$((Resolve-Path 'release-out').Path)" `
+                  "packaging/windows/hsync-bootnode.iss"
       - uses: actions/upload-artifact@v7
         with:
           name: bin-${{ matrix.target }}

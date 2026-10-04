@@ -22,8 +22,8 @@ them.
 > and the implementation clients currently talk to. A Rust/`quinn` port is
 > planned as an **additive v2** for higher handshake throughput, not a
 > prerequisite — this is a **multi-language** repository: one protocol, several
-> implementations sharing the same spec and fixtures (see
-> [Layout](#layout-monorepo--multiple-implementations-of-the-same-protocol)).
+> implementations sharing the same spec and fixtures (see the
+> [repository layout](CONTRIBUTING.md#repository-layout)).
 
 > 👉 **Operational Advisory:** the bootnode is discovery-only — it never stores
 > or relays file data. Provision protected buckets and pin its TLS fingerprint
@@ -101,21 +101,6 @@ network over the Internet** whose file data still flows only between peers. See
   frames are silently dropped, never reinterpreted.
 - **One wire protocol** — `protocol-spec/boot-1.md` is the single source of
   truth; every implementation must be byte-identical on the wire.
-
-## Layout (monorepo — multiple implementations of the SAME protocol)
-
-| Path | Implementation | Status |
-|---|---|---|
-| [`protocol-spec/boot-1.md`](protocol-spec/boot-1.md) | Single wire-protocol specification | v1 |
-| [`fixtures/`](fixtures/) | Shared protocol fixtures (single source for all languages) | v1 |
-| [`tests/`](tests/) | **Language-neutral** black-box suite (spawns the binary, wire-only) | v1 |
-| [`bench/`](bench/) | L1–L5 benchmarks; L2/L3 language-neutral, L4 profiles the handshake, L5 the CPU saturation | v1 |
-| [`python/`](python/) | v1 implementation — Python + aioquic (QUIC/UDP 443) | v1 |
-| [`packaging/`](packaging/) | OS service units — systemd / launchd / WinSW | v1 |
-| [`llm-wiki/`](llm-wiki/) | Internal agent knowledge base (architecture) | v1 |
-| [`docs/`](docs/) | End-user documentation (install, usage reference) | v1 |
-| [`compile.sh`](compile.sh) | Root build entry point: `native` / `rpi` / `deb` / `deb-all`, `-l/--language` (default `python`; `rust` rejected until that port exists) | v1 |
-| [`rust/`](rust/) | Additive v2 port — Rust + quinn (not required by v1) | Not started |
 
 ## Documentation
 

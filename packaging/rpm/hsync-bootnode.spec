@@ -59,7 +59,7 @@ exit 0
 
 %files
 %dir %attr(0750,root,root) %{_sysconfdir}/hsync-bootnode
-%attr(0755,root,root) %{_prefix}/lib/hsync-bootnode
+%{_prefix}/lib/hsync-bootnode
 /usr/bin/hsync-bootnode
 %{_mandir}/man1/hsync-bootnode.1.gz
 /usr/lib/systemd/system/hsync-bootnode.service

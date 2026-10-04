@@ -85,6 +85,20 @@ network over the Internet** whose file data still flows only between peers. See
 * all your devices are on the same local network — plain `hsync p2p` discovers them via mDNS;
 * your devices sync through an [HSYNC Server](https://github.com/albertsdk/hsync-server) (Server Mode), which already acts as their meeting point.
 
+## Getting started
+
+Pick an install method and follow it to a running node:
+
+- [Installer script](docs/getting-started-script.md) — one `curl` command and the
+  released container image;
+- [Docker / Compose](docs/getting-started-docker.md) — manual container setup;
+- [Debian package](docs/getting-started-deb.md) — `.deb` with a hardened systemd unit;
+- [From source](docs/getting-started-source.md) — clone and run.
+
+The [Getting Started](docs/getting-started.md) chooser compares the methods; point
+clients at the node with `HSYNC_BOOTNODE` (see the client
+[p2p bootnode guide](https://github.com/albertsdk/hsync-client/blob/main/docs/p2p-bootnode.md)).
+
 ## Design invariants
 
 - **No-log** — the process never writes peer data (IPs, CIDs, timestamps) to
@@ -114,7 +128,7 @@ network over the Internet** whose file data still flows only between peers. See
 | [Black-box suite](tests/README.md) | Language-neutral wire/CLI contract tests |
 | [Contributing](CONTRIBUTING.md) | Development setup, toolchain, tests and contribution guidelines |
 
-### Associated Ecosystem Components
+## Associated Ecosystem Components
 
 `hsync-bootnode` is an optional component of the HSYNC ecosystem:
 

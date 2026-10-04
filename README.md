@@ -117,50 +117,6 @@ network over the Internet** whose file data still flows only between peers. See
 | [`compile.sh`](compile.sh) | Root build entry point: `native` / `rpi` / `deb` / `deb-all`, `-l/--language` (default `python`; `rust` rejected until that port exists) | v1 |
 | [`rust/`](rust/) | Additive v2 port — Rust + quinn (not required by v1) | Not started |
 
-## Quick start
-
-The full install walkthrough (`.deb`, from source, protected buckets) lives in
-[docs/README.md](docs/README.md). A minimal open-mode node from a source
-checkout:
-
-```bash
-cd python
-python3 -m venv .venv
-.venv/bin/pip install .
-.venv/bin/hsync-bootnode run --host 0.0.0.0 --port 443
-```
-
-The node prints its effective configuration and TLS certificate fingerprint,
-then serves forever. On first run it creates a persistent identity (stable across
-restarts, so clients can pin its fingerprint); read it with
-`hsync-bootnode identity show`. Point the clients of a P2P group at the node — on
-a terminal the first contact shows the fingerprint and asks you to confirm it
-once (like `ssh`), and an unattended run states the trust explicitly:
-
-```bash
-# First contact on a terminal: confirm the fingerprint at the prompt.
-hsync p2p boot.example.net -b mybucket -p /srv/hsync
-```
-
-```bash
-# Unattended run (no terminal): trust the first sighting.
-hsync p2p boot.example.net -b mybucket -p /srv/hsync \
-  --bootnode-tofu
-```
-
-```bash
-# Hardened: pin the fingerprint from `identity show`.
-hsync p2p boot.example.net -b mybucket -p /srv/hsync \
-  --bootnode-fingerprint YOUR_BOOTNODE_FINGERPRINT
-```
-
-The fingerprint is what authenticates the self-signed node, so an unattended or
-security-sensitive setup needs one of the two explicit forms (`--insecure` is for
-loopback tests only).
-
-See the [client guide — Sync across networks](https://github.com/albertsdk/hsync-client/blob/main/docs/p2p-bootnode.md)
-for the client-side setup.
-
 ## Documentation
 
 | Document | What it covers |

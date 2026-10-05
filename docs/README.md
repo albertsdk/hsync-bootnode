@@ -72,8 +72,8 @@ table that helps you pick.
 
 ### 3. Point clients at it
 
-Set `HSYNC_BOOTNODE=<host>` on each client (with the group key for a private
-node). The client side is covered by the
+Pass the node to the client's `p2p` command (`hsync p2p <host>`; with the group
+key for a private node). The client side is covered by the
 [client p2p bootnode guide](https://github.com/albertsdk/hsync-client/blob/main/docs/p2p-bootnode.md).
 
 ### 4. Reference & internals

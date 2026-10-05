@@ -99,8 +99,9 @@ Pick an install method and follow it to a running node:
 - [From source](docs/getting-started-source.md) — clone and run.
 
 The [Getting Started](docs/getting-started.md) chooser compares the methods; point
-clients at the node with `HSYNC_BOOTNODE` (see the client
-[p2p bootnode guide](https://github.com/albertsdk/hsync-client/blob/main/docs/p2p-bootnode.md)).
+clients at the node with the `hsync p2p` bootnode argument (`hsync p2p <host>`)
+— see the client
+[p2p bootnode guide](https://github.com/albertsdk/hsync-client/blob/main/docs/p2p-bootnode.md).
 
 ## Design invariants
 

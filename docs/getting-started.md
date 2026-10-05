@@ -40,5 +40,5 @@ gone.
 - Run it as-is for a **public** rendezvous point, or with `--private` for the
   closed rendezvous point of a community — see
   [usage.md](usage.md#private-node-authenticated-bootstrap).
-- Point clients at it with `HSYNC_BOOTNODE=<host>`
+- Point clients at it with the `hsync p2p` bootnode argument (`hsync p2p <host>`)
   ([client p2p bootnode guide](https://github.com/albertsdk/hsync-client/blob/main/docs/p2p-bootnode.md)).

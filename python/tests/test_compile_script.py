@@ -165,5 +165,7 @@ def test_docs_latest_download_names_are_created_by_the_release() -> None:
                 names.add(name)
     names -= {"install.sh", "SHA256SUMS"}
     assert names, "expected at least one fixed latest/download asset in the docs"
-    missing = sorted(n for n in names if n not in workflow)
+    # The fixed-name targets are the `dst` half of the `src|dst` alias specs.
+    aliases = set(re.findall(r'\|([A-Za-z0-9._-]+)"', workflow))
+    missing = sorted(n for n in names if n not in aliases)
     assert not missing, f"docs reference latest aliases the workflow does not create: {missing}"

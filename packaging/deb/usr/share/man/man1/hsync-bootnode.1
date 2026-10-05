@@ -267,6 +267,12 @@ out-of-range value): the node refuses to start.
 Listener bind failure: the QUIC/UDP port is privileged, already in use, or
 .B --host
 is not a local address. The message on stderr explains the remediation.
+.TP
+.B 4
+Readiness\-file failure: the path given to
+.B run\ \fR--ready-file\fP
+cannot be created (missing parent directory, no permission, or a stale file the
+exclusive\-create seam refuses to overwrite).
 .SH SEE ALSO
 .BR systemctl (1),
 .BR systemd.exec (5)

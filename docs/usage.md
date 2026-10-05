@@ -68,6 +68,7 @@ Prints the version and the protocol, e.g.
 | 0 | Normal termination (Ctrl+C / SIGTERM). |
 | 2 | Configuration error: missing/duplicate group key, `--private` without a key, out-of-range `--ttl`, etc. The node refuses to start. |
 | 3 | Listener bind failure: the port is privileged, already in use, or `--host` is not a local address. The stderr message explains how to fix it. |
+| 4 | Readiness-file failure: `--ready-file` points at a path the node cannot create (missing parent directory, no permission, or a stale file the `O_EXCL` seam refuses to overwrite). |
 
 ## Environment variables
 

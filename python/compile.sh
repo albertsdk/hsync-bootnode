@@ -106,7 +106,6 @@ log_warn() { echo -e "${YELLOW}!${RESET} $*"; }
 log_error() { echo -e "${RED}X${RESET} $*" >&2; }
 log_step() { echo -e "${CYAN}>${RESET} ${BOLD}$*${RESET}"; }
 
-# Display usage information
 show_help() {
     cat << EOF
 ${BOLD}HSYNC Bootnode - Python Build Script${RESET}
@@ -133,7 +132,6 @@ ${BOLD}Output:${RESET}
 EOF
 }
 
-# Clean build artifacts
 clean_artifacts() {
     log_step "Cleaning build artifacts..."
     local cleaned=0
@@ -176,7 +174,6 @@ _resolve_pyinstaller() {
     return 1
 }
 
-# Check prerequisites
 check_prerequisites() {
     if [[ ! -f "${PYPROJECT}" ]]; then
         log_error "${PYPROJECT} not found. Run this script from the python/ directory."

@@ -190,7 +190,6 @@ ensure_qemu_binfmt() {
     log_ok "binfmt handlers registered and active"
 }
 
-# Display usage information
 show_help() {
     cat << EOF
 ${BOLD}HSYNC Bootnode - Build Script${RESET}
@@ -278,7 +277,6 @@ _semver_to_rpm() {
     _semver_to_debian "$1"
 }
 
-# Map uname -m to Debian architecture name.
 _arch_to_deb() {
     case "$1" in
         x86_64|amd64)   echo "amd64" ;;
@@ -288,8 +286,8 @@ _arch_to_deb() {
     esac
 }
 
-# Map uname -m to RPM architecture name. RHEL/Rocky is 64-bit only, so only
-# x86_64 and aarch64 are supported (no armv7hl); anything else is echoed as-is.
+# RHEL/Rocky is 64-bit only, so only x86_64 and aarch64 are supported (no
+# armv7hl); anything else is echoed as-is.
 _arch_to_rpm() {
     case "$1" in
         x86_64|amd64)   echo "x86_64" ;;

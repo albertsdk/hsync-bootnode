@@ -36,6 +36,7 @@ from hsync_common.time_utils import utc_now_iso
 
 __all__ = [
     "configure_debug",
+    "debug_enabled",
     "debug_event",
     "debug_log",
     "error_event",
@@ -72,6 +73,17 @@ def configure_debug(enabled: bool) -> None:
     """Enable or disable the stderr debug sink (process-wide)."""
     global _enabled
     _enabled = enabled
+
+
+def debug_enabled() -> bool:
+    """True when the opt-in debug sink is active.
+
+    Hot paths call this before building the expensive ``debug_event`` fields
+    (f-strings, attribute lookups, the kwargs dict): Python evaluates call
+    arguments eagerly, so ``debug_event(...)`` with ``--debug`` off would still
+    pay for every field it then discards.
+    """
+    return _enabled
 
 
 def _sanitize(value: object) -> str:

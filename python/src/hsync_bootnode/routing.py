@@ -264,7 +264,9 @@ class RoutingTable:
         n = len(keys)
         k = min(limit, n)
         if k == n:
-            all_records = [records[key] for key in keys if not records[key].is_expired(now)]
+            # Single ``records[key]`` lookup per key (walrus) instead of the
+            # is_expired() call plus a second lookup in the comprehension.
+            all_records = [record for key in keys if now < (record := records[key]).expires_at]
             _RNG.shuffle(all_records)
             return all_records
         # n > k: rejection-sample up to a bounded number of distinct draws; if
@@ -280,10 +282,10 @@ class RoutingTable:
                 continue
             chosen.add(idx)
             record = records[keys[idx]]
-            if not record.is_expired(now):
+            if now < record.expires_at:
                 result.append(record)
         if len(result) < k:
-            remaining = [records[key] for key in keys if not records[key].is_expired(now)]
+            remaining = [record for key in keys if now < (record := records[key]).expires_at]
             return _RNG.sample(remaining, min(k, len(remaining)))
         return result
 

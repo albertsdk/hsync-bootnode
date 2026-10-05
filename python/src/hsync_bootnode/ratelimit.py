@@ -40,8 +40,22 @@ class TokenBucketLimiter:
 
     def allow(self, key: RateLimitKey, now: float | None = None) -> bool:
         now = now if now is not None else time.monotonic()
-        tokens = self._refill(key, now)
+        # Inlined _refill(): the check is the per-frame hot path (one call per
+        # admitted metric), so it avoids a second method call and the redundant
+        # ``_tokens`` write _refill would do before this method overwrites it.
+        updated_at = self._updated.get(key)
+        if updated_at is None:
+            tokens = self._capacity
+        else:
+            elapsed = now - updated_at
+            if elapsed < 0.0:
+                elapsed = 0.0
+            tokens = self._tokens[key] + elapsed * self._rate
+            if tokens > self._capacity:
+                tokens = self._capacity
+        self._updated[key] = now
         if tokens < 1.0:
+            self._tokens[key] = tokens
             return False
         self._tokens[key] = tokens - 1.0
         return True

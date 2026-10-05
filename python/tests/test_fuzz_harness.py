@@ -13,6 +13,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 FUZZ_DIR = Path(__file__).resolve().parents[1] / "fuzz"
 sys.path.insert(0, str(FUZZ_DIR))
 
@@ -87,6 +89,7 @@ def test_guided_burst_discovers_arcs() -> None:
     ``.venv/bin/python fuzz/fuzz_guided.py --seconds N`` (see fuzz/fuzz_boot.py
     for the shared invariants).
     """
+    pytest.importorskip("coverage")
     import fuzz_guided
 
     report = fuzz_guided.run_guided(iterations=200, seed=20261005, seconds=0.0)

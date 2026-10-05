@@ -150,6 +150,10 @@ jobs:
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           $winsw = Join-Path (Get-Location) "packaging/windows/WinSW-x64.exe"
           Invoke-WebRequest -Uri "https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe" -OutFile $winsw
+          # Verify the downloaded binary before it is bundled into the installer.
+          $winswSha256 = "05b82d46ad331cc16bdc00de5c6332c1ef818df8ceefcd49c726553209b3a0da"
+          $actual = (Get-FileHash -Algorithm SHA256 -Path $winsw).Hash.ToLowerInvariant()
+          if ($actual -ne $winswSha256) { throw "WinSW checksum mismatch: $actual" }
           $vi = "${{ steps.version.outputs.version }}" -replace '-.*$','' -replace '\+.*$',''
           & $iscc "/DAppVersion=${{ steps.version.outputs.version }}" `
                   "/DVersionInfoVersion=$vi" `

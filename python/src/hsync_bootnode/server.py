@@ -435,27 +435,35 @@ class BootQuicProtocol(QuicConnectionProtocol):
     def datagram_received(self, data: bytes | str, addr: Any) -> None:
         peer_ip = str(addr[0])
         first = self.peer_addr is None
-        # Transport admission happens BEFORE any handshake/bookkeeping runs: a
-        # refused IP gets one CONNECTION_CLOSE answer and nothing else (no TLS
-        # state machine, no stream, no frame handling) charged against the IP.
-        # The QUIC path state is registered first so aioquic can actually send
-        # that CONNECTION_CLOSE (its send path needs a registered network
-        # path) — receive_datagram does bookkeeping only, the handshake crypto
-        # happens in the event processing that follows a successful admission.
+        # Transport admission happens BEFORE any handshake work: a refused IP
+        # gets one CONNECTION_CLOSE and nothing else (see _refuse_unadmitted).
         if first:
             guard = self.guard
             if guard is not None:
                 if not guard.admit(peer_ip):
                     debug_event("connection refused ip-guard", peer=peer_ip)
                     payload = data.encode("utf-8") if isinstance(data, str) else data
-                    self._quic.receive_datagram(payload, addr, now=self._loop.time())
-                    self.close()
+                    self._refuse_unadmitted(payload, addr)
                     return
                 self.admitted_on_guard = True
             # Keep the observed source endpoint: it is both the anti-amplification
             # ground truth and the STUN-echo answer (observed NAT-mapped port).
             self.peer_addr = (peer_ip, int(addr[1]))
         super().datagram_received(data, addr)
+
+    def _refuse_unadmitted(self, data: bytes, addr: Any) -> None:
+        """Reject an unadmitted connection without running any handshake work.
+
+        aioquic registers a connection's QUIC network path only while processing
+        its first datagram, and a CONNECTION_CLOSE cannot be sent without it, so
+        the datagram is fed to ``QuicConnection`` at the bookkeeping layer only
+        (``receive_datagram`` — no event processing, so no TLS work) and the
+        connection is then closed. This is the single place that reaches into
+        aioquic's private connection/loop (pinned ``>=1.2.0,<2.0.0``); the
+        loopback guard test fails loudly if a future aioquic changes that shape.
+        """
+        self._quic.receive_datagram(data, addr, now=self._loop.time())
+        self.close()
 
     def quic_event_received(self, event: QuicEvent) -> None:
         # Connection teardown releases the per-IP open-connection slot: the

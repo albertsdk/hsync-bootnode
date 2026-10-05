@@ -33,6 +33,10 @@
     <user>LocalService</user>
   </serviceaccount>
 
-  <!-- Stderr carries the always-on operational channel (warn/error). -->
+  <!-- Stderr carries the always-on operational channel (warn/error). WinSW
+       writes logs beside the wrapper by default, i.e. under Program Files,
+       where LocalService has no write access; keep them in the writable
+       machine data dir created by the installer instead. -->
+  <logpath>%ProgramData%\hsync-bootnode\logs</logpath>
   <log mode="append"/>
 </service>

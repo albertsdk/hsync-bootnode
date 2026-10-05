@@ -31,10 +31,10 @@ Stop-Service hsync-bootnode
 Restart-Service hsync-bootnode
 ```
 
-- The TLS identity is persisted under `C:\ProgramData\hsync-bootnode`.
+- The TLS identity and the service logs are persisted under
+  `C:\ProgramData\hsync-bootnode` (logs in the `logs` subdirectory).
 - The service definition is `hsync-bootnode-service.xml` next to
-  `hsync-bootnode-service.exe` in the install directory; service logs are written
-  alongside it.
+  `hsync-bootnode-service.exe` in the install directory.
 - Protected buckets / private node: set `HSYNC_BOOTNODE_PRIVATE` and the group
   keys in the service definition — see [Usage](../docs/usage.md).
 

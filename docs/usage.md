@@ -85,10 +85,10 @@ Prints the version and the protocol, e.g.
 
 Group keys provision **protected buckets**. The process reads them ONCE
 at startup from the given file descriptor — the key payload never touches a
-path inside the node's sandbox and is never written to disk. Descriptors 0, 1
-and 2 are refused (stdout/stderr are never a key source) and the payload is
-capped (1 MiB): a misrouted or stuck-open descriptor fails fast with a
-configuration error instead of stalling startup.
+path inside the node's sandbox and is never written to disk. `stdout`/`stderr`
+(descriptors 1 and 2) are refused and the payload is capped (1 MiB): a
+misrouted or stuck-open descriptor fails fast with a configuration error
+instead of stalling startup.
 
 Line format (comments and blank lines are ignored):
 

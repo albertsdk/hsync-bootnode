@@ -56,8 +56,10 @@ Source: "hsync-bootnode-service-frozen.xml"; DestDir: "{app}"; \
     DestName: "hsync-bootnode-service.xml"; Flags: ignoreversion
 
 [Dirs]
-; Machine-wide, writable data dir for the TLS identity (see the service XML).
+; Machine-wide, writable data dir for the TLS identity and the service logs
+; (see the service XML); LocalService gets modify rights below.
 Name: "{commonappdata}\hsync-bootnode"
+Name: "{commonappdata}\hsync-bootnode\logs"
 
 [Run]
 ; Grant the LocalService account (SID S-1-5-19) modify rights on the data dir.

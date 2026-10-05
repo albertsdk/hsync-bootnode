@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import sys
 import tempfile
 import time
@@ -31,7 +30,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
 
-from aioquic.asyncio import connect  # noqa: E402
 from common import (  # noqa: E402
     add_json_out,
     cpu_percent,
@@ -40,9 +38,10 @@ from common import (  # noqa: E402
     maybe_write_json,
     percentile,
     proc_cpu_seconds,
+    timed_query,
 )
 from harness import (  # noqa: E402
-    client_config,
+    BootClient,
     query_frame,
     register_frame,
     start_bootnode,
@@ -76,35 +75,21 @@ class LevelResult:
 
 async def _prime(port: int, peers: int) -> None:
     """Register ``peers`` peers into the shared bucket (the load's table)."""
-    config = client_config()
-    async with connect("127.0.0.1", port, configuration=config) as protocol:
+    async with BootClient(port) as client:
         for cid in make_cids(peers, start=7_000_000):
-            reader, writer = await protocol.create_stream()
-            writer.write((json.dumps(register_frame(cid, _BUCKET)) + "\n").encode())
-            await writer.drain()
-            await asyncio.wait_for(reader.readline(), timeout=5.0)
-            writer.close()
+            await client.exchange(register_frame(cid, _BUCKET), timeout=5.0)
 
 
 async def _level(port: int, node_pid: int, concurrency: int, seconds: float) -> LevelResult:
     """Drive ``concurrency`` query connections for ``seconds``; sample node CPU."""
-    query = (json.dumps(query_frame(_BUCKET, limit=20)) + "\n").encode()
+    query = query_frame(_BUCKET, limit=20)
     deadline = time.monotonic() + seconds  # shared wall-clock budget for every worker
     latencies: list[float] = []
 
     async def worker() -> None:
-        config = client_config()
-        async with connect("127.0.0.1", port, configuration=config) as c:
+        async with BootClient(port) as client:
             while time.monotonic() < deadline:
-                reader, writer = await c.create_stream()
-                start = time.perf_counter()
-                writer.write(query)
-                await writer.drain()
-                raw = await asyncio.wait_for(reader.readline(), timeout=10.0)
-                latencies.append(time.perf_counter() - start)
-                writer.close()
-                if json.loads(raw)["type"] != "response":
-                    raise RuntimeError("unexpected reply frame")
+                latencies.append(await timed_query(client, query, require_no_error=False))
 
     cpu_before = proc_cpu_seconds(node_pid)
     started = time.perf_counter()

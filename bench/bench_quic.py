@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import sys
 import tempfile
 import time
@@ -34,8 +33,10 @@ from common import (  # noqa: E402
     make_cids,
     maybe_write_json,
     print_table,
+    timed_query,
 )
 from harness import (  # noqa: E402
+    BootClient,
     client_config,
     query_frame,
     register_frame,
@@ -71,33 +72,15 @@ async def _bench_handshakes(port: int, count: int) -> BenchResult:
 async def _bench_frames_on_one_connection(port: int, frames: int, peers: int) -> BenchResult:
     """Register+query round-trips over a single established connection."""
     cids = make_cids(peers, start=5_000_000)
-    config = client_config()
-    async with connect("127.0.0.1", port, configuration=config) as protocol:
+    query = query_frame("shared", limit=20)
+    samples: list[float] = []
+    async with BootClient(port) as client:
         for cid in cids:
-            reader, writer = await protocol.create_stream()
-            writer.write((json.dumps(register_frame(cid, "shared")) + "\n").encode())
-            await writer.drain()
-            await asyncio.wait_for(reader.readline(), timeout=5.0)
-            writer.close()
-        query = (json.dumps(query_frame("shared", limit=20)) + "\n").encode()
+            await client.exchange(register_frame(cid, "shared"), timeout=5.0)
         for _ in range(10):
-            reader, writer = await protocol.create_stream()
-            writer.write(query)
-            await writer.drain()
-            await asyncio.wait_for(reader.readline(), timeout=5.0)
-            writer.close()
-        samples: list[float] = []
+            await client.exchange(query, timeout=5.0)
         for _ in range(frames):
-            reader, writer = await protocol.create_stream()
-            start = time.perf_counter()
-            writer.write(query)
-            await writer.drain()
-            raw = await asyncio.wait_for(reader.readline(), timeout=5.0)
-            samples.append(time.perf_counter() - start)
-            writer.close()
-            parsed = json.loads(raw)
-            assert parsed["type"] == "response"
-            assert parsed["error"] is None  # must measure real queries, not rate limits
+            samples.append(await timed_query(client, query))
     return BenchResult(f"query-rtt-1conn(peers={peers})", samples, frames)
 
 
@@ -105,21 +88,11 @@ async def _bench_concurrent_queries(port: int, connections: int, per_conn: int) 
     """N concurrent connections each doing per_conn query round-trips."""
 
     async def worker() -> list[float]:
-        config = client_config()
+        query = query_frame("shared", limit=20)
         samples: list[float] = []
-        async with connect("127.0.0.1", port, configuration=config) as c:
-            query = (json.dumps(query_frame("shared", limit=20)) + "\n").encode()
+        async with BootClient(port) as client:
             for _ in range(per_conn):
-                reader, writer = await c.create_stream()
-                start = time.perf_counter()
-                writer.write(query)
-                await writer.drain()
-                raw = await asyncio.wait_for(reader.readline(), timeout=10.0)
-                samples.append(time.perf_counter() - start)
-                writer.close()
-                parsed = json.loads(raw)
-                assert parsed["type"] == "response"
-                assert parsed["error"] is None
+                samples.append(await timed_query(client, query))
         return samples
 
     await worker()
@@ -128,9 +101,7 @@ async def _bench_concurrent_queries(port: int, connections: int, per_conn: int) 
     wall = time.perf_counter() - started
     total = connections * per_conn
     print(f"  wall: {wall:.2f}s for {total} queries over {connections} conns")
-    merged: list[float] = []
-    for samples in results:
-        merged.extend(samples)
+    merged = [sample for samples in results for sample in samples]
     return BenchResult(f"query-rtt({connections}x{per_conn}-concurrent)", merged, total)
 
 

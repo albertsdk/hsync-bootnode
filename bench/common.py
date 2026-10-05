@@ -16,12 +16,14 @@ import statistics
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import Any
 
 __all__ = [
     "ALPHABET",
     "make_cid",
     "make_cids",
     "measure",
+    "timed_query",
     "BenchResult",
     "print_table",
     "add_json_out",
@@ -102,6 +104,27 @@ def measure(
         func()
         samples.append(time.perf_counter() - start)
     return BenchResult(name, samples, count)
+
+
+async def timed_query(
+    client: Any, frame: dict, *, timeout: float = 10.0, require_no_error: bool = True
+) -> float:
+    """Time one ``query`` round-trip on an established client, in seconds.
+
+    ``client`` is a ``tests/harness.py`` ``BootClient`` (duck-typed to keep this
+    module free of the harness import). Raises ``RuntimeError`` when the reply
+    is not a ``response`` frame, or — when ``require_no_error`` — when the node
+    answered an error: timing a rate-limited reply would not measure the query
+    path. Single source for the query round-trip the L2/L5 benchmarks share.
+    """
+    start = time.perf_counter()
+    reply = await client.exchange(frame, timeout=timeout)
+    elapsed = time.perf_counter() - start
+    if reply.get("type") != "response":
+        raise RuntimeError("unexpected reply frame")
+    if require_no_error and reply.get("error") is not None:
+        raise RuntimeError(f"query refused: {reply.get('error')}")
+    return elapsed
 
 
 def print_table(results: Sequence[BenchResult]) -> None:

@@ -17,6 +17,7 @@ import sys
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import NoReturn
 
 import typer
 from hsync_common import ssl_utils
@@ -73,6 +74,9 @@ _DEFAULT_IDENTITY_ENV = "HSYNC_BOOTNODE_IDENTITY"
 _DEFAULT_EPHEMERAL_ENV = "HSYNC_BOOTNODE_EPHEMERAL"
 # Warn this many days before the persisted identity's certificate expires.
 _IDENTITY_EXPIRY_WARN_DAYS = 30
+# Shared help for the ``--identity`` option (declared identically by every
+# command that resolves the persisted identity file).
+_IDENTITY_HELP = "Path of the persisted identity file (default: the standard state path)."
 # Cap for the group-keys FD payload: keys are short 'bucket=<hex-key>' lines,
 # so anything bigger means the descriptor was misrouted (or is stuck open).
 KEYS_FD_MAX_BYTES = 1 << 20
@@ -106,6 +110,12 @@ def _resolve_identity(
         return None
     path = identity if identity is not None else str(default_identity_path())
     return load_or_create_identity(path, host=host, public_hosts=public_hosts)
+
+
+def _config_error(exc: Exception) -> NoReturn:
+    """Report a configuration/identity error on stderr and exit with code 2."""
+    typer.echo(f"configuration error: {exc}", err=True)
+    raise typer.Exit(code=2) from exc
 
 
 @app.callback()
@@ -256,12 +266,8 @@ def run(
         node_identity = _resolve_identity(
             identity, ephemeral, host=resolved_host, public_hosts=public_host
         )
-    except BootConfigError as exc:
-        typer.echo(f"configuration error: {exc}", err=True)
-        raise typer.Exit(code=2) from exc
-    except IdentityError as exc:
-        typer.echo(f"configuration error: {exc}", err=True)
-        raise typer.Exit(code=2) from exc
+    except (BootConfigError, IdentityError) as exc:
+        _config_error(exc)
 
     configure_debug(debug)
     if debug:
@@ -333,7 +339,7 @@ def identity_show(
         None,
         "--identity",
         envvar=_DEFAULT_IDENTITY_ENV,
-        help="Path of the persisted identity file (default: the standard state path).",
+        help=_IDENTITY_HELP,
     ),
     pem: bool = typer.Option(
         False, "--pem", help="Print the certificate PEM instead of the fingerprint."
@@ -343,8 +349,7 @@ def identity_show(
     try:
         node = load_identity(identity or default_identity_path())
     except IdentityError as exc:
-        typer.echo(f"configuration error: {exc}", err=True)
-        raise typer.Exit(code=2) from exc
+        _config_error(exc)
     if pem:
         typer.echo(ssl_utils.serialize_cert_pem(node.certificate).decode("ascii"))
     else:
@@ -357,7 +362,7 @@ def identity_rotate(
         None,
         "--identity",
         envvar=_DEFAULT_IDENTITY_ENV,
-        help="Path of the persisted identity file (default: the standard state path).",
+        help=_IDENTITY_HELP,
     ),
     public_host: list[str] = typer.Option(
         [],
@@ -371,8 +376,7 @@ def identity_rotate(
             identity or default_identity_path(), host="0.0.0.0", public_hosts=public_host
         )
     except IdentityError as exc:
-        typer.echo(f"configuration error: {exc}", err=True)
-        raise typer.Exit(code=2) from exc
+        _config_error(exc)
     typer.echo(f"sha256:{node.fingerprint}")
     typer.echo(
         "distribute this fingerprint to clients; accept the old pin during the rotation window",

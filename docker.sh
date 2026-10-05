@@ -32,9 +32,11 @@ else
 fi
 unset _DATA_DIR_RAW
 readonly READY_FILE="${DATA_DIR}/ready.pid"
-# Optional protected-bucket group keys file on the host (opened as fd 3 in the
-# container; never copied into the image).
-HSYNC_BOOTNODE_KEYS_FILE="${HSYNC_BOOTNODE_KEYS_FILE:-}"
+# Optional protected-bucket group keys file on the HOST (mounted read-only at
+# /keys and opened there as fd 3; never copied into the image). The
+# in-container descriptor source is the separate HSYNC_BOOTNODE_KEYS_FILE=/keys,
+# matching compose.yaml / install.sh.
+HSYNC_BOOTNODE_KEYS_PATH="${HSYNC_BOOTNODE_KEYS_PATH:-}"
 # Seconds to wait for the readiness PID file before declaring the start failed.
 STARTUP_READY_TIMEOUT="${HSYNC_BOOTNODE_STARTUP_TIMEOUT:-30}"
 
@@ -82,7 +84,7 @@ ${BOLD}Options:${RESET}
 ${BOLD}Environment Variables:${RESET}
     HSYNC_BOOTNODE_PORT          Host UDP port clients connect to (default: 443)
     HSYNC_BOOTNODE_PRIVATE       Set to 1 for a private node (every frame needs a token)
-    HSYNC_BOOTNODE_KEYS_FILE     Host path of the group-keys file (opened as fd 3)
+    HSYNC_BOOTNODE_KEYS_PATH     Host path of the group-keys file (mounted at /keys, opened as fd 3)
     HSYNC_BOOTNODE_DEBUG         Set to 1 for the full operation log (peer identity included)
     HSYNC_BOOTNODE_DATA_DIR      Host identity directory (default: ./hsync-data)
     HSYNC_VERSION                Image tag version (default: 1.0.0)
@@ -90,7 +92,7 @@ ${BOLD}Environment Variables:${RESET}
 ${BOLD}Examples:${RESET}
     ./docker.sh build
     ./docker.sh start
-    HSYNC_BOOTNODE_PRIVATE=1 HSYNC_BOOTNODE_KEYS_FILE=./group-keys ./docker.sh start
+    HSYNC_BOOTNODE_PRIVATE=1 HSYNC_BOOTNODE_KEYS_PATH=./group-keys ./docker.sh start
     ./docker.sh logs -f
 
 The container binds UDP ${CONTAINER_PORT} internally; the host maps
@@ -152,13 +154,13 @@ cmd_start() {
     if [[ -n "${HSYNC_BOOTNODE_DEBUG:-}" ]]; then
         docker_args+=(-e "HSYNC_BOOTNODE_DEBUG=${HSYNC_BOOTNODE_DEBUG}")
     fi
-    if [[ -n "${HSYNC_BOOTNODE_KEYS_FILE}" ]]; then
-        if [[ ! -f "${HSYNC_BOOTNODE_KEYS_FILE}" ]]; then
-            log_error "Group keys file not found: ${HSYNC_BOOTNODE_KEYS_FILE}"
+    if [[ -n "${HSYNC_BOOTNODE_KEYS_PATH}" ]]; then
+        if [[ ! -f "${HSYNC_BOOTNODE_KEYS_PATH}" ]]; then
+            log_error "Group keys file not found: ${HSYNC_BOOTNODE_KEYS_PATH}"
             exit 1
         fi
         docker_args+=(
-            -v "${HSYNC_BOOTNODE_KEYS_FILE}:/keys:ro"
+            -v "${HSYNC_BOOTNODE_KEYS_PATH}:/keys:ro"
             -e "HSYNC_BOOTNODE_KEYS_FILE=/keys"
         )
     fi

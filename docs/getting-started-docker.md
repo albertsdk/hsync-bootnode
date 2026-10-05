@@ -70,7 +70,7 @@ repositories. From the `hsync-bootnode` checkout:
 `clean`; it persists the identity under `./hsync-data`. Environment variables
 select the public port (`HSYNC_BOOTNODE_PORT`), private mode
 (`HSYNC_BOOTNODE_PRIVATE=1`) and the group keys
-(`HSYNC_BOOTNODE_KEYS_FILE=/path/to/group-keys`). Run `./docker.sh --help`.
+(`HSYNC_BOOTNODE_KEYS_PATH=/path/to/group-keys`). Run `./docker.sh --help`.
 
 ## Verify the node is running
 

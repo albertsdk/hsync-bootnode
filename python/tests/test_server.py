@@ -23,6 +23,7 @@ from hsync_bootnode.handler import BootHandler
 from hsync_bootnode.server import (
     BOOT_ALPN,
     BootQuicProtocol,
+    ConnectionGuard,
     build_quic_configuration,
     make_identity,
     start_server,
@@ -40,6 +41,91 @@ def test_make_identity_produces_self_signed_fingerprint() -> None:
     assert config.alpn_protocols == [BOOT_ALPN]
     assert config.certificate is not None
     assert config.private_key is not None
+
+
+def test_connection_guard_budget_eviction_and_release_are_exact() -> None:
+    """ConnectionGuard unit behaviour on an injected clock (deterministic).
+
+    The handshake budget is a plain token bucket: two admissions per burst, the
+    third refused until a token refills. Released connections free their
+    active-count slot (idempotently), but never their handshake tokens; a quiet
+    IP with zero open connections is forgotten once fully refilled.
+    """
+    guard = ConnectionGuard(handshake_rate=1.0, handshake_burst=2, active_max=10)
+    assert guard.admit("10.0.0.1", now=100.0) is True
+    assert guard.admit("10.0.0.1", now=100.0) is True
+    assert guard.open_count("10.0.0.1") == 2
+    # burst exhausted: the third attempt has no handshake token (refusals are
+    # still stamped for eviction) and do not touch the active count
+    assert guard.admit("10.0.0.1", now=100.1) is False
+    assert guard.open_count("10.0.0.1") == 2
+
+    # both connections close: the active count drops (idempotent releases)
+    guard.release("10.0.0.1", now=100.5)
+    guard.release("10.0.0.1", now=100.6)
+    assert guard.open_count("10.0.0.1") == 0
+    guard.release("10.0.0.1", now=100.7)  # extra release: no underflow
+    assert guard.open_count("10.0.0.1") == 0
+
+    # the handshake bucket keeps refilling (1 token/s): one has refilled by now,
+    # so a new connection is admitted while the active count stays released
+    assert guard.admit("10.0.0.1", now=101.0) is True
+    assert guard.open_count("10.0.0.1") == 1
+    guard.release("10.0.0.1", now=102.3)
+
+    # a quiet, empty-and-refilled IP is forgettable: horizon is burst/rate = 2 s
+    assert guard.evict_stale(now=103.0) == 0  # last seen 102.3 → too recent
+    assert guard.evict_stale(now=104.5) == 1  # quiet ≥ 2 s and empty → forgotten
+    assert guard.open_count("10.0.0.1") == 0
+    assert guard.admit("10.0.0.1", now=200.0) is True  # fresh start, full bucket
+
+
+@pytest.mark.asyncio
+async def test_loopback_connection_guard_refuses_and_releases() -> None:
+    """The guard is enforced on real connections before any handshake work.
+
+    Two connections from 127.0.0.1 fill the (test-sized) active cap; a third is
+    refused at transport level; after one closes and releases its slot, another
+    connection is admitted again. No frame/handshake of any refused connection
+    reaches the handler.
+    """
+    handler = BootHandler()
+    guard = ConnectionGuard(handshake_rate=10_000.0, handshake_burst=10_000, active_max=2)
+    server, port, _identity = await start_server(
+        "127.0.0.1", 0, handler, retry=True, connection_guard=guard
+    )
+    try:
+        client_config = QuicConfiguration(
+            is_client=True, alpn_protocols=[BOOT_ALPN], verify_mode=ssl.CERT_NONE
+        )
+
+        async def _wait_open(expected: int, timeout: float = 5.0) -> None:
+            async def _poll() -> None:
+                while guard.open_count("127.0.0.1") != expected:
+                    await asyncio.sleep(0.02)
+
+            await asyncio.wait_for(_poll(), timeout)
+
+        # The first two connections fill the active cap; the third is refused.
+        async with connect("127.0.0.1", port, configuration=client_config):
+            await _wait_open(1)
+            async with connect("127.0.0.1", port, configuration=client_config):
+                await _wait_open(2)
+                with pytest.raises((ConnectionError, TimeoutError, OSError)):
+                    async with connect("127.0.0.1", port, configuration=client_config):
+                        pass  # the refusal prevents this from completing
+
+            # second's termination reached the server → one slot released
+            await _wait_open(1)
+
+        # every termination released its slot
+        await _wait_open(0)
+        # …so a fresh connection is admitted again
+        async with connect("127.0.0.1", port, configuration=client_config) as third:
+            await _wait_open(1)
+            assert third is not None
+    finally:
+        server.close()
 
 
 @pytest.mark.asyncio

@@ -220,6 +220,52 @@ def test_bucket_token_derivation_and_verify() -> None:
     assert verify_bucket_token(token, "short") is False
 
 
+def test_bucket_token_wire_grammar_is_64_lowercase_hex() -> None:
+    """The token domain is fixed by the key-derivation contract, so the wire
+    models reject anything else as an invalid frame (the failure mode of a
+    non-derivable token is "malformed", never a per-IP failed-token attempt).
+    """
+    register = {
+        "protocol_version": "boot/1",
+        "type": "register",
+        "cid": CID,
+        "bucket": "shared",
+        "cert_fp": "AA:BB",
+        "version": "1.0.0",
+    }
+    good = "0123456789abcdef" * 4
+    assert BootRegister(**register, bucket_token=good).bucket_token == good
+    assert (
+        BootQuery(
+            protocol_version="boot/1", type="query", bucket="shared", bucket_token=good
+        ).bucket_token
+        == good
+    )
+    for bad in ("", "z" * 64, "A" * 64, "a" * 63, "a" * 65, "a" * 31 + "\n"):
+        with pytest.raises(ValueError):
+            BootRegister(**register, bucket_token=bad)
+        with pytest.raises(ValueError):
+            BootQuery(protocol_version="boot/1", type="query", bucket="shared", bucket_token=bad)
+
+
+def test_connected_advisory_bound_is_bounded() -> None:
+    """The advisory connected count is a small non-negative JSON integer."""
+    register = {
+        "protocol_version": "boot/1",
+        "type": "register",
+        "cid": CID,
+        "bucket": "shared",
+        "cert_fp": "AA:BB",
+        "version": "1.0.0",
+    }
+    assert BootRegister(**register).connected is None
+    assert BootRegister(**register, connected=7).connected == 7
+    assert BootRegister(**register, connected=2**53).connected == 2**53
+    for bad in (-1, 2**53 + 1):
+        with pytest.raises(ValueError):
+            BootRegister(**register, connected=bad)
+
+
 def test_routing_table_upsert_prune_sample() -> None:
     table = RoutingTable()
     # deterministic: record A expires at 2000, record B at 3000

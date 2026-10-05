@@ -85,7 +85,10 @@ Prints the version and the protocol, e.g.
 
 Group keys provision **protected buckets**. The process reads them ONCE
 at startup from the given file descriptor — the key payload never touches a
-path inside the node's sandbox and is never written to disk.
+path inside the node's sandbox and is never written to disk. Descriptors 0, 1
+and 2 are refused (stdout/stderr are never a key source) and the payload is
+capped (1 MiB): a misrouted or stuck-open descriptor fails fast with a
+configuration error instead of stalling startup.
 
 Line format (comments and blank lines are ignored):
 
@@ -129,7 +132,7 @@ What `--private` changes:
 | Aspect | Open node (default) | Private node |
 |---|---|---|
 | `register` / `refresh` / `query` | token required only for `--protected-bucket` | token required for **every** bucket |
-| `leave` | anonymous | token required (an anonymous `leave` is silently dropped) |
+| `leave` | honoured only from the source network the peer registered from (a `leave` from any other IP is silently ignored); on a protected bucket a valid token removes from any source | token required (an anonymous `leave` is silently dropped) |
 | Bucket with no key loaded | served (public) | refused exactly like a wrong token |
 | Startup with no group key | allowed | fails fast, exit code 2 |
 | Rate limits | unchanged | unchanged (private mode never removes them) |
@@ -162,9 +165,10 @@ a leaked node capability.
 Trade-offs (by design, not defects):
 
 - The token proves a *capability*, not an identity: whoever holds the key can
-  register under any `cid`, or spoof a `leave` for a known pair. Peers verify
+  register under any `cid`, or depart a known pair from any IP. Peers verify
   the TLS fingerprint of the peers they contact, so a spoofed entry does not
-  survive contact.
+  survive contact. On an **open** bucket even the protected-bucket exemption
+  aside, only the registration's own source network can send a `leave`.
 - Rate limits still apply to legitimate key holders; private mode is not a
   substitute for the anti-abuse limits.
 - No account system and no persistence: routing table, keys and limits live in
@@ -265,9 +269,26 @@ can rely on.
   fingerprint or trusts the first sighting — the exact steps are in "TLS identity
   & pinning".
 - QUIC `RETRY` + address validation before any connection state is allocated
-  (anti-amplification), plus in-memory rate limits: a refusal is always answered,
-  never a silent drop. Every `boot/1` frame rejects unknown fields, and the
-  deployed units are sandboxed (systemd `DynamicUser`, syscall filter).
+  (anti-amplification) and a node-side **per-IP transport guard**: about 30 new
+  QUIC connections/handshakes per second (burst 100) and at most 256
+  simultaneously-open connections from the same source address — both enforced
+  before any handshake work runs, so a connection or handshake flood is throttled
+  without external help (works with a bare listener, no firewall/nginx needed).
+- **Layered in-memory rate limits**: the valid-frame admission (~10 req/s per IP,
+  burst 50), per-bucket and per-(IP, bucket) windows, the failed-token budget
+  (~5/min per IP) **and a separate budget for malformed/unknown frames**
+  (~30/min per IP, burst 60) so a flood of garbage frames cannot turn frame
+  validation into a free CPU-exhaustion channel. Rate-limit refusals are always
+  answered (`rate_limited` + `retry_after`); the two silent budgets answer nothing
+  (there is no oracle to hand out) and expire unused entries automatically.
+  Every `boot/1` frame rejects unknown fields, and the deployed units are
+  sandboxed (systemd `DynamicUser`, syscall filter).
+- **UPnP is hardened by default**: SSDP replies must originate from a private
+  LAN address and their `LOCATION` must be `http(s)://<private-IP-literal>/…`
+  (no hostnames, no external hosts, no redirects) — the device discovery cannot
+  be steered into fetching arbitrary internal/external URLs. On a node with no
+  LAN (a public VPS) SSDP simply finds nothing and the node runs stateless, as
+  always; nothing about the mapping workflow changes on a LAN.
 
 ### What it is not
 
@@ -358,7 +379,9 @@ the given path once the QUIC listener is bound (and removes it on graceful
 shutdown). It carries no peer data and exists so tests and orchestrators can
 await readiness deterministically. A path the node cannot write (missing
 directory, no permission, an existing stale file) fails fast with exit code 4 and
-an actionable message instead of a traceback.
+an actionable message instead of a traceback. The Docker entrypoint removes a
+stale readiness file before `exec`, so a container killed ungracefully
+(`docker kill` timeout → SIGKILL) never leaves the next start wedged.
 
 ## Deploying as a service
 

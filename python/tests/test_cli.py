@@ -5,6 +5,7 @@ from __future__ import annotations
 import errno
 import os
 import re
+import tempfile
 
 from typer.testing import CliRunner
 
@@ -16,6 +17,7 @@ from hsync_bootnode.cli import (
     app,
     default_identity_path,
 )
+from hsync_bootnode.handler import BootConfigError
 
 runner = CliRunner()
 
@@ -76,6 +78,41 @@ def test_load_keys_ignores_blank_and_comments() -> None:
     # None / negative fd → empty mapping (no crash)
     assert _load_keys(None) == {}
     assert _load_keys(-1) == {}
+
+
+def test_load_keys_refuses_stdout_and_stderr() -> None:
+    """fd 1/2 are never a key source: passing stdout/stderr is a config error."""
+    for bad in (1, 2):
+        try:
+            _load_keys(bad)
+        except BootConfigError:
+            pass
+        else:  # pragma: no cover - expected to raise
+            raise AssertionError(f"fd {bad} must be refused as a keys source")
+
+
+def test_load_keys_caps_the_fd_payload(tmp_path) -> None:
+    """A descriptor that keeps producing bytes is refused, never read to the end.
+
+    A misrouted fd (a pipe held open, some random device) would otherwise stall
+    startup or grow without bound: the cap fails fast instead.
+    """
+    from hsync_bootnode.cli import KEYS_FD_MAX_BYTES
+
+    with tempfile.NamedTemporaryFile(dir=tmp_path, suffix=".keys", delete=False) as handle:
+        handle.write(b"shared=abc123\n" * 100_000)  # well past the cap
+        path = handle.name
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        try:
+            _load_keys(fd)
+        except BootConfigError:
+            pass
+        else:  # pragma: no cover - expected to raise
+            raise AssertionError(f"payload larger than {KEYS_FD_MAX_BYTES} bytes must fail fast")
+    finally:
+        os.close(fd)
+        os.unlink(path)
 
 
 def test_ttl_out_of_range_is_rejected() -> None:

@@ -80,10 +80,12 @@ excluded from the union: they are never validated on the input path.
 | Constant | Location | Rule |
 |---|---|---|
 | `CID_PATTERN` | imported from `hsync_common.models.event` (`protocol.py:17`) and re-exported | `^[A-Za-z0-9]{21}$` — **SSOT import** (hsync-common), pinned to the boot/1 spec value by `test_cid_pattern_matches_boot1_spec` |
-| `BucketName` | `protocol.py:81` | canonical HSYNC bucket name via `hsync_common.path_validation.is_valid_bucket_name` (`[A-Za-z0-9]` with `-`/`_` in the middle, 1..63) — applied to every wire `bucket` |
-| `BUCKET_TOKEN_LEN` | `protocol.py:54` | 64 (lowercase hex = `hex(32 bytes)`), derived as `HMAC-SHA256(key, "boot/1" || bucket)[:32]` |
-| `BucketProto` | `protocol.py:57` | `Literal["tcp", "udp"]` |
-| `CAPACITY_MAX` | `protocol.py:63` | 32 — upper bound of the advisory `capacity` hint (`0` = not a seeder); mirrors `serve_slots` |
+| `BucketName` | `protocol.py` | canonical HSYNC bucket name via `hsync_common.path_validation.is_valid_bucket_name` (`[A-Za-z0-9]` with `-`/`_` in the middle, 1..63) — applied to every wire `bucket` |
+| `BucketToken` | `protocol.py` | 64 lowercase hex characters (grammar `_BUCKET_TOKEN_RE`, `BUCKET_TOKEN_LEN`) — enforced as a wire-model validator (decision #46), so a token outside the key-derivation domain is an invalid frame, not a failed-token attempt |
+| `BUCKET_TOKEN_LEN` | `protocol.py` | 64 (lowercase hex = `hex(32 bytes)`), derived as `HMAC-SHA256(key, "boot/1" || bucket)[:32]` |
+| `BucketProto` | `protocol.py` | `Literal["tcp", "udp"]` |
+| `CAPACITY_MAX` | `protocol.py` | 32 — upper bound of the advisory `capacity` hint (`0` = not a seeder); mirrors `serve_slots` |
+| `CONNECTED_MAX` | `protocol.py` | `2^53` — upper bound of the advisory `connected` count (like `STARTUP_TIME_MAX`: inside the exactly-representable integer range of a JSON number) |
 | `BOOT_DEFAULT_PORT` | imported from `hsync_common.constants` (`cli.py`, `_resolve_listener` effective default) | `443` — default UDP listener port (spec §Transport); single SSOT shared with `hsync-client` |
 
 ## Runtime (non-wire) structures

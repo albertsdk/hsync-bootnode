@@ -53,6 +53,11 @@ QUERY_PAIR_BURST = 10
 QUERY_BUCKET_LIMIT = 30  # per bucket total
 REGISTER_BUCKET_LIMIT = 10  # per bucket total
 BAD_TOKEN_IP_LIMIT = 5  # failed-token attempts per IP
+# Malformed/unknown frames: their own budget beside the valid-frame admission
+# (validation happening first means they never drain ``OP_IP_*``, so without a
+# separate cap a parse storm would be free CPU work on the event loop).
+PARSE_IP_LIMIT = 30  # invalid frames per IP per minute
+PARSE_IP_BURST = 60
 WINDOW_SECONDS = 60.0
 
 # Internal authorization outcome used by register/refresh/query.
@@ -60,6 +65,9 @@ _AuthResult = Literal["ok", "token_required", "rate_limited"]
 
 # TTL sweep cadence (spec: prune every 15 s).
 _PRUNE_INTERVAL_SECONDS = 15.0
+
+# Max expired records one request-path sweep may remove (see _maybe_prune).
+REQUEST_PATH_PRUNE_BUDGET = 2048
 
 
 class BootConfigError(RuntimeError):
@@ -142,6 +150,10 @@ class BootHandler:
         self._bad_token_ip = TokenBucketLimiter(
             capacity=BAD_TOKEN_IP_LIMIT, refill=BAD_TOKEN_IP_LIMIT, window=WINDOW_SECONDS
         )
+        # Malformed/unknown frames: ~30/min per IP (see handle()).
+        self._bad_parse_ip = TokenBucketLimiter(
+            capacity=PARSE_IP_BURST, refill=PARSE_IP_LIMIT, window=WINDOW_SECONDS
+        )
         debug_event(
             "handler ready",
             ttl=int(self.ttl),
@@ -154,10 +166,18 @@ class BootHandler:
     # ------------------------------------------------------------------ API
 
     def _maybe_prune(self) -> None:
-        """Run a TTL sweep at most once per prune_interval."""
+        """Run a TTL sweep at most once per prune_interval.
+
+        The request-path sweep carries a removal budget: pruning runs
+        synchronously inside the frame handler, so a node that fell far behind
+        (huge stale backlog, e.g. after a vanished upstream or under a burst)
+        must not do the whole sweep on the event loop in one go — the
+        background sweep (with no budget) converges within one interval
+        anyway.
+        """
         now = time.monotonic()
         if self._last_prune is None or now - self._last_prune >= self.prune_interval:
-            self.prune(now)
+            self.prune(now, max_remove=REQUEST_PATH_PRUNE_BUDGET)
             self._last_prune = now
 
     def _limit_ok(self, limiter: TokenBucketLimiter, key: str) -> bool:
@@ -178,7 +198,20 @@ class BootHandler:
         try:
             frame = BOOT_FRAME_ADAPTER.validate_json(raw)
         except ValidationError:
-            debug_event("drop invalid-frame", peer=f"{peer_ip}:{peer_port}", bytes=len(raw))
+            # Malformed/unknown frames must not drain the VALID-frame per-IP
+            # bucket (a garbage sender behind a shared NAT must not throttle
+            # its neighbours), but they cannot stay unlimited either: pydantic
+            # parsing is real CPU work on the event loop. Their own separate
+            # small budget per IP bounds the parse storm; over budget the drop
+            # costs nothing but the line read.
+            if self._enforce_rate_limits and not self._bad_parse_ip.allow(peer_ip):
+                debug_event(
+                    "drop invalid-frame beyond-budget",
+                    peer=f"{peer_ip}:{peer_port}",
+                    bytes=len(raw),
+                )
+            else:
+                debug_event("drop invalid-frame", peer=f"{peer_ip}:{peer_port}", bytes=len(raw))
             return None
         # Admission is charged only for VALID frames: malformed/unknown frames
         # must stay silently dropped and must not drain the per-IP bucket (a
@@ -208,9 +241,9 @@ class BootHandler:
             return None
         return self._query(frame, peer_ip)
 
-    def prune(self, now: float | None = None) -> int:
+    def prune(self, now: float | None = None, *, max_remove: int | None = None) -> int:
         """Drop expired records (TTL sweep); returns number removed."""
-        removed = self.routing.prune(now)
+        removed = self.routing.prune(now, max_remove=max_remove)
         if now is None:
             # Background sweep only: also bound the rate-limiter state. Evicting
             # fully-refilled buckets is behaviour-identical to keeping them, and
@@ -221,6 +254,7 @@ class BootHandler:
                 self._query_bucket,
                 self._register_bucket,
                 self._bad_token_ip,
+                self._bad_parse_ip,
             ):
                 limiter.evict_stale()
             # Keep the request-side gating in sync so handle() does not
@@ -302,21 +336,48 @@ class BootHandler:
         return self._ack(peer_ip, peer_port)
 
     def _leave(self, model: BootLeave, peer_ip: str) -> None:
-        """Remove the record; a private node also demands a valid token.
+        """Remove the record; unauthorized departures are silently ignored.
 
-        Open mode keeps ``leave`` anonymous by design (it exposes nothing and
-        the generic per-IP admission still applies). On a private node an
-        anonymous leave would let anyone who knows a ``(cid, bucket)`` pair
-        spoof a departure, so the protected-bucket check applies here too. The spec has no
-        response frame for ``leave``, so a refusal stays a silent drop — the
-        same shape as the existing unknown-record drop — while the failed-token
-        budget is charged exactly as for register/refresh/query.
+        Three authorization paths, in order:
+            1. private node: the protected-bucket token check applies exactly
+               as for register/refresh/query;
+            2. protected bucket on an open node: a valid token authenticates
+               the departure from any source IP;
+            3. open bucket (the default): a departure is honoured only from
+               the source network the peer registered from (same observed IP).
+               A ``leave`` from any other IP is ignored, so an attacker who
+               knows a ``(cid, bucket)`` pair can no longer evict someone else.
+               A peer behind a NAT rebound keeps its TTL (60 s) as before: it
+               re-registers with the next cycle.
+
+        The failed-token budget is charged exactly as for register/refresh/
+        query when a token was checked. The spec has no response frame for
+        ``leave``, so every refusal stays a silent drop.
         """
-        if self._private and self._authorize(model.bucket, model.bucket_token, peer_ip) != "ok":
-            debug_event("leave refused", cid=model.cid, bucket=model.bucket, peer=peer_ip)
+        if self._private:
+            if self._authorize(model.bucket, model.bucket_token, peer_ip) != "ok":
+                debug_event("leave refused", cid=model.cid, bucket=model.bucket, peer=peer_ip)
+                return
+            self.routing.remove(model.cid, model.bucket)
+            debug_event("leave removed", cid=model.cid, bucket=model.bucket, peer=peer_ip)
             return
-        self.routing.remove(model.cid, model.bucket)
-        debug_event("leave removed", cid=model.cid, bucket=model.bucket, peer=peer_ip)
+        if peer_ip in self.routing.source_ips(model.cid, model.bucket):
+            self.routing.remove(model.cid, model.bucket, source_ip=peer_ip)
+            debug_event("leave removed", cid=model.cid, bucket=model.bucket, peer=peer_ip)
+            return
+        if (
+            model.bucket in self._protected
+            and self._authorize(model.bucket, model.bucket_token, peer_ip) == "ok"
+        ):
+            self.routing.remove(model.cid, model.bucket)
+            debug_event("leave removed", cid=model.cid, bucket=model.bucket, peer=peer_ip)
+            return
+        debug_event(
+            "leave ignored foreign-source",
+            cid=model.cid,
+            bucket=model.bucket,
+            peer=peer_ip,
+        )
         return
 
     def _query(self, model: BootQuery, peer_ip: str) -> bytes:

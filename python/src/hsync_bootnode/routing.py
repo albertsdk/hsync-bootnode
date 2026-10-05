@@ -7,7 +7,7 @@ written to disk from this module.
 
 from __future__ import annotations
 
-import random
+import secrets
 import time
 from dataclasses import dataclass, field
 
@@ -19,6 +19,12 @@ __all__ = [
     "PeerRecord",
     "RoutingTable",
 ]
+
+# Peer sampling is part of the matchmaker's exposure surface: with the
+# predictable MT19937 generator a heavy query loop could reconstruct state and
+# steer future samples. An OS-backed generator (SystemRandom) keeps the
+# matchmaking unpredictable at no functional cost.
+_RNG = secrets.SystemRandom()
 
 # Seconds (spec: client refresh every 30 s, prune every 15 s, TTL 60 s).
 DEFAULT_TTL = 60.0
@@ -150,29 +156,71 @@ class RoutingTable:
         self._by_cid = by_cid
         self._pos = pos
 
-    def remove(self, cid: str, bucket: str) -> int:
-        """Remove every record for ``(cid, bucket)`` regardless of group (leave).
+    def remove(
+        self,
+        cid: str,
+        bucket: str,
+        *,
+        source_ip: str | None = None,
+    ) -> int:
+        """Remove records for ``(cid, bucket)`` regardless of group (leave).
 
         The ``leave`` frame carries no group field and a CID identifies a peer
-        uniquely, so all its entries in the bucket must go. Returns the number
-        of records removed.
+        uniquely, so all of the caller's entries in the bucket must go.
+
+        ``source_ip`` narrows the removal to records observed from that source
+        IP: the handler's leave policy lets a peer only depart from the network
+        it registered from, so a record owned by a *different* source IP must
+        survive (it is someone else's registration, not an abuse the caller
+        gets to rewrite). ``source_ip=None`` removes everything (token-
+        authenticated departures and the token-gated private path).
+
+        Returns the number of records removed.
         """
-        doomed = self._by_cid.pop((cid, bucket), ())
+        keys = self._by_cid.get((cid, bucket))
+        if not keys:
+            return 0
+        records = self._records
+        doomed = [key for key in keys if source_ip is None or records[key].ip == source_ip]
         for key in doomed:
             self._drop(key)
+            # _drop (via _unindex) does not touch _by_cid — see its contract:
+            # the caller updates the cid index, so it always mirrors _records.
+            keys.discard(key)
+        if not keys:
+            self._by_cid.pop((cid, bucket), None)
         return len(doomed)
+
+    def source_ips(self, cid: str, bucket: str) -> list[str]:
+        """Observed source IPs of every active record for ``(cid, bucket)``.
+
+        Used by the leave policy to decide whether the sender may be the
+        legitimate owner of the registration.
+        """
+        keys = self._by_cid.get((cid, bucket))
+        if not keys:
+            return []
+        return [self._records[key].ip for key in keys]
 
     def get(self, cid: str, bucket: str, group: str | None = None) -> PeerRecord | None:
         """Return the active record for the exact key, or ``None`` (refresh)."""
         return self._records.get((cid, bucket, group))
 
-    def prune(self, now: float | None = None) -> int:
-        """Drop expired records; returns the number of removed entries."""
+    def prune(self, now: float | None = None, *, max_remove: int | None = None) -> int:
+        """Drop expired records; returns the number of removed entries.
+
+        ``max_remove`` caps how many records one sweep drops (an on-request
+        path calls this with a budget so a huge stale backlog cannot stall the
+        event loop; the background sweep keeps ``None`` and fully converges).
+        Left-over expired records are picked up by the next sweep.
+        """
         now = now if now is not None else time.monotonic()
         # Inlined PeerRecord.is_expired(now) — now is already resolved, so the
         # method would just evaluate ``now >= r.expires_at``. Inlining removes
         # one Python call per record from the TTL sweep (behaviour identical).
         expired = [k for k, r in self._records.items() if now >= r.expires_at]
+        if max_remove is not None and len(expired) > max_remove:
+            expired = expired[:max_remove]
         if not expired:
             return 0
         total = len(self._records)
@@ -217,7 +265,7 @@ class RoutingTable:
         k = min(limit, n)
         if k == n:
             all_records = [records[key] for key in keys if not records[key].is_expired(now)]
-            random.shuffle(all_records)
+            _RNG.shuffle(all_records)
             return all_records
         # n > k: rejection-sample up to a bounded number of distinct draws; if
         # that does not yield k active records (mostly-expired group), fall back
@@ -227,7 +275,7 @@ class RoutingTable:
         chosen: set[int] = set()
         budget = max(4 * k, 64)
         while len(result) < k and len(chosen) < budget:
-            idx = random.randrange(n)
+            idx = _RNG.randrange(n)
             if idx in chosen:
                 continue
             chosen.add(idx)
@@ -236,7 +284,7 @@ class RoutingTable:
                 result.append(record)
         if len(result) < k:
             remaining = [records[key] for key in keys if not records[key].is_expired(now)]
-            return random.sample(remaining, min(k, len(remaining)))
+            return _RNG.sample(remaining, min(k, len(remaining)))
         return result
 
     def count(self, bucket: str | None = None, group: str | None = None) -> int:

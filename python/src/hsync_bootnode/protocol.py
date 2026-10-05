@@ -69,6 +69,11 @@ CAPACITY_MAX = 32
 # peer ranks exactly like a LAN-discovered one.
 SyncDirection = Literal["bidirectional", "upload-only", "download-only"]
 
+# Upper bound for the advisory ``connected`` count, like ``startup_time`` kept
+# inside the exactly-representable integer range of a JSON number: a wire value
+# beyond this is garbage (silent drop) instead of an unbounded integer.
+CONNECTED_MAX = 2**53
+
 # Bound on the advertised unix ``startup_time`` (kept inside the
 # exactly-representable integer range of a JSON number). ``0.0`` = unknown.
 STARTUP_TIME_MAX = float(2**53)
@@ -90,6 +95,25 @@ def _validate_bucket_name(value: str) -> str:
 
 # Canonical bucket-name field type, applied to every ``bucket`` on the wire.
 BucketName = Annotated[str, AfterValidator(_validate_bucket_name)]
+
+
+def _validate_bucket_token(value: str) -> str:
+    """Reject anything that is not a 64-char lowercase-hex bucket token.
+
+    The token domain is fixed by the key-derivation contract (``tokens.py``):
+    ``hex(HMAC-SHA256(key, 'boot/1' || bucket)[:32])``, always 64 lowercase hex.
+    Enforcing that grammar on the wire model (like ``BucketName`` does) turns a
+    non-conforming token into an invalid frame — silently dropped, rate-limited
+    by the separate malformed-frame budget — instead of counting it as a
+    failed-token attempt.
+    """
+    if not _BUCKET_TOKEN_RE.fullmatch(value):
+        raise ValueError("bucket_token must be 64 lowercase hex characters")
+    return value
+
+
+# Canonical bucket-token field type, applied to every ``bucket_token`` on the wire.
+BucketToken = Annotated[str, AfterValidator(_validate_bucket_token)]
 
 
 class Endpoint(BaseModel):
@@ -142,12 +166,12 @@ class BootRegister(_BootFrame):
     cid: str = Field(pattern=CID_PATTERN)
     bucket: BucketName
     group: str | None = Field(default=None, max_length=128)
-    bucket_token: str | None = None
+    bucket_token: BucketToken | None = None
     cert_fp: str = Field(min_length=1, max_length=256)
     version: str = Field(min_length=1, max_length=64)
     capacity: int = Field(default=0, ge=0, le=CAPACITY_MAX)
     endpoints: list[Endpoint] = Field(default_factory=list, max_length=16)
-    connected: int | None = Field(default=None, ge=0)
+    connected: int | None = Field(default=None, ge=0, le=CONNECTED_MAX)
     server_ready: bool = False
     force_master: bool = False
     never_master: bool = False
@@ -162,22 +186,25 @@ class BootRefresh(_BootFrame):
     cid: str = Field(pattern=CID_PATTERN)
     bucket: BucketName
     group: str | None = Field(default=None, max_length=128)
-    bucket_token: str | None = None
-    connected: int | None = Field(default=None, ge=0)
+    bucket_token: BucketToken | None = None
+    connected: int | None = Field(default=None, ge=0, le=CONNECTED_MAX)
 
 
 class BootLeave(_BootFrame):
     """Client announces departure.
 
-    ``bucket_token`` is optional on the wire and only *enforced* by a private
-    node (``--private``), where an unauthenticated leave would let anyone who
-    knows a ``(cid, bucket)`` pair spoof a departure.
+    ``bucket_token`` is optional on the wire: a private node (``--private``)
+    enforces it, a protected bucket accepts it in place of a matching source
+    IP. On an open bucket the departure is honoured only from the source
+    network the peer registered from (handler leave policy): an
+    unauthenticated leave from any other IP is silently ignored, so a frame
+    that merely knows a ``(cid, bucket)`` pair cannot spoof a departure.
     """
 
     type: Literal["leave"]
     cid: str = Field(pattern=CID_PATTERN)
     bucket: BucketName
-    bucket_token: str | None = None
+    bucket_token: BucketToken | None = None
 
 
 class BootQuery(_BootFrame):
@@ -186,7 +213,7 @@ class BootQuery(_BootFrame):
     type: Literal["query"]
     bucket: BucketName
     group: str | None = Field(default=None, max_length=128)
-    bucket_token: str | None = None
+    bucket_token: BucketToken | None = None
     limit: int = Field(default=20, ge=1, le=50)
 
 

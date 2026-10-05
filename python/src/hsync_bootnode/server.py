@@ -19,6 +19,7 @@ import asyncio
 import ipaddress
 import os
 import re
+import time
 from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
@@ -27,20 +28,26 @@ from typing import Any
 from aioquic.asyncio import serve
 from aioquic.asyncio.protocol import QuicConnectionProtocol
 from aioquic.quic.configuration import QuicConfiguration
+from aioquic.quic.events import ConnectionTerminated, QuicEvent
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 from hsync_common import ssl_utils
 
-from hsync_bootnode.diagnostics import debug_event, error_event
+from hsync_bootnode.diagnostics import debug_event, error_event, warn_event
 from hsync_bootnode.handler import BootHandler
+from hsync_bootnode.ratelimit import TokenBucketLimiter
 
 __all__ = [
     "BOOT_ALPN",
     "BOOT_IDLE_TIMEOUT",
+    "CONNECTION_ACTIVE_MAX_PER_IP",
+    "HANDSHAKE_BURST_PER_IP",
+    "HANDSHAKE_RATE_PER_SECOND",
     "MAX_FRAME_BYTES",
     "BootQuicProtocol",
+    "ConnectionGuard",
     "IdentityError",
     "NodeIdentity",
     "build_quic_configuration",
@@ -57,6 +64,20 @@ BOOT_ALPN = "hsync-boot/1"
 BOOT_IDLE_TIMEOUT = 30.0
 # One boot/1 frame must not exceed 8 KiB (register carries at most 16 endpoints).
 MAX_FRAME_BYTES = 8192
+
+# QUIC handshake admission (per IP): a completed TLS 1.3 handshake is real
+# CPU work, and RETRY only stops *amplified* (spoofed) handshakes — a connecting
+# client with a real IP is otherwise unbounded. One node-side token bucket per
+# IP, plus a cap on simultaneously-open connections, blunts a handshake storm
+# with a bound that comfortably fits a heavy NAT umbrella (many clients
+# refreshing every 30 s): the per-frame limiters in handler.py never see the
+# handshake.
+HANDSHAKE_RATE_PER_SECOND = 30
+HANDSHAKE_BURST_PER_IP = 100
+# Cap on simultaneously-open connections from one IP. Each connection may run
+# up to aioquic's 128 default bidirectional streams, so this is also the
+# per-IP memory ceiling for idle stream tasks.
+CONNECTION_ACTIVE_MAX_PER_IP = 256
 
 # HSYNC service identities are always ECDSA P-256 (ADR-0037).
 PrivateKey = ec.EllipticCurvePrivateKey
@@ -186,11 +207,35 @@ def _load_identity_file(identity_path: Path) -> NodeIdentity:
     Fails with a clear error when the file does not contain both a certificate
     and an unencrypted PKCS#8 private key (never falls back to a fresh identity,
     which would silently rotate the pinned fingerprint).
+
+    Unattended daemons need the key readable without a passphrase, so the
+    *at-rest* protection is file permission: on load, a group/world-readable
+    key file is re-chmodded to 0600 and the operator is warned once (the
+    identity is the node's impersonation anchor — a leaked key lets an attacker
+    take its fingerprint over).
     """
     try:
         data = identity_path.read_bytes()
     except OSError as exc:
         raise IdentityError(f"could not read identity file {identity_path}: {exc}") from exc
+    try:
+        mode = identity_path.stat().st_mode & 0o777
+    except OSError as exc:
+        raise IdentityError(f"could not stat identity file {identity_path}: {exc}") from exc
+    if mode != _IDENTITY_FILE_MODE:
+        try:
+            os.chmod(identity_path, _IDENTITY_FILE_MODE)
+            warn_event(
+                "identity file permissions hardened",
+                path=str(identity_path),
+                reason=f"mode {oct(mode)} -> 0600",
+            )
+        except OSError as exc:
+            error_event(
+                "identity file permissions could not be hardened",
+                path=str(identity_path),
+                reason=type(exc).__name__,
+            )
     cert_match = _CERT_PEM_RE.search(data)
     key_match = _KEY_PEM_RE.search(data)
     if cert_match is None or key_match is None:
@@ -247,6 +292,97 @@ class IdentityError(RuntimeError):
     """The persistent identity file could not be loaded or written safely."""
 
 
+class ConnectionGuard:
+    """Per-IP transport admission gate for one listener process (RAM only).
+
+    Two controls, both bound to the peer's source IP and never persisted
+    (no-log): a token-bucket on new connections (the TLS handshake is the only
+    step any RETRY-protected QUIC server cannot refuse for free) and a ceiling
+    on simultaneously-open connections (each one may hold up to 128 QUIC
+    streams, so unbounded connections also mean unbounded idle-task memory).
+
+    Sizing (see the module constants): the handshake budget stays far above
+    what a whole NAT umbrella of legitimate clients can produce — they open a
+    connection per exchange and idle out after 30 s — while a single-IP flood
+    is throttled to at most ``handshake_burst`` new handshakes per second.
+    """
+
+    def __init__(
+        self,
+        *,
+        handshake_rate: float = HANDSHAKE_RATE_PER_SECOND,
+        handshake_burst: int = HANDSHAKE_BURST_PER_IP,
+        active_max: int = CONNECTION_ACTIVE_MAX_PER_IP,
+    ) -> None:
+        self._handshakes = TokenBucketLimiter(
+            capacity=handshake_burst, refill=handshake_rate, window=1.0
+        )
+        self._active_max = active_max
+        # Seconds an IP must stay quiet (with all of its connections closed)
+        # before evict_stale() forgets it: capacity/rate refills the bucket to
+        # exactly the first-use value, so forgetting is decision-neutral.
+        self._quiet_horizon = handshake_burst / handshake_rate
+        # ip -> [open connection count, last seen]
+        self._active: dict[str, list[float]] = {}
+
+    def admit(self, peer_ip: str, *, now: float | None = None) -> bool:
+        """Admit one new (connecting) connection from ``peer_ip``.
+
+        Returns False when the IP has no handshake budget left or already holds
+        ``active_max`` open connections; the caller must then refuse the
+        connection instead of running its handshake.
+        """
+        now = time.monotonic() if now is None else now
+        entry = self._active.get(peer_ip)
+        if entry is not None and entry[0] >= self._active_max:
+            return False
+        if not self._handshakes.allow(peer_ip, now=now):
+            self._note(peer_ip, now)
+            return False
+        if entry is None:
+            self._active[peer_ip] = [1, now]
+        else:
+            entry[0] += 1
+            entry[1] = now
+        return True
+
+    def release(self, peer_ip: str, *, now: float | None = None) -> None:
+        """Mark one connection from ``peer_ip`` as closed."""
+        entry = self._active.get(peer_ip)
+        if entry is None:
+            return
+        entry[0] = max(0.0, entry[0] - 1.0)
+        entry[1] = time.monotonic() if now is None else now
+
+    def open_count(self, peer_ip: str) -> int:
+        """Active connections currently accounted for (``0`` when unknown)."""
+        entry = self._active.get(peer_ip)
+        return int(entry[0]) if entry is not None else 0
+
+    def evict_stale(self, now: float | None = None) -> int:
+        """Forget an IP once all of its connections closed and it went quiet.
+
+        A refilled handshake bucket (``capacity / rate`` since last seen)
+        behaves identically to a fresh one, so forgetting that IP cannot
+        change any decision; this bounds the map under IP churn.
+        """
+        now = time.monotonic() if now is None else now
+        stale = [
+            ip
+            for ip, entry in self._active.items()
+            if entry[0] <= 0 and now - entry[1] >= self._quiet_horizon
+        ]
+        for ip in stale:
+            del self._active[ip]
+        return len(stale)
+
+    def _note(self, peer_ip: str, now: float) -> None:
+        """Stamp the last-seen time so evict_stale() can reap refused IPs too."""
+        entry = self._active.get(peer_ip)
+        if entry is not None:
+            entry[1] = now
+
+
 def build_quic_configuration(
     identity: NodeIdentity,
     *,
@@ -268,6 +404,9 @@ class BootQuicProtocol(QuicConnectionProtocol):
 
     ``boot_handler`` is bound by :func:`start_server` before the first datagram
     is dispatched (class attribute shared by all connections of the server).
+    When a ``ConnectionGuard`` is bound too, a connecting peer is admitted
+    against the per-IP handshake budget and active-connection cap before its
+    server-side handshake work runs at all (see :meth:`datagram_received`).
     """
 
     boot_handler: BootHandler
@@ -276,8 +415,14 @@ class BootQuicProtocol(QuicConnectionProtocol):
         self,
         quic: Any,
         stream_handler: Callable[[Any, Any], Any] | None = None,
+        guard: ConnectionGuard | None = None,
     ) -> None:
         super().__init__(quic, stream_handler)
+        self.guard = guard
+        # True once this connection was counted on the guard (one release per
+        # admitted connection; the flag makes the count idempotent if QUIC
+        # surfaces ConnectionTerminated twice).
+        self.admitted_on_guard = False
         self.peer_addr: tuple[str, int] | None = None
         # Strong references to the per-session tasks: aioquic does not await the
         # stream handler, so without this the loop could garbage-collect a
@@ -288,10 +433,42 @@ class BootQuicProtocol(QuicConnectionProtocol):
         self._stream_handler = self._spawn_stream
 
     def datagram_received(self, data: bytes | str, addr: Any) -> None:
-        # Keep the observed source endpoint: it is both the anti-amplification
-        # ground truth and the STUN-echo answer (observed NAT-mapped port).
-        self.peer_addr = (str(addr[0]), int(addr[1]))
+        peer_ip = str(addr[0])
+        first = self.peer_addr is None
+        # Transport admission happens BEFORE any handshake/bookkeeping runs: a
+        # refused IP gets one CONNECTION_CLOSE answer and nothing else (no TLS
+        # state machine, no stream, no frame handling) charged against the IP.
+        # The QUIC path state is registered first so aioquic can actually send
+        # that CONNECTION_CLOSE (its send path needs a registered network
+        # path) — receive_datagram does bookkeeping only, the handshake crypto
+        # happens in the event processing that follows a successful admission.
+        if first:
+            guard = self.guard
+            if guard is not None:
+                if not guard.admit(peer_ip):
+                    debug_event("connection refused ip-guard", peer=peer_ip)
+                    payload = data.encode("utf-8") if isinstance(data, str) else data
+                    self._quic.receive_datagram(payload, addr, now=self._loop.time())
+                    self.close()
+                    return
+                self.admitted_on_guard = True
+            # Keep the observed source endpoint: it is both the anti-amplification
+            # ground truth and the STUN-echo answer (observed NAT-mapped port).
+            self.peer_addr = (peer_ip, int(addr[1]))
         super().datagram_received(data, addr)
+
+    def quic_event_received(self, event: QuicEvent) -> None:
+        # Connection teardown releases the per-IP open-connection slot: the
+        # guard's active count must converge to the real connection population.
+        if (
+            isinstance(event, ConnectionTerminated)
+            and self.admitted_on_guard
+            and self.guard is not None
+        ):
+            self.admitted_on_guard = False
+            ip = self.peer_addr[0] if self.peer_addr is not None else "0.0.0.0"
+            self.guard.release(ip)
+        super().quic_event_received(event)
 
     def _observed_peer(self) -> tuple[str, int]:
         """Observed source endpoint, or a placeholder before the first datagram."""
@@ -339,15 +516,18 @@ class BootQuicProtocol(QuicConnectionProtocol):
                 writer.close()
 
 
-def _protocol_factory(handler: BootHandler) -> Callable[[Any, Any], Any]:
+def _protocol_factory(
+    handler: BootHandler, guard: ConnectionGuard | None = None
+) -> Callable[[Any, Any], Any]:
     """Build the aioquic ``create_protocol`` callable for one shared handler.
 
     aioquic instantiates one protocol object per QUIC connection; the closure
-    binds the process-wide :class:`BootHandler` to each instance.
+    binds the process-wide :class:`BootHandler` and the optional :class:`ConnectionGuard`
+    to each instance.
     """
 
     def _create(quic: Any, stream_handler: Any = None) -> BootQuicProtocol:
-        protocol = BootQuicProtocol(quic, stream_handler)
+        protocol = BootQuicProtocol(quic, stream_handler, guard)
         protocol.boot_handler = handler
         return protocol
 
@@ -362,11 +542,15 @@ async def start_server(
     retry: bool = True,
     identity: NodeIdentity | None = None,
     idle_timeout: float = BOOT_IDLE_TIMEOUT,
+    connection_guard: ConnectionGuard | None = None,
 ) -> tuple[Any, int, NodeIdentity]:
     """Start the QUIC/UDP listener and return ``(server, bound_port, identity)``.
 
     ``retry`` enables QUIC RETRY packets + address-validation tokens before any
     connection state is allocated (spec: mandatory, anti-amplification).
+    ``connection_guard`` adds the node-side per-IP handshake budget and
+    active-connection cap (production: always provided when rate limits are
+    enabled; tests may pass ``None`` for an unguarded listener).
     """
     identity = identity or make_identity(host)
     config = build_quic_configuration(identity, idle_timeout=idle_timeout)
@@ -376,7 +560,7 @@ async def start_server(
         port,
         configuration=config,
         retry=retry,
-        create_protocol=_protocol_factory(handler),
+        create_protocol=_protocol_factory(handler, connection_guard),
     )
     transport = server._transport
     sockname = transport.get_extra_info("sockname") if transport is not None else None

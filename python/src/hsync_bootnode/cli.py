@@ -28,6 +28,7 @@ from hsync_bootnode import __version__
 from hsync_bootnode.diagnostics import configure_debug, debug_log, error_event, warn_event
 from hsync_bootnode.handler import BootConfigError, BootHandler
 from hsync_bootnode.server import (
+    ConnectionGuard,
     IdentityError,
     NodeIdentity,
     load_identity,
@@ -72,6 +73,9 @@ _DEFAULT_IDENTITY_ENV = "HSYNC_BOOTNODE_IDENTITY"
 _DEFAULT_EPHEMERAL_ENV = "HSYNC_BOOTNODE_EPHEMERAL"
 # Warn this many days before the persisted identity's certificate expires.
 _IDENTITY_EXPIRY_WARN_DAYS = 30
+# Cap for the group-keys FD payload: keys are short 'bucket=<hex-key>' lines,
+# so anything bigger means the descriptor was misrouted (or is stuck open).
+KEYS_FD_MAX_BYTES = 1 << 20
 
 
 def default_identity_path() -> Path:
@@ -299,7 +303,13 @@ def run(
     try:
         asyncio.run(
             _async_main(
-                resolved_host, resolved_port, handler, no_upnp, ready_file, identity=node_identity
+                resolved_host,
+                resolved_port,
+                handler,
+                no_upnp,
+                ready_file,
+                identity=node_identity,
+                enforce_rate_limits=not no_rate_limit,
             )
         )
     except (KeyboardInterrupt, asyncio.CancelledError):
@@ -469,10 +479,20 @@ async def _async_main(
     ready_file: str | None = None,
     *,
     identity: NodeIdentity | None = None,
+    enforce_rate_limits: bool = True,
 ) -> None:
     try:
+        # The connection guard is the transport-level twin of the frame rate
+        # limits: per-IP handshake budget + cap on open connections. Disabled
+        # together with them by --no-rate-limit (the benchmark seam).
+        connection_guard = ConnectionGuard() if enforce_rate_limits else None
         server, bound_port, identity = await start_server(
-            host, port, handler, retry=True, identity=identity
+            host,
+            port,
+            handler,
+            retry=True,
+            identity=identity,
+            connection_guard=connection_guard,
         )
     except OSError as exc:
         raise ListenerBindError(host, port, _errno_from(exc)) from exc
@@ -489,7 +509,7 @@ async def _async_main(
             ready_written = True
             debug_log(f"readiness written to {ready_file}")
 
-        tasks.append(asyncio.create_task(_prune_loop(handler)))
+        tasks.append(asyncio.create_task(_prune_loop(handler, connection_guard)))
         if not no_upnp:
             tasks.append(asyncio.create_task(UpnpManager(bound_port).run()))
 
@@ -527,17 +547,30 @@ def _remove_ready_file(path: str) -> None:
         pass
 
 
-async def _prune_loop(handler: BootHandler) -> None:
+async def _prune_loop(
+    handler: BootHandler, connection_guard: ConnectionGuard | None = None
+) -> None:
     """Spec: prune the TTL routing table every 15 s."""
     while True:
         await asyncio.sleep(handler.prune_interval)
         handler.prune()
+        if connection_guard is not None:
+            # Same cadence as the routing sweep: forget closed-and-quiet IPs so
+            # the guard map cannot grow without bound under IP churn.
+            connection_guard.evict_stale()
 
 
 def _load_keys(keys_fd: int | None) -> dict[str, SecretStr]:
     """Load 'bucket=<hex-key>' lines from the given FD (cross-platform)."""
     if keys_fd is None or keys_fd < 0:
         return {}
+    if keys_fd in (1, 2):
+        # The docs say fd 1/2 are excluded: enforce it. An operator passing
+        # stdout/stderr is a mistake, never a key source.
+        raise BootConfigError(
+            f"refusing to read group keys from fd {keys_fd} (stdout/stderr); "
+            "pass the descriptor of the actual keys file (e.g. --keys-fd 5)"
+        )
     raw = _read_fd(keys_fd)
     keys: dict[str, SecretStr] = {}
     for raw_line in raw.splitlines():
@@ -551,12 +584,24 @@ def _load_keys(keys_fd: int | None) -> dict[str, SecretStr]:
 
 
 def _read_fd(fd: int) -> str:
-    """Read all bytes from an integer file descriptor (fd 1/2 excluded)."""
+    """Read all bytes from an integer file descriptor (fd 1/2 excluded upstream).
+
+    The total payload is bounded (keys are finitely many 65-char lines); a
+    descriptor that never returns EOF (misrouted stdin, a pipe held open) must
+    fail fast instead of stalling startup or growing without bound.
+    """
     chunks: list[bytes] = []
+    total = 0
     while True:
         chunk = os.read(fd, 4096)
         if not chunk:
             break
+        total += len(chunk)
+        if total > KEYS_FD_MAX_BYTES:
+            raise BootConfigError(
+                f"group keys payload exceeded {KEYS_FD_MAX_BYTES} bytes on fd {fd}: "
+                "the descriptor must present whole, short lines and EOF"
+            )
         chunks.append(chunk)
     return b"".join(chunks).decode("utf-8", errors="replace")
 

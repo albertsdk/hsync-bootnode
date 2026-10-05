@@ -39,6 +39,8 @@ UDP :443
 | `python/src/hsync_bootnode/upnp.py` | SSDP IGD discovery + SOAP `AddPortMapping`; stateless when no IGD | `UpnpManager.run`, `add_port_mapping`, `discover_igd` |
 | `python/src/hsync_bootnode/diagnostics.py` | Two stderr channels: **always-on `warn`/`error`** node health (peer-free by construction, field allow-list, error dedup with `suppressed=<n>`) and the opt-in **full operation log** (decisions #25, #35, #36); never on disk (no-log invariant); line format `<ISO-8601 UTC Z> - hsync-bootnode[<pid>] <level>: …` | `configure_debug`, `debug_log`, `debug_event`, `warn_event`, `error_event`, `_emit`, `_sanitize`, `_PUBLIC_FIELDS` |
 | `python/src/hsync_bootnode/cli.py` | Typer multi-command app; group keys from `--keys-fd` / `HSYNC_BOOTNODE_KEYS_FD` (read once); fail-fast config; `--ttl`/`--debug`/`--ready-file` seams; `--identity`/`--public-host` + `identity show`/`rotate` | `run`, `identity_show`, `identity_rotate`, `main` (`--version`), `_load_keys` |
+| `python/fuzz/fuzz_boot.py` | Deterministic stdlib fuzz harness (decoder + SSDP/token validators; security invariants, not just crash-freedom; CI burst in `python/tests/test_fuzz_harness.py`) | `run_fuzz`, `Finding`, targets `handle`/`ssdp`/`token` |
+| `python/fuzz/fuzz_guided.py` | Coverage-guided driver on the same generators/invariants: per-iteration branch-arc signatures via `coverage.Coverage` (branch=True), evolving FIFO-capped corpus (cap 512), deterministic seeds, corpus persistence (`--corpus-out/--corpus-in`); ~140 it/s (tracing) vs ~20 000 it/s static | `run_guided`, `_ArcMeter.arcs`, `_guided_frame` |
 
 ## Request flow (per datagram/stream frame)
 
@@ -63,9 +65,11 @@ UDP :443
    advisory fields onto the record (`capacity`, `reachable`, and the election
    advertisement `server_ready`/`force_master`/`never_master`/`startup_time`/
    `sync_direction` — decision 31); `refresh` touches TTL only and never creates
-   or mutates them; `leave` removes every `(cid, bucket)` entry
-   regardless of group and returns no frame (in private mode it is token-gated
-   too, and a refusal is a silent drop — the spec has no `leave` response).
+   or mutates them; `leave` removes `(cid, bucket)` entries regardless of group
+   but now honours an ownership check — same-source records removed without a
+   token (owner IP), token-authenticated removal on private/protected buckets —
+   and a foreign-source `leave` is silently ignored, returning no frame either
+   way (the spec has no `leave` response).
 6. Reply: `ack` (register/refresh, carries `observed_endpoint`) or `response`
    (query, random sample up to `limit`, every advertised endpoint relayed as the
    peer's candidate list, every advisory field relayed verbatim); returned
@@ -80,7 +84,21 @@ UDP :443
   in memory instead. Verified by `python/tests/test_nolog.py` under a read-only
   filesystem.
 - **Anti-amplification**: QUIC RETRY + address-validation before connection
-  state (`start_server(..., retry=True)`, `python/src/hsync_bootnode/server.py:365`).
+  state (`start_server(..., retry=True)`, `python/src/hsync_bootnode/server.py`),
+  and a node-side **transport guard** (`ConnectionGuard`,
+  `python/src/hsync_bootnode/server.py`): ~30 new handshakes/s (burst 100) and
+  ≤ 256 simultaneously-open connections per source IP, checked in
+  `BootQuicProtocol.datagram_received` before any handshake work; released on
+  `ConnectionTerminated`, lazily forgetting quiet/empty IPs. The guard shares
+  the rate-limit seam (`--no-rate-limit`) so benchmarks stay unthrottled.
+- **Malformed-frame budget**: invalid/unknown frames are validated first (so
+  the valid-frame admission is not drained) but carry a separate ~30/min per IP
+  budget (burst 60, `handler.py` `_bad_parse_ip`), bounding the validation CPU
+  a single peer can force without adding any oracle — the drop stays silent.
+- **Frame-domain tightness**: `bucket_token` must be 64 lowercase hex chars
+  (`BucketToken` annotation, `protocol.py`) and `connected` is bounded to
+  `0..2^53` (`CONNECTED_MAX`), so a token that cannot be a derivable HMAC output
+  or an absurd counter is an invalid frame, not a per-IP accounting event.
 - **Protected buckets**: the group key never enters any record; only the derived token.
   Protected buckets are declared by the operator (`--protected-bucket`,
   repeatable) and fail fast at startup if declared without a key
@@ -178,10 +196,11 @@ Four consumer-facing ways to run a node, kept identical in shape to
 |---|---|
 | `python/tests/test_handler.py` | Routing, TTL (frozen clock), protected buckets, private policy (every bucket gated, unkeyed bucket, gated `leave`), rate limits, STUN-echo, frame rejection |
 | `python/tests/test_scaffold.py` | Fixtures / spec contract + frame schema positives/negatives (rigid schema) |
-| `python/tests/test_server.py` | QUIC loopback: register/query/protected refusal, private-node refusal, garbage frames, pipelined frames on one stream |
-| `python/tests/test_identity.py` | Persistent identity (default): create/load/rotate, `0600`/`0700` permissions, ECDSA P-256 only, SAN from bind + `--public-host`, 20-year validity |
+| `python/tests/test_fuzz_harness.py` | Bounded deterministic fuzz burst (decoder/SSDP/token invariant targets; long runs via `python/fuzz/fuzz_boot.py --seconds N`, decision #47) + coverage-guided burst (decision #48) |
+| `python/tests/test_server.py` | QUIC loopback: register/query/protected refusal, private-node refusal, garbage frames, pipelined frames on one stream, per-IP connection guard (cap + release) |
+| `python/tests/test_identity.py` | Persistent identity (default): create/load/rotate, `0600`/`0700` permissions, ECDSA P-256 only, SAN from bind + `--public-host`, 20-year validity, on-load permission hardening |
 | `python/tests/test_nolog.py` | Zero-write invariant under read-only fs |
-| `python/tests/test_upnp.py` | SSDP/SOAP shapes, error downgrade, stateless no-IGD |
+| `python/tests/test_upnp.py` | SSDP/SOAP shapes, error downgrade, stateless no-IGD, LOCATION/source/redirect hardening |
 | `python/tests/test_cli.py` | CLI version/fail-fast/keys-fd contract |
 | `tests/` (repo root) | **Black-box** suite (language-neutral): spawns the real binary (`HSYNC_BOOTNODE_BIN`), speaks only `boot/1` over QUIC, gated by `HSYNC_BB_BOOTNODE=1` |
 
@@ -220,5 +239,12 @@ The monorepo `p2p`/bootnode migration is **complete**:
   `quiche` via JNI). Resumption document: the Android project's
   [`quic-jni`](https://github.com/albertsdk/hsync-android/blob/main/llm-wiki/modules/quic-jni.md)
   page.
+- **Done / open (quality)**: a deterministic stdlib **fuzz harness** covers the
+  decoder and the SSDP/token validators in CI (decision #47, `python/fuzz/
+  fuzz_boot.py`), and a **coverage-guided in-process driver** (decision #48,
+  `python/fuzz/fuzz_guided.py` — arc feedback via `coverage.py`) evolves the
+  corpus the same way AFL does, at Python-branch granularity. Still open:
+  Atheris (no Python 3.14 wheel) and `cargo fuzz` for the Rust port (hard
+  requirement there, nightly toolchain, `rust/` not started).
 - **Not started (v2)**: Rust (`quinn`) implementation — target toolchain stable
   Rust 1.98+.

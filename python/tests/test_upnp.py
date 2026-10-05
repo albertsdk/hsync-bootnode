@@ -14,9 +14,13 @@ from hsync_bootnode.upnp import (
     IgdService,
     UpnpError,
     UpnpManager,
+    _control_url_on_base,
+    _first_igd_location,
     _parse_ssdp_response,
     add_port_mapping,
     build_add_mapping_soap,
+    is_lan_unicast_address,
+    is_private_http_location,
     parse_soap_error,
 )
 
@@ -64,6 +68,75 @@ def test_ssdp_response_location_extraction() -> None:
     )
     assert _parse_ssdp_response(response) == "http://192.168.1.1:1900/rootDesc.xml"
     assert _parse_ssdp_response(b"HTTP/1.1 404 Not Found\r\n\r\n") is None
+
+
+def test_lan_unicast_source_filter() -> None:
+    """Only private-LAN addresses may speak SSDP to the node.
+
+    The IGD answering our M-SEARCH is a LAN device; every other source — a
+    plain-Internet host (no LAN is discoverable there), the APIPA range that
+    also hosts cloud metadata, loopback, or a garbage string — is discarded
+    unopened.
+    """
+    for good in ("192.168.1.7", "10.1.2.3", "172.16.5.5", "fd00::7", "fdca:777a::1"):
+        assert is_lan_unicast_address(good) is True
+    # global/doc addresses (extranet), the link-local metadata/host range,
+    # loopback, garbage — all refused
+    for bad in (
+        "8.8.8.8",
+        "203.0.113.9",
+        "2001:db8::1",
+        "169.254.169.254",
+        "fe80::1",
+        "127.0.0.1",
+        "::1",
+        "not-an-address",
+    ):
+        assert is_lan_unicast_address(bad) is False
+
+
+def test_location_http_url_must_point_at_a_private_ip_literal() -> None:
+    """LOCATION validation: the URL is attacker-influenced data.
+
+    ``http://<private-IP-literal>/…`` is the only shape an IGD publishes; the
+    hostname (DNS-rebindable) and non-HTTP schemes (file/ftp handlers) are
+    refused so the SSDP reply can never become an SSRF primitive.
+    """
+    for good in (
+        "http://192.168.1.1:5000/rootDesc.xml",
+        "http://10.0.0.2/desc",
+        "http://[fd00::7]:5000/d",
+        "http://[fd00::7:5000]/d",
+        "https://192.168.1.1/desc.xml",
+        "https://192.168.1.1:5000/rootDesc.xml",
+    ):
+        assert is_private_http_location(good) is True
+    for bad in (
+        "",
+        "file:///etc/passwd",
+        "ftp://192.168.1.1/desc.xml",
+        "http://router.lan/rootDesc.xml",
+        "http://203.0.113.9/rootDesc.xml",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://[2001:db8::1]/desc.xml",
+        "http://user:password@192.168.1.1/desc.xml",
+        "http://192.168.1.1:70000/desc.xml",
+    ):
+        assert is_private_http_location(bad) is False
+
+
+def test_control_url_must_stay_on_the_igd_host() -> None:
+    """A controlURL is resolved against the LOCATION's validated host only."""
+    base = "http://192.168.1.1:5000/rootDesc.xml"
+    # ordinary root-relative and device-relative controlURLs
+    assert _control_url_on_base(base, "/ctl/IPConn") == "http://192.168.1.1:5000/ctl/IPConn"
+    assert _control_url_on_base(base, "ctl/IPConn") == "http://192.168.1.1:5000/ctl/IPConn"
+    # a path traversal stays confined to the validated host (normpath)
+    assert _control_url_on_base(base, "/ctl/../desc") == "http://192.168.1.1:5000/desc"
+    # anything that escapes the device is refused, never followed
+    assert _control_url_on_base(base, "http://203.0.113.9/steal") is None
+    assert _control_url_on_base(base, "//203.0.113.9/steal") is None
+    assert _control_url_on_base(base, "https://192.168.1.1:5000/steal") is None
 
 
 def test_add_port_mapping_injects_transport() -> None:
@@ -143,3 +216,62 @@ async def test_upnp_manager_reports_a_failed_cycle(monkeypatch: object, capsys) 
     assert len(lines) == 1
     assert " warn: upnp mapping unavailable" in lines[0]
     assert "reason=SSDP discovery failed: Network is unreachable" in lines[0]
+
+
+class _FakeSocket:
+    """Minimal stand-in for the SSDP datagram socket (no network, no time waits)."""
+
+    def __init__(self, replies: list[tuple[bytes, tuple[str, int]]]) -> None:
+        self._replies = list(replies)
+
+    def settimeout(self, _value: float) -> None:
+        pass
+
+    def sendto(self, _data: bytes, _addr: object) -> None:
+        pass
+
+    def recvfrom(self, _size: int) -> tuple[bytes, tuple[str, int]]:
+        if not self._replies:
+            raise TimeoutError("queue drained")
+        return self._replies.pop(0)
+
+    def getsockname(self) -> tuple[str, int]:
+        return ("192.168.1.10", 0)
+
+
+def test_ssdp_replies_off_lan_are_discarded_unopened(monkeypatch: object) -> None:
+    """An off-LAN source never reaches the LOCATION fetch (no parse, no HTTP).
+
+    The whole SSRF surface of SSDP is the *reply* anyone can send: restricting
+    the accepted source to the private LAN collapses it to LAN-hostile only,
+    and the LOCATION validation on top covers even an on-LAN rogue device.
+    """
+    import hsync_bootnode.upnp as upnp_mod
+
+    ssdp_reply = (
+        b"HTTP/1.1 200 OK\r\n"
+        b"LOCATION: http://192.168.1.1:5000/rootDesc.xml\r\n"
+        b"ST: urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\n\r\n"
+    )
+    file_reply = ssdp_reply.replace(
+        b"http://192.168.1.1:5000/rootDesc.xml",
+        b"file:///etc/passwd",
+    )
+    fetched: list[str] = []
+
+    def fake_fetch(location: str, local_ip: str) -> None:
+        fetched.append(location)
+        return None
+
+    monkeypatch.setattr(upnp_mod, "_igd_service_from_location", fake_fetch)
+    sock = _FakeSocket(
+        [
+            (ssdp_reply, ("203.0.113.9", 50000)),  # public-IP source: off-LAN
+            (file_reply, ("192.168.1.50", 5000)),  # on-LAN source, file LOCATION
+            (ssdp_reply, ("192.168.1.1", 1900)),  # on-LAN, valid LOCATION shape
+        ]
+    )
+    result = _first_igd_location(sock, 2.0, "192.168.1.10")  # type: ignore[arg-type]
+    assert result is None  # the fake fetch returns None, so the walk keeps going
+    # the off-LAN reply was discarded UNOPENED; only the on-LAN http reply triggered a fetch
+    assert fetched == ["http://192.168.1.1:5000/rootDesc.xml"]

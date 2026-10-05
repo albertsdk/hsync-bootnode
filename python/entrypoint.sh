@@ -8,6 +8,13 @@
 
 set -eu
 
+# The readiness file is created with O_EXCL and survives a SIGKILL'd container:
+# remove a stale one so the next start honors its ready-file seam (the node
+# itself still refuses to overwrite a file owned by a RUNNING instance).
+if [ -n "${HSYNC_BOOTNODE_READY_FILE:-}" ]; then
+    rm -f "${HSYNC_BOOTNODE_READY_FILE}"
+fi
+
 if [ -n "${HSYNC_BOOTNODE_KEYS_FILE:-}" ]; then
     exec 3< "${HSYNC_BOOTNODE_KEYS_FILE}"
     export HSYNC_BOOTNODE_KEYS_FD=3

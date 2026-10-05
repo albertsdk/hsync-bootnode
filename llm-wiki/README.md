@@ -40,12 +40,18 @@ Internal, agent-optimized knowledge base for the `hsync-bootnode` project
    prune every 15 s, client refresh every 30 s.
 3. **Rigid schema**: every `boot/1` frame model uses pydantic
    `extra="forbid"` — unknown/targeted fields make the frame invalid and it is
-   silently dropped.
+   silently dropped. The field domains are enforced too: `bucket_token` must be
+   64 lowercase hex characters (`BucketToken`, `protocol.py`) and `connected`
+   is bounded to `0..2^53` (`CONNECTED_MAX`), so a value that cannot exist in
+   the key-derivation domain or a wire-bignumber is an invalid frame, not an
+   unbounded storage/accounting event (decisions #44/#46).
 4. **Protected buckets**: tokens are derived
    `HMAC-SHA256(key, "boot/1" || bucket)[:32]` hex, compared in constant time
    (`hmac.compare_digest`); refusals are uniform (`token_required`) and never
    reveal bucket existence. `--private` widens the same policy to every bucket
-   (including `leave`): see `decisions.md` #22.
+   (including `leave`): see `decisions.md` #22. `leave` ownership extends the
+   same idea onto open buckets: a departure from an unknown source IP is
+   silently ignored (decision #45).
 5. **Zero backward compatibility**: breaking the wire contract means bumping
    the mandatory `protocol_version` (`boot/1`) and updating spec, fixtures,
    implementation and tests atomically.

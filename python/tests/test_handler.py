@@ -381,12 +381,10 @@ def test_protected_bucket_register_without_token_does_not_create() -> None:
     assert response is not None
     assert response["error"] == "token_required"
     assert h.routing.count(bucket="shared") == 0
-    # a malformed token string is refused too: it fails the constant-time check
-    response = decoded(
-        send(h, register_frame(token="not-a-token"), peer_ip="10.0.0.1", peer_port=1)
-    )
-    assert response is not None
-    assert response["error"] == "token_required"
+    # a token that cannot exist in the derivation domain (not 64 lowercase hex)
+    # is an INVALID FRAME — silently dropped, like every other malformed frame —
+    # never a failed-token attempt (which would answer token_required)
+    assert send(h, register_frame(token="not-a-token"), peer_ip="10.0.0.1", peer_port=1) is None
     assert h.routing.count(bucket="shared") == 0
 
 
@@ -539,13 +537,14 @@ def test_leave_removes_record_anonymously() -> None:
     assert h.routing.count(bucket="shared") == 0
 
 
-def test_leave_removes_all_groups() -> None:
+def test_leave_removes_all_groups_registered_from_the_same_source() -> None:
     h = make_handler()
     # The same CID registered in two groups of the same bucket.
     send(h, register_frame(cid=CID, group="home"), peer_ip="10.0.0.1", peer_port=1)
-    send(h, register_frame(cid=CID, group="work"), peer_ip="10.0.0.2", peer_port=2)
+    send(h, register_frame(cid=CID, group="work"), peer_ip="10.0.0.1", peer_port=1)
     assert h.routing.count(bucket="shared") == 2
-    # leave carries no group: it must remove every (cid, bucket) entry.
+    # leave carries no group: it must remove every (cid, bucket) entry the
+    # departing source owns (the outbound policy is per source IP, not per group).
     send(h, leave_frame(), peer_ip="10.0.0.1", peer_port=1)
     assert h.routing.count(bucket="shared") == 0
     assert h.routing.get(CID, "shared", "home") is None
@@ -559,6 +558,93 @@ def test_leave_removes_all_groups() -> None:
     assert response is not None
     assert response["count"] == 1
     assert response["peers"][0]["cid"] == CID2
+
+
+def test_leave_from_a_foreign_source_is_ignored() -> None:
+    """Open mode: a leave from an IP the peer never registered from evicts nothing.
+
+    This is the regression test for the spoofable-departure vector: the frame
+    alone (``cid`` + ``bucket`` are plain wire data) must not be able to break
+    someone else's discovery entry, and the node exposes nothing back (the spec
+    carries no leave response, so the refusal is a silent drop).
+    """
+    h = make_handler()
+    send(h, register_frame(), peer_ip="10.0.0.1", peer_port=1)
+    assert h.routing.count(bucket="shared") == 1
+    # stranger IP: silently ignored, the record survives
+    assert send(h, leave_frame(), peer_ip="10.0.0.2", peer_port=1) is None
+    assert h.routing.count(bucket="shared") == 1
+    # the owner source itself still leaves normally
+    assert send(h, leave_frame(), peer_ip="10.0.0.1", peer_port=1) is None
+    assert h.routing.count(bucket="shared") == 0
+
+
+def test_source_rebind_leaves_only_own_records() -> None:
+    """A source-IP change keeps the other-source record alive until TTL expiry.
+
+    Two devices on different networks registering the *same* CID (or a NAT
+    rebinding) own separate records: one of them departing must not evict the
+    other, and the departed one simply re-registers with its next cycle.
+    """
+    h = make_handler()
+    send(h, register_frame(group="home"), peer_ip="10.0.0.1", peer_port=1)
+    send(h, register_frame(group="work"), peer_ip="10.0.0.2", peer_port=2)
+    assert h.routing.count(bucket="shared") == 2
+    send(h, leave_frame(), peer_ip="10.0.0.1", peer_port=1)
+    assert h.routing.count(bucket="shared") == 1
+    assert h.routing.get(CID, "shared", "home") is None
+    assert h.routing.get(CID, "shared", "work") is not None
+
+
+def test_partial_leave_keeps_the_cid_index_faithful() -> None:
+    """Regression (found by the fuzz harness, seed 0): after a partial
+    (same-source) leave the ``(cid, bucket)`` index must not keep dropped keys —
+    pre-fix, the next leave/query over the index hit a KeyError on the routing
+    table instead of iterating the surviving records.
+    """
+    h = make_handler()
+    send(h, register_frame(group="home"), peer_ip="10.0.0.1", peer_port=1)
+    send(h, register_frame(group="work"), peer_ip="10.0.0.2", peer_port=2)
+    # partial leave: only the foreign-source record must survive
+    assert send(h, leave_frame(), peer_ip="10.0.0.1", peer_port=1) is None
+    assert h.routing.count(bucket="shared") == 1
+    # the index stays usable after the partial removal (pre-fix: KeyError here)
+    assert h.routing.source_ips(CID, "shared") == ["10.0.0.2"]
+    assert send(h, leave_frame(), peer_ip="10.0.0.2", peer_port=2) is None
+    assert h.routing.count(bucket="shared") == 0
+    assert h.routing.source_ips(CID, "shared") == []
+
+
+def test_protected_bucket_leave_with_a_valid_token_removes_from_any_source() -> None:
+    """On a protected bucket a valid token authenticates the departure."""
+    h = make_handler(protected=("shared",))
+    token = derive_bucket_token(b"kshared", "shared")
+    send(h, register_frame(token=token), peer_ip="10.0.0.1", peer_port=1)
+    assert h.routing.count(bucket="shared") == 1
+    # token-carrying leave from an unrelated source IP: authenticated → removed
+    assert send(h, leave_frame(token=token), peer_ip="10.0.0.9", peer_port=9) is None
+    assert h.routing.count(bucket="shared") == 0
+
+
+def test_protected_bucket_leave_from_the_owner_source_needs_no_token() -> None:
+    """The same-source exemption also covers protected buckets (plain departure)."""
+    h = make_handler(protected=("shared",))
+    token = derive_bucket_token(b"kshared", "shared")
+    send(h, register_frame(token=token), peer_ip="10.0.0.1", peer_port=1)
+    assert send(h, leave_frame(), peer_ip="10.0.0.1", peer_port=1) is None
+    assert h.routing.count(bucket="shared") == 0
+
+
+def test_protected_bucket_foreign_leave_without_a_token_is_ignored() -> None:
+    """Neither the source nor (a valid) token state: silently ignored."""
+    h = make_handler(protected=("shared",))
+    token = derive_bucket_token(b"kshared", "shared")
+    send(h, register_frame(token=token), peer_ip="10.0.0.1", peer_port=1)
+    assert h.routing.count(bucket="shared") == 1
+    assert send(h, leave_frame(), peer_ip="10.0.0.9", peer_port=9) is None
+    assert h.routing.count(bucket="shared") == 1
+    assert send(h, leave_frame(token="0" * 64), peer_ip="10.0.0.9", peer_port=9) is None
+    assert h.routing.count(bucket="shared") == 1
 
 
 def test_refresh_renews_ttl_but_never_creates() -> None:
@@ -639,6 +725,28 @@ def test_unknown_and_malformed_frames_are_dropped() -> None:
     bad = register_frame()
     bad["file_search"] = "photo.jpg"
     assert h.handle(json.dumps(bad), peer_ip="10.0.0.1", peer_port=1) is None
+
+
+def test_malformed_frames_have_their_own_budget() -> None:
+    """Validation happens first, so invalid frames never drain the valid-frame
+    bucket — that is exactly why they carry a separate small budget instead:
+    otherwise a parse storm from one connected peer would be free CPU work on
+    the event loop. Over budget the drop is the same silent no-op (never a new
+    oracle), and the budget gates invalid frames only: the same IP's valid
+    frames and any other IP are unaffected.
+    """
+    h = make_handler()
+    from hsync_bootnode.handler import PARSE_IP_BURST
+
+    for _ in range(PARSE_IP_BURST):
+        assert h.handle(b"{oops", peer_ip="10.0.0.9", peer_port=1) is None
+    # budget matters: the next invalid frame is dropped WITHOUT the pydantic work
+    assert h.handle(b"{oops", peer_ip="10.0.0.9", peer_port=1) is None
+    # the budget is invalid-frame-ONLY: the same IP's valid frames still flow
+    ack = decoded(send(h, register_frame(cid=CID2), peer_ip="10.0.0.9", peer_port=1))
+    assert ack is not None and ack["type"] == "ack"
+    # ...and a different IP starts from its own fresh budget
+    assert h.handle(b"{oops", peer_ip="10.0.0.8", peer_port=1) is None
 
 
 def test_generic_per_ip_admission_cap() -> None:

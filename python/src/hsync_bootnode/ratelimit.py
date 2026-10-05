@@ -74,7 +74,6 @@ class TokenBucketLimiter:
         """Return the (unconsumed) token count after applying the elapsed refill."""
         updated_at = self._updated.get(key)
         if updated_at is None:
-            # first use: start full, stamp the provided clock
             self._tokens[key] = self._capacity
             self._updated[key] = now
             return self._capacity

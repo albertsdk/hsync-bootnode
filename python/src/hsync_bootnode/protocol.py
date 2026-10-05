@@ -4,7 +4,7 @@ This is the Python mirror of ``protocol-spec/boot-1.md`` (single source of
 truth at the repository root). Values are validated with ``extra="forbid"`` so
 any unknown field — including any targeted "file X" request — is rejected.
 
-Every frame carries a mandatory ``type`` discriminator (plan §6: common header
+Every frame carries a mandatory ``type`` discriminator (common header
 ``{protocol_version, type, ...}``); the server routes on it and never guesses
 the frame kind from the payload shape.
 """
@@ -14,6 +14,10 @@ from __future__ import annotations
 import re
 from typing import Annotated, Literal
 
+# CID shape is the hsync-common SSOT (``hsync_common.models.event.CID_PATTERN``,
+# ``^[A-Za-z0-9]{21}$``), re-exported here so ``from hsync_bootnode.protocol
+# import CID_PATTERN`` keeps working. The ``boot/1`` spec documents the same
+# value; ``test_cid_pattern_matches_boot1_spec`` pins the two together.
 from hsync_common.models.event import CID_PATTERN
 from hsync_common.path_validation import is_valid_bucket_name
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter
@@ -45,11 +49,6 @@ __all__ = [
 # Per-channel protocol version. Bump the suffix on any breaking change to the
 # bootstrap channel's wire shape; peers then hard-fail instead of drifting.
 PROTOCOL_VERSION_BOOT: Literal["boot/1"] = "boot/1"
-
-# CID shape is the hsync-common SSOT (``hsync_common.models.event.CID_PATTERN``,
-# ``^[A-Za-z0-9]{21}$``), re-exported here so ``from hsync_bootnode.protocol
-# import CID_PATTERN`` keeps working. The ``boot/1`` spec documents the same
-# value; ``test_cid_pattern_matches_boot1_spec`` pins the two together.
 
 # hex(32 bytes) = 64 chars. Absent = open bucket.
 BUCKET_TOKEN_LEN = 64

@@ -65,18 +65,11 @@ BOOT_IDLE_TIMEOUT = 30.0
 # One boot/1 frame must not exceed 8 KiB (register carries at most 16 endpoints).
 MAX_FRAME_BYTES = 8192
 
-# QUIC handshake admission (per IP): a completed TLS 1.3 handshake is real
-# CPU work, and RETRY only stops *amplified* (spoofed) handshakes — a connecting
-# client with a real IP is otherwise unbounded. One node-side token bucket per
-# IP, plus a cap on simultaneously-open connections, blunts a handshake storm
-# with a bound that comfortably fits a heavy NAT umbrella (many clients
-# refreshing every 30 s): the per-frame limiters in handler.py never see the
-# handshake.
+# Per-IP handshake admission and open-connection cap; RETRY only stops
+# *amplified* (spoofed) handshakes, so the node needs its own budget — full
+# rationale and sizing in the ConnectionGuard docstring.
 HANDSHAKE_RATE_PER_SECOND = 30
 HANDSHAKE_BURST_PER_IP = 100
-# Cap on simultaneously-open connections from one IP. Each connection may run
-# up to aioquic's 128 default bidirectional streams, so this is also the
-# per-IP memory ceiling for idle stream tasks.
 CONNECTION_ACTIVE_MAX_PER_IP = 256
 
 # HSYNC service identities are always ECDSA P-256 (ADR-0037).

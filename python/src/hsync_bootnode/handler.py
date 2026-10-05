@@ -45,17 +45,17 @@ __all__ = [
     "BootHandler",
 ]
 
-# Token authorization / spec rate limits (in-memory sliding windows).
-OP_IP_RATE_PER_SECOND = 10.0  # per-IP admission: ~10 req/s, burst 50
+# Token authorization / spec rate limits (in-memory sliding windows). Budgets
+# are per minute over ``WINDOW_SECONDS`` unless stated otherwise.
+OP_IP_RATE_PER_SECOND = 10.0  # per-IP admission: ~10 req/s, burst 50 (spec)
 OP_IP_BURST = 50
-QUERY_PAIR_LIMIT = 5  # per (IP, bucket)
+QUERY_PAIR_LIMIT = 5  # query per (IP, bucket)
 QUERY_PAIR_BURST = 10
-QUERY_BUCKET_LIMIT = 30  # per bucket total
-REGISTER_BUCKET_LIMIT = 10  # per bucket total
+QUERY_BUCKET_LIMIT = 30  # query, per bucket (total)
+REGISTER_BUCKET_LIMIT = 10  # register/refresh, per bucket (total)
 BAD_TOKEN_IP_LIMIT = 5  # failed-token attempts per IP
-# Malformed/unknown frames: their own budget beside the valid-frame admission
-# (validation happening first means they never drain ``OP_IP_*``, so without a
-# separate cap a parse storm would be free CPU work on the event loop).
+# Malformed/unknown frames: own budget beside the valid-frame admission
+# (rationale in handle()).
 PARSE_IP_LIMIT = 30  # invalid frames per IP per minute
 PARSE_IP_BURST = 60
 WINDOW_SECONDS = 60.0
@@ -129,28 +129,24 @@ class BootHandler:
                 "HSYNC_BOOTNODE_KEYS_FD / --keys-fd)"
             )
 
-        # Generic per-IP admission (spec: ~10 req/s, burst 50).
+        # Generic per-IP admission.
         self._ops_ip = TokenBucketLimiter(
             capacity=OP_IP_BURST, refill=OP_IP_RATE_PER_SECOND, window=1.0
         )
-        # Query: 5/min per (IP, bucket) burst 10; 30/min per bucket.
         self._query_pair = TokenBucketLimiter(
             capacity=QUERY_PAIR_BURST, refill=QUERY_PAIR_LIMIT, window=WINDOW_SECONDS
         )
         self._query_bucket = TokenBucketLimiter(
             capacity=QUERY_BUCKET_LIMIT, refill=QUERY_BUCKET_LIMIT, window=WINDOW_SECONDS
         )
-        # Register/refresh: 10/min per bucket.
         self._register_bucket = TokenBucketLimiter(
             capacity=REGISTER_BUCKET_LIMIT,
             refill=REGISTER_BUCKET_LIMIT,
             window=WINDOW_SECONDS,
         )
-        # Failed-token attempts: ~5/min per IP.
         self._bad_token_ip = TokenBucketLimiter(
             capacity=BAD_TOKEN_IP_LIMIT, refill=BAD_TOKEN_IP_LIMIT, window=WINDOW_SECONDS
         )
-        # Malformed/unknown frames: ~30/min per IP (see handle()).
         self._bad_parse_ip = TokenBucketLimiter(
             capacity=PARSE_IP_BURST, refill=PARSE_IP_LIMIT, window=WINDOW_SECONDS
         )
@@ -213,9 +209,8 @@ class BootHandler:
             else:
                 debug_event("drop invalid-frame", peer=f"{peer_ip}:{peer_port}", bytes=len(raw))
             return None
-        # Admission is charged only for VALID frames: malformed/unknown frames
-        # must stay silently dropped and must not drain the per-IP bucket (a
-        # garbage sender behind a shared NAT must not throttle its neighbours).
+        # Admission is charged only for VALID frames (malformed/unknown frames
+        # stay silently dropped and are bounded by their own budget above).
         if not self._limit_ok(self._ops_ip, peer_ip):
             debug_event("rate_limited ip-admission", peer=f"{peer_ip}:{peer_port}")
             return self._rate_limited(self._ops_ip, peer_ip)

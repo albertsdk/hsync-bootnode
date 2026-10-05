@@ -1,47 +1,28 @@
 """Diagnostics for the bootstrap node: an always-on operational channel plus the
 opt-in peer-aware debug stream.
 
-The node is **no-log by design**: nothing peer-related is ever written to
-**disk**. The routing table is RAM-only, the TLS identity is the operator's own
-key+cert (persisted by default, kept in memory under ``--ephemeral``), and
-without ``--debug`` no peer data leaves memory at all.
+The node is **no-log by design**: nothing peer-related is ever written to disk;
+without ``--debug`` no peer data leaves memory at all (invariants and rationale:
+``llm-wiki/README.md``, ``llm-wiki/decisions.md`` #25/#36).
 
-Two channels
-------------
-
-``warn_event`` / ``error_event`` — **node health, always emitted** (stderr):
-UPnP mapping unavailable, an unwritable readiness file, an unexpected session
-failure. They accept only the non-identifying field allow-list
-:data:`_PUBLIC_FIELDS`: a peer-identifying field (CID, bucket, IP, port) raises
-instead of being rendered, so the default run stays peer-free **by
-construction** and the no-log invariant holds even though this channel is on.
-The setting follows the practice for rendezvous infrastructure (Tor relay
-operators: log at an operational level by default, expose user IPs only for a
-specific debug session; RFC 8932 §5.2: minimize or discard correlation data;
-RFC 6973 §6.1: data minimization): identifying data is debug-only, and the
-always-on stream carries the node's own operational state.
+``warn_event`` / ``error_event`` — **node health, always emitted** on stderr.
+They accept only the non-identifying field allow-list :data:`_PUBLIC_FIELDS`, so
+a peer-identifying key raises instead of rendering: the default run stays
+peer-free **by construction**.
 
 ``debug_log`` / ``debug_event`` — the opt-in full operation log
-(``--debug`` / ``HSYNC_BOOTNODE_DEBUG=1``), an *explicit operator opt-in* that
-follows the whole request life cycle — connections opened/closed, frames
-received, the decision taken, records created/refreshed/removed, TTL sweeps and
-refusals — **including the peer identity** (CID, bucket, IP, port). That detail
-is exactly what makes the log usable for analysis, and it exists only in this
-mode and only on stderr: the process still never writes it to disk, and a normal
-run emits no debug line.
+(``--debug`` / ``HSYNC_BOOTNODE_DEBUG=1``), announced once on the always-on
+channel when enabled. It **includes peer identity** (CID, bucket, IP, port) and
+exists only on stderr: the process never writes it to disk.
 
-Line format (``timestamp source[instance]: level: message``) for both channels::
+Line format (``timestamp - source[pid] level: message``) for both channels::
 
     2026-09-30T10:30:45.123Z - hsync-bootnode[1234] debug: register ack cid=… bucket=shared
     2026-09-30T10:30:45.200Z - hsync-bootnode[1234] warn: upnp no igd on lan port=443
 
 The timestamp is the UTC ISO-8601 SSOT (:func:`hsync_common.time_utils.utc_now_iso`)
-because no log transport supplies one here: the shipped service units forward or
-discard stderr, so this stream *is* the whole artefact, and it must be
-correlatable with the timestamped ``hsync-client``/``hsync-server`` logs. The
-pid identifies which instance emitted the line when several share one stderr
-(benchmarks, two nodes on one host); the level marker keeps the peer-aware
-stream distinguishable from the always-on operational one.
+so the stream stays correlatable with the ``hsync-client``/``hsync-server`` logs;
+the pid disambiguates instances sharing one stderr.
 """
 
 from __future__ import annotations

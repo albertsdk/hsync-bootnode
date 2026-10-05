@@ -51,24 +51,19 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
-# The group key payload arrives on a file descriptor ('bucket=<hex-key>' lines);
-# ``HSYNC_BOOTNODE_KEYS_FD`` is the envvar form (plan §4), honoured by
-# systemd/launchd/Windows service wrappers. Read once, never written.
+# Group keys arrive on a file descriptor ('bucket=<hex-key>' lines); envvar
+# form for the systemd/launchd/Windows wrappers. Read once, never written.
 _DEFAULT_KEYS_FD_ENV = "HSYNC_BOOTNODE_KEYS_FD"
-# Opt-in stderr debug stream (see diagnostics.py): peer-aware, stderr-only, off
-# by default. The warn/error channel is always on and peer-free.
+# Opt-in peer-aware stderr debug stream (see diagnostics.py).
 _DEFAULT_DEBUG_ENV = "HSYNC_BOOTNODE_DEBUG"
-# Test/ops readiness seam: write the process PID here once the listener is
-# bound, mirroring the client's HSYNC_READY_FILE. Contains no peer data.
+# Readiness seam: PID written here once the listener is bound (no peer data).
 _DEFAULT_READY_FILE_ENV = "HSYNC_BOOTNODE_READY_FILE"
-# Benchmark/test seam: disable rate limiting entirely (opt-in). Never set this
-# in production — it removes the anti-abuse limits the spec requires.
+# Benchmark/test seam: disables rate limiting — never in production.
 _DEFAULT_NO_RATE_LIMIT_ENV = "HSYNC_BOOTNODE_NO_RATE_LIMIT"
-# Node-wide private mode: require a valid bucket_token on EVERY frame (
-# applied to the whole node). Service wrappers set the envvar form.
+# Node-wide private mode: require a valid bucket_token on every frame.
 _DEFAULT_PRIVATE_ENV = "HSYNC_BOOTNODE_PRIVATE"
-# Persistent TLS identity path (envvar form). The default is an XDG state path
-# (state, not config) so the fingerprint is stable and pin-able across restarts.
+# Persistent TLS identity path; the default XDG state path keeps the
+# fingerprint stable and pin-able across restarts.
 _DEFAULT_IDENTITY_ENV = "HSYNC_BOOTNODE_IDENTITY"
 # Opt out of persistence: keep the TLS identity in memory (no disk writes).
 _DEFAULT_EPHEMERAL_ENV = "HSYNC_BOOTNODE_EPHEMERAL"
@@ -77,8 +72,8 @@ _IDENTITY_EXPIRY_WARN_DAYS = 30
 # Shared help for the ``--identity`` option (declared identically by every
 # command that resolves the persisted identity file).
 _IDENTITY_HELP = "Path of the persisted identity file (default: the standard state path)."
-# Cap for the group-keys FD payload: keys are short 'bucket=<hex-key>' lines,
-# so anything bigger means the descriptor was misrouted (or is stuck open).
+# Cap for the group-keys FD payload: anything bigger means the descriptor was
+# misrouted (or is stuck open).
 KEYS_FD_MAX_BYTES = 1 << 20
 
 

@@ -55,16 +55,23 @@ _WARMUP = 200
 _ACK_PREFIX = b'{"protocol_version":"boot/1","type":"ack"'
 
 
-def _populate(handler: BootHandler, bucket: str, count: int, start: int = 0) -> list[str]:
+def _populate(
+    handler: BootHandler, bucket: str, count: int, start: int = 0
+) -> list[tuple[str, str]]:
     """Register ``count`` peers into ONE bucket and move the records into ``handler``.
 
     Setup only, never measured: a single no-rate-limit pool handler registers
     every CID directly (the register burst would otherwise cap at 10/bucket).
+    Returns the ``(cid, observed source IP)`` of each peer, so a scenario that
+    needs to act *as* a peer (``leave``) can use the same source the record was
+    registered from — the node only honours a departure from that source.
     """
     cids = make_cids(count, start=start)
+    peers: list[tuple[str, str]] = []
     pool = BootHandler(enforce_rate_limits=False)
     for index, cid in enumerate(cids):
         octet = index % 250 + 1
+        source_ip = f"10.9.{(index // 250) % 250}.{octet}"
         response = pool.handle(
             json.dumps(
                 register_frame(
@@ -73,14 +80,15 @@ def _populate(handler: BootHandler, bucket: str, count: int, start: int = 0) -> 
                     host=f"10.1.{(index // 250) % 250}.{octet}",
                 )
             ).encode(),
-            peer_ip=f"10.9.{(index // 250) % 250}.{octet}",
+            peer_ip=source_ip,
             peer_port=_PEER_PORT,
         )
         assert response is not None and json.loads(response)["type"] == "ack", response
+        peers.append((cid, source_ip))
     for record in pool.routing._records.values():
         handler.routing.upsert(record)
     assert handler.routing.count(bucket=bucket) == count
-    return cids
+    return peers
 
 
 def _bench_register(count: int) -> BenchResult:
@@ -119,9 +127,9 @@ def _bench_query(table_size: int, limit: int, count: int) -> BenchResult:
 def _bench_refresh(table_size: int, count: int) -> BenchResult:
     # One handler, no rate limits; refresh always targets the first populated CID.
     handler = BootHandler(enforce_rate_limits=False)
-    cids = _populate(handler, "shared", table_size)
+    peers = _populate(handler, "shared", table_size)
     handler.prune()
-    refresh_raw = json.dumps(refresh_frame(cids[0], "shared")).encode()
+    refresh_raw = json.dumps(refresh_frame(peers[0][0], "shared")).encode()
 
     def op() -> None:
         reply = handler.handle(refresh_raw, peer_ip=_PEER_IP, peer_port=_PEER_PORT)
@@ -133,15 +141,18 @@ def _bench_refresh(table_size: int, count: int) -> BenchResult:
 def _bench_leave(count: int) -> BenchResult:
     # One handler, no rate limits; each op removes one record (leave returns no
     # frame). No warmup: a warmup would drain the table before measurement.
+    # The leave carries each peer's own observed source IP: the node honours a
+    # departure only from the source the record was registered from.
     handler = BootHandler(enforce_rate_limits=False)
-    cids = _populate(handler, "shared", count, start=2_000_000)
-    leave_raws = [json.dumps(leave_frame(cid, "shared")).encode() for cid in cids]
+    peers = _populate(handler, "shared", count, start=2_000_000)
+    leave_raws = [(json.dumps(leave_frame(cid, "shared")).encode(), source) for cid, source in peers]
     state = {"i": 0}
 
     def op() -> None:
         i = state["i"]
         state["i"] += 1
-        reply = handler.handle(leave_raws[i], peer_ip=_PEER_IP, peer_port=1)
+        raw, source = leave_raws[i]
+        reply = handler.handle(raw, peer_ip=source, peer_port=1)
         assert reply is None, reply
 
     result = measure("leave", op, count=count, warmup=0)

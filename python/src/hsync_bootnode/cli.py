@@ -153,6 +153,7 @@ def run(
     host: str | None = typer.Option(
         None,
         "--host",
+        metavar="HOST[:PORT]",
         help=(
             "Address to bind the QUIC/UDP listener to, optionally with a port "
             "(HOST[:PORT], e.g. 0.0.0.0:443 or [::1]:443). Default: 0.0.0.0."

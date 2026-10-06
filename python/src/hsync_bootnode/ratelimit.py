@@ -10,6 +10,7 @@ ever written to disk.
 from __future__ import annotations
 
 import time
+from collections import OrderedDict
 
 __all__ = [
     "RateLimitKey",
@@ -28,15 +29,34 @@ class TokenBucketLimiter:
     ``retry_after`` instead of silently dropping. Bucket state initialises on
     first use and refills lazily on each check (monotonic clock); a caller may
     pass ``now`` explicitly for deterministic tests.
+
+    ``max_keys`` bounds the tracked-key population: under IP/bucket churn an
+    adversarial caller could otherwise grow the map without limit, so a new key
+    evicts the least-recently-used one once the ceiling is reached. Evicting the
+    LRU key is decision-neutral for an inactive bucket (it had the longest time
+    to refill) and, crucially, never resets a bucket that is still being used —
+    ``has_tokens``/``retry_after`` peeks do not refresh the recency, only a real
+    ``allow`` does.
     """
 
-    def __init__(self, capacity: int, refill: float, window: float = 60.0) -> None:
+    def __init__(
+        self,
+        capacity: int,
+        refill: float,
+        window: float = 60.0,
+        *,
+        max_keys: int | None = None,
+    ) -> None:
         if capacity < 1 or refill <= 0 or window <= 0:
             raise ValueError("capacity/refill/window must be positive")
+        if max_keys is not None and max_keys < 1:
+            raise ValueError("max_keys must be positive when set")
         self._capacity = float(capacity)
         self._rate = refill / window  # tokens per second
-        self._tokens: dict[RateLimitKey, float] = {}
-        self._updated: dict[RateLimitKey, float] = {}
+        self._max_keys = max_keys
+        # Ordered least-recently-used first; ``_updated`` drives eviction order.
+        self._tokens: OrderedDict[RateLimitKey, float] = OrderedDict()
+        self._updated: OrderedDict[RateLimitKey, float] = OrderedDict()
 
     def allow(self, key: RateLimitKey, now: float | None = None) -> bool:
         now = now if now is not None else time.monotonic()
@@ -45,6 +65,7 @@ class TokenBucketLimiter:
         # ``_tokens`` write _refill would do before this method overwrites it.
         updated_at = self._updated.get(key)
         if updated_at is None:
+            self._make_room()
             tokens = self._capacity
         else:
             elapsed = now - updated_at
@@ -54,11 +75,35 @@ class TokenBucketLimiter:
             if tokens > self._capacity:
                 tokens = self._capacity
         self._updated[key] = now
+        self._updated.move_to_end(key)
         if tokens < 1.0:
             self._tokens[key] = tokens
             return False
         self._tokens[key] = tokens - 1.0
         return True
+
+    def has_tokens(self, key: RateLimitKey, now: float | None = None) -> bool:
+        """True when ``key`` has at least one token, without consuming it.
+
+        Used by the pre-parse gate: an IP whose malformed-frame bucket has run
+        dry is dropped before the parser runs, so the parse-storm budget truly
+        bounds CPU instead of only labelling the drop.
+        """
+        updated_at = self._updated.get(key)
+        if updated_at is None:
+            return self._capacity >= 1.0
+        now = now if now is not None else time.monotonic()
+        elapsed = max(0.0, now - updated_at)
+        tokens = min(self._capacity, self._tokens[key] + elapsed * self._rate)
+        return tokens >= 1.0
+
+    def _make_room(self) -> None:
+        """Evict the least-recently-used key when the population ceiling is reached."""
+        if self._max_keys is None or len(self._updated) < self._max_keys:
+            return
+        lru = next(iter(self._updated))
+        del self._updated[lru]
+        self._tokens.pop(lru, None)
 
     def retry_after(self, key: RateLimitKey, now: float | None = None) -> int:
         """Seconds until the next token of ``key`` becomes available (>=1)."""
@@ -88,6 +133,7 @@ class TokenBucketLimiter:
         """Return the (unconsumed) token count after applying the elapsed refill."""
         updated_at = self._updated.get(key)
         if updated_at is None:
+            self._make_room()
             self._tokens[key] = self._capacity
             self._updated[key] = now
             return self._capacity

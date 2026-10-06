@@ -44,18 +44,25 @@ Internal, agent-optimized knowledge base for the `hsync-bootnode` project
    64 lowercase hex characters (`BucketToken`, `protocol.py`) and `connected`
    is bounded to `0..2^53` (`CONNECTED_MAX`), so a value that cannot exist in
    the key-derivation domain or a wire-bignumber is an invalid frame, not an
-   unbounded storage/accounting event (decisions #44/#46).
+   unbounded storage/accounting event (decision #46).
 4. **Protected buckets**: tokens are derived
    `HMAC-SHA256(key, "boot/1" || bucket)[:32]` hex, compared in constant time
-   (`hmac.compare_digest`); refusals are uniform (`token_required`) and never
-   reveal bucket existence. `--private` widens the same policy to every bucket
-   (including `leave`): see `decisions.md` #22. `leave` ownership extends the
-   same idea onto open buckets: a departure from an unknown source IP is
-   silently ignored (decision #45).
-5. **Zero backward compatibility**: breaking the wire contract means bumping
+   (`hmac.compare_digest`) whether or not the bucket has a key; refusals are
+   uniform (`token_required`) and never reveal bucket existence or the
+   provisioned set. `--private` widens the same policy to every bucket
+   (including `leave`): see `decisions.md` #22/#51.
+5. **Record ownership**: on an open bucket, `register`/`refresh`/`leave` are
+   honoured only from the source IP the record belongs to (or with a valid token
+   on a protected bucket); a foreign source cannot overwrite, keep alive or
+   evict another peer's record (decision #45).
+6. **Bounded state**: the routing table, the rate-limiter key maps and the
+   connection guard are capped from the host's RAM/CPU (`ResourceLimits`,
+   `resources.py`), so adversarial churn is answered with backpressure, never
+   unbounded growth (decisions #43/#49/#50).
+7. **Zero backward compatibility**: breaking the wire contract means bumping
    the mandatory `protocol_version` (`boot/1`) and updating spec, fixtures,
    implementation and tests atomically.
-6. **SSOT note**: the CID shape and the bucket-name rule are **imported** from
+8. **SSOT note**: the CID shape and the bucket-name rule are **imported** from
    `hsync-common` (`hsync_common.models.event.CID_PATTERN`,
    `hsync_common.path_validation.is_valid_bucket_name`), not re-declared locally;
    the boot/1 spec + fixtures stay the cross-language contract. The daemon also

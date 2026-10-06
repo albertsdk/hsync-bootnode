@@ -1,4 +1,4 @@
-.TH HSYNC-BOOTNODE 1 "2026-10-05" "hsync-bootnode 1.0.0" "User Commands"
+.TH HSYNC-BOOTNODE 1 "2026-10-06" "hsync-bootnode 1.0.0" "User Commands"
 .SH NAME
 hsync-bootnode \- HSYNC P2P bootstrap node (no-log, zero-knowledge)
 .SH SYNOPSIS
@@ -188,9 +188,10 @@ e.g. python/compile.sh).
 .I /etc/hsync-bootnode/group-keys
 Group keys for protected buckets, one
 .I bucket=<hex\-key>
-per line. Provisioned by the administrator (never part of the package;
-created by postinst as a root-only 0750 directory); exposed to the service
-only through the systemd credential mechanism (see
+per line. The package creates it empty on install (an empty file means open
+mode — no protected buckets); the administrator provisions the keys over it
+(never part of the package; a root-only 0750 directory holds it). It is exposed
+to the service only through the systemd credential mechanism (see
 .BR HSYNC_BOOTNODE_KEYS_FD ).
 .TP
 .I /var/lib/hsync-bootnode/identity.pem

@@ -39,6 +39,14 @@ mkdir -p %{buildroot}/etc/hsync-bootnode
 mkdir -p %{_sysconfdir}/hsync-bootnode
 chown root:root %{_sysconfdir}/hsync-bootnode 2>/dev/null || true
 chmod 0750 %{_sysconfdir}/hsync-bootnode
+# The unit reads /etc/hsync-bootnode/group-keys as a systemd credential and
+# LoadCredential= fails when the source is missing, so create it empty (open
+# mode) unless the administrator already provisioned it.
+if [ ! -e %{_sysconfdir}/hsync-bootnode/group-keys ]; then
+    : > %{_sysconfdir}/hsync-bootnode/group-keys
+    chown root:root %{_sysconfdir}/hsync-bootnode/group-keys 2>/dev/null || true
+    chmod 0600 %{_sysconfdir}/hsync-bootnode/group-keys
+fi
 command -v restorecon >/dev/null 2>&1 && \
     restorecon -R %{_sysconfdir}/hsync-bootnode /usr/lib/systemd/system/hsync-bootnode.service 2>/dev/null || true
 # Register the unit but do NOT enable or start it: opt-in

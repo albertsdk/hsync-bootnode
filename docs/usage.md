@@ -132,7 +132,7 @@ What `--private` changes:
 
 | Aspect | Open node (default) | Private node |
 |---|---|---|
-| `register` / `refresh` / `query` | token required only for `--protected-bucket` | token required for **every** bucket |
+| `register` / `refresh` / `query` | token required only for `--protected-bucket`; records are owned by their source network | token required for **every** bucket |
 | `leave` | honoured only from the source network the peer registered from (a `leave` from any other IP is silently ignored); on a protected bucket a valid token removes from any source | token required (an anonymous `leave` is silently dropped) |
 | Bucket with no key loaded | served (public) | refused exactly like a wrong token |
 | Startup with no group key | allowed | fails fast, exit code 2 |
@@ -154,7 +154,9 @@ Notes:
 1. Mint one 64-hex group key per bucket (for example `openssl rand -hex 32`).
 2. Write one `bucket=<key>` line per bucket to
    `/etc/hsync-bootnode/group-keys` (0640, root-owned) and start the node with
-   `--private --keys-fd 5`.
+   `--private --keys-fd 5`. An **empty** file means no protected buckets (open
+   mode); a standard service install ships it empty, so the node starts open
+   until you provision keys.
 3. Distribute the same key to the clients allowed in that bucket: they derive
    `HMAC-SHA256(key, "boot/1" || bucket)[:32]` and send only the derived token.
 
@@ -165,11 +167,11 @@ a leaked node capability.
 
 Trade-offs (by design, not defects):
 
-- The token proves a *capability*, not an identity: whoever holds the key can
-  register under any `cid`, or depart a known pair from any IP. Peers verify
-  the TLS fingerprint of the peers they contact, so a spoofed entry does not
-  survive contact. On an **open** bucket even the protected-bucket exemption
-  aside, only the registration's own source network can send a `leave`.
+- The token proves a *capability*, not an identity: on a protected/private
+  bucket whoever holds the key can register under any `cid` (or remove a known
+  pair), so peers verify the TLS fingerprint of the peers they contact and a
+  spoofed entry does not survive contact. On an **open** bucket, `register`,
+  `refresh` and `leave` are honoured only from the record's own source network.
 - Rate limits still apply to legitimate key holders; private mode is not a
   substitute for the anti-abuse limits.
 - No account system and no persistence: routing table, keys and limits live in
@@ -249,8 +251,14 @@ can rely on.
   it; `--ephemeral` drops even that and writes nothing to disk.
 - **Uniform refusals (no enumeration oracle)** — a wrong/missing token and a bucket
   with no key loaded are answered with the same `token_required` (then
-  `rate_limited` with `retry_after`), so a client cannot tell which buckets exist,
-  which are provisioned, or that a private node gates everything.
+  `rate_limited` with `retry_after`), compared in constant time in both cases, so
+  a client cannot tell which buckets exist, which are provisioned, or that a
+  private node gates everything.
+- **Records are owned by their source** — creating, replacing or renewing a
+  discovery record is honoured only from the source address it was registered
+  from (or with a valid token on a protected bucket). A peer that learns another
+  peer's `(cid, bucket, group)` cannot redirect its record, keep a hijacked one
+  alive, or evict it.
 - **Silent about peers by default** — output goes to the console only and the
   shipped service units route stderr to the system log (`journalctl -u
   hsync-bootnode`, a launchd file, the WinSW log). That always-on channel carries
@@ -270,19 +278,26 @@ can rely on.
   fingerprint or trusts the first sighting — the exact steps are in "TLS identity
   & pinning".
 - QUIC `RETRY` + address validation before any connection state is allocated
-  (anti-amplification) and a node-side **per-IP transport guard**: about 30 new
-  QUIC connections/handshakes per second (burst 100) and at most 256
-  simultaneously-open connections from the same source address — both enforced
-  before any handshake work runs, so a connection or handshake flood is throttled
-  without external help (works with a bare listener, no firewall/nginx needed).
-- **Layered in-memory rate limits**: the valid-frame admission (~10 req/s per IP,
-  burst 50), per-bucket and per-(IP, bucket) windows, the failed-token budget
-  (~5/min per IP) **and a separate budget for malformed/unknown frames**
-  (~30/min per IP, burst 60) so a flood of garbage frames cannot turn frame
-  validation into a free CPU-exhaustion channel. Rate-limit refusals are always
-  answered (`rate_limited` + `retry_after`); the two silent budgets answer nothing
-  (there is no oracle to hand out) and expire unused entries automatically.
-  Every `boot/1` frame rejects unknown fields, and the deployed units are
+  (anti-amplification) and a node-side **transport guard**: about 30 new QUIC
+  connections/handshakes per second (burst 100) per source address, plus a per-IP
+  and a process-wide cap on simultaneously-open connections, all enforced before
+  any handshake work runs and sized from the host's RAM and CPU. QUIC receive
+  windows are bounded too, so a connection cannot buffer unbounded input. A
+  connection or handshake flood is throttled without external help (works with a
+  bare listener, no firewall/nginx needed).
+- **Layered in-memory rate limits**, every window keyed by source address so one
+  peer cannot exhaust another's budget: the valid-frame admission (~10 req/s,
+  burst 50), per-`(IP, bucket)` windows for `register`/`refresh` (10/min) and
+  `query` (5/min), an aggregate per-IP `query` cap (20/min, anti-enumeration), the
+  failed-token budget (~5/min per IP) **and a pre-parse budget for
+  malformed/unknown frames** (~30/min per IP, burst 60) so a flood of garbage
+  frames cannot turn frame validation into a CPU-exhaustion channel. Rate-limit
+  refusals are always answered (`rate_limited` + `retry_after`); the silent
+  malformed-frame budget answers nothing (there is no oracle to hand out). The
+  routing table and the limiter tables have host-derived ceilings, globally and
+  per bucket/group, so a registration flood is answered with backpressure
+  instead of exhausting RAM or saturating a single bucket's sample. Every
+  `boot/1` frame rejects unknown fields, and the deployed units are
   sandboxed (systemd `DynamicUser`, syscall filter).
 - **UPnP is hardened by default**: SSDP replies must originate from a private
   LAN address and their `LOCATION` must be `http(s)://<private-IP-literal>/…`
@@ -411,7 +426,7 @@ Edit the executable paths inside each unit to the location of your venv.
 | `error: cannot bind the QUIC/UDP listener … — address already in use` | Another process (or another node instance) is using that UDP port: stop it, or pick a free port with `--port`. |
 | `error: cannot bind the QUIC/UDP listener … — the address is not available` | `--host` is not a local interface address: use a local IP, or `0.0.0.0` to listen on all of them. |
 | Client gets `token_required` | The bucket is gated (declared `--protected-bucket`, or every bucket on a private node) and the client's derived token is missing/wrong — check the group key on the client side. |
-| Client gets `rate_limited` | A limit was exceeded (per-IP ~10 req/s, 5/min failed tokens, 5/min queries per (IP, bucket), 10/min registers per bucket); wait for `retry_after` seconds. |
+| Client gets `rate_limited` | A limit was exceeded (per-IP ~10 req/s admission, 5/min failed tokens, 5/min queries per (IP, bucket), 20/min aggregate queries per IP, 10/min registers per (IP, bucket), or the node's host-derived table ceiling); wait for `retry_after` seconds. |
 | No UPnP mapping | Router without IGD, or mapping refused: the node keeps running stateless and reports it once on the always-on channel (`warn: upnp no igd on lan port=…` or `warn: upnp mapping unavailable reason=…`); publish a public UDP endpoint in another way or use `--no-upnp` to skip discovery entirely. |
 | `error: readiness file not writable` (exit code 4) | `--ready-file` points at a path the node cannot create (missing parent directory, no permission, or a stale file that `O_EXCL` refuses to overwrite): create/remove the path or point the flag elsewhere. |
 | `warn: upnp mapping unavailable` / `error: session failed` in the logs | Always-on diagnostics, not peer data: the node degraded (no UPnP mapping) or one session failed unexpectedly and was isolated. Both are emitted without `--debug` and never contain a peer identity. |

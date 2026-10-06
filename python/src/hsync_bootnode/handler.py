@@ -25,6 +25,7 @@ from hsync_bootnode.protocol import (
     BOOT_ACK_ADAPTER,
     BOOT_FRAME_ADAPTER,
     BOOT_RESPONSE_ADAPTER,
+    BUCKET_TOKEN_LEN,
     PROTOCOL_VERSION_BOOT,
     BootAck,
     BootLeave,
@@ -37,8 +38,13 @@ from hsync_bootnode.protocol import (
     ObservedEndpoint,
 )
 from hsync_bootnode.ratelimit import TokenBucketLimiter
+from hsync_bootnode.resources import ResourceLimits
 from hsync_bootnode.routing import DEFAULT_TTL, PeerRecord, RoutingTable
-from hsync_bootnode.tokens import derive_bucket_token, verify_bucket_token
+from hsync_bootnode.tokens import (
+    constant_time_equals,
+    derive_bucket_token,
+    is_valid_bucket_token,
+)
 
 __all__ = [
     "BootConfigError",
@@ -51,14 +57,20 @@ OP_IP_RATE_PER_SECOND = 10.0  # per-IP admission: ~10 req/s, burst 50 (spec)
 OP_IP_BURST = 50
 QUERY_PAIR_LIMIT = 5  # query per (IP, bucket)
 QUERY_PAIR_BURST = 10
-QUERY_BUCKET_LIMIT = 30  # query, per bucket (total)
-REGISTER_BUCKET_LIMIT = 10  # register/refresh, per bucket (total)
+QUERY_IP_LIMIT = 20  # query per IP across every bucket (anti-enumeration)
+QUERY_IP_BURST = 40
+REGISTER_PAIR_LIMIT = 10  # register/refresh per (IP, bucket)
+REGISTER_PAIR_BURST = 10
 BAD_TOKEN_IP_LIMIT = 5  # failed-token attempts per IP
-# Malformed/unknown frames: own budget beside the valid-frame admission
-# (rationale in handle()).
+# Malformed/unknown frames: own budget per IP (rationale in handle()); it also
+# gates the parser, so an IP that exhausts it is dropped before parsing.
 PARSE_IP_LIMIT = 30  # invalid frames per IP per minute
 PARSE_IP_BURST = 60
 WINDOW_SECONDS = 60.0
+
+# Fallback token compared against when a bucket has no provisioned key, so the
+# authorization path costs the same whether or not the bucket is provisioned.
+_DUMMY_TOKEN = "0" * BUCKET_TOKEN_LEN
 
 # Internal authorization outcome used by register/refresh/query.
 _AuthResult = Literal["ok", "token_required", "rate_limited"]
@@ -107,9 +119,21 @@ class BootHandler:
         group_keys: Mapping[str, SecretStr] | None = None,
         routing: RoutingTable | None = None,
         enforce_rate_limits: bool = True,
+        limits: ResourceLimits | None = None,
     ) -> None:
         self.ttl = ttl
-        self.routing = routing if routing is not None else RoutingTable()
+        # Memory ceilings are host-derived unless a caller (tests, embedding)
+        # supplies them explicitly; they bound the routing table and the
+        # rate-limiter key population.
+        self.limits = limits if limits is not None else ResourceLimits.detect()
+        self.routing = (
+            routing
+            if routing is not None
+            else RoutingTable(
+                max_records=self.limits.max_peer_records,
+                max_records_per_group=self.limits.max_records_per_group,
+            )
+        )
         # ``None`` sentinel forces the first handle() to sweep; a 0.0 seed would
         # skip the first sweep when monotonic() < prune_interval (recent boot).
         self._last_prune: float | None = None
@@ -145,26 +169,27 @@ class BootHandler:
                 "HSYNC_BOOTNODE_KEYS_FD / --keys-fd)"
             )
 
-        # Generic per-IP admission.
+        max_keys = self.limits.max_limiter_keys
+        # Every limiter is bounded in both key population and rate; each one is
+        # keyed by source IP (or (IP, bucket)), never by a shared bucket alone,
+        # so a single abusive source cannot exhaust a global budget.
         self._ops_ip = TokenBucketLimiter(
-            capacity=OP_IP_BURST, refill=OP_IP_RATE_PER_SECOND, window=1.0
+            OP_IP_BURST, OP_IP_RATE_PER_SECOND, 1.0, max_keys=max_keys
         )
         self._query_pair = TokenBucketLimiter(
-            capacity=QUERY_PAIR_BURST, refill=QUERY_PAIR_LIMIT, window=WINDOW_SECONDS
+            QUERY_PAIR_BURST, QUERY_PAIR_LIMIT, WINDOW_SECONDS, max_keys=max_keys
         )
-        self._query_bucket = TokenBucketLimiter(
-            capacity=QUERY_BUCKET_LIMIT, refill=QUERY_BUCKET_LIMIT, window=WINDOW_SECONDS
+        self._query_ip = TokenBucketLimiter(
+            QUERY_IP_BURST, QUERY_IP_LIMIT, WINDOW_SECONDS, max_keys=max_keys
         )
-        self._register_bucket = TokenBucketLimiter(
-            capacity=REGISTER_BUCKET_LIMIT,
-            refill=REGISTER_BUCKET_LIMIT,
-            window=WINDOW_SECONDS,
+        self._register_pair = TokenBucketLimiter(
+            REGISTER_PAIR_BURST, REGISTER_PAIR_LIMIT, WINDOW_SECONDS, max_keys=max_keys
         )
         self._bad_token_ip = TokenBucketLimiter(
-            capacity=BAD_TOKEN_IP_LIMIT, refill=BAD_TOKEN_IP_LIMIT, window=WINDOW_SECONDS
+            BAD_TOKEN_IP_LIMIT, BAD_TOKEN_IP_LIMIT, WINDOW_SECONDS, max_keys=max_keys
         )
         self._bad_parse_ip = TokenBucketLimiter(
-            capacity=PARSE_IP_BURST, refill=PARSE_IP_LIMIT, window=WINDOW_SECONDS
+            PARSE_IP_BURST, PARSE_IP_LIMIT, WINDOW_SECONDS, max_keys=max_keys
         )
         debug_event(
             "handler ready",
@@ -173,6 +198,8 @@ class BootHandler:
             protected_buckets=len(self._protected),
             group_keys=len(self._tokens),
             rate_limits=self._enforce_rate_limits,
+            max_peer_records=self.limits.max_peer_records,
+            max_limiter_keys=max_keys,
         )
 
     # ------------------------------------------------------------------ API
@@ -207,21 +234,28 @@ class BootHandler:
 
         Malformed / unknown frames are silently dropped (no-log, no oracle).
         """
+        # Pre-parse gate: once an IP has exhausted its malformed-frame budget,
+        # every further frame from it is dropped BEFORE the parser runs, so a
+        # parse storm costs no CPU beyond the line read. A well-behaved IP never
+        # drains that budget (only invalid frames charge it), so its valid
+        # traffic is unaffected; only an IP that actually flooded invalid frames
+        # is gated wholesale (the documented anti-abuse trade-off).
+        if self._enforce_rate_limits and not self._bad_parse_ip.has_tokens(peer_ip):
+            if debug_enabled():
+                debug_event(
+                    "drop pre-parse over-budget", peer=f"{peer_ip}:{peer_port}", bytes=len(raw)
+                )
+            return None
         try:
             frame = BOOT_FRAME_ADAPTER.validate_json(raw)
         except ValidationError:
-            # Malformed/unknown frames must not drain the VALID-frame per-IP
-            # bucket (a garbage sender behind a shared NAT must not throttle
-            # its neighbours), but they cannot stay unlimited either: pydantic
-            # parsing is real CPU work on the event loop. Their own separate
-            # small budget per IP bounds the parse storm; over budget the drop
-            # costs nothing but the line read.
-            beyond_budget = self._enforce_rate_limits and not self._bad_parse_ip.allow(peer_ip)
+            # Charge the budget that gates the check above; the drop stays a
+            # silent no-op (no oracle) and invalid frames never drain the
+            # VALID-frame per-IP admission.
+            if self._enforce_rate_limits:
+                self._bad_parse_ip.allow(peer_ip)
             if debug_enabled():
-                event = (
-                    "drop invalid-frame beyond-budget" if beyond_budget else "drop invalid-frame"
-                )
-                debug_event(event, peer=f"{peer_ip}:{peer_port}", bytes=len(raw))
+                debug_event("drop invalid-frame", peer=f"{peer_ip}:{peer_port}", bytes=len(raw))
             return None
         # Admission is charged only for VALID frames (malformed/unknown frames
         # stay silently dropped and are bounded by their own budget above).
@@ -262,8 +296,8 @@ class BootHandler:
             for limiter in (
                 self._ops_ip,
                 self._query_pair,
-                self._query_bucket,
-                self._register_bucket,
+                self._query_ip,
+                self._register_pair,
                 self._bad_token_ip,
                 self._bad_parse_ip,
             ):
@@ -281,10 +315,10 @@ class BootHandler:
 
     # ------------------------------------------------------------- register
 
-    def _register(self, model: BootRegister, peer_ip: str, peer_port: int) -> bytes:
+    def _register(self, model: BootRegister, peer_ip: str, peer_port: int) -> bytes | None:
         refused = self._admit(
             "register",
-            self._register_bucket,
+            self._register_pair,
             model.bucket,
             model.bucket_token,
             peer_ip,
@@ -293,10 +327,38 @@ class BootHandler:
         )
         if refused is not None:
             return refused
+        if not self._may_replace(model.cid, model.bucket, model.group, peer_ip):
+            # A foreign source must not overwrite a live registration it does
+            # not own (the source-IP ownership rule, like leave): the frame is
+            # dropped silently and the existing record survives.
+            if debug_enabled():
+                debug_event(
+                    "register dropped foreign-source",
+                    cid=model.cid,
+                    bucket=model.bucket,
+                    peer=f"{peer_ip}:{peer_port}",
+                )
+            return None
 
         record = PeerRecord.from_register(model, peer_ip=peer_ip, peer_port=peer_port)
         record.touch(self.ttl)
-        self.routing.upsert(record)
+        if not self.routing.upsert(record):
+            # Bounded table: reclaim expired entries once, then signal
+            # backpressure instead of growing RAM without limit. Pass ``now`` so
+            # this request-path sweep stays record-only (limiter eviction is the
+            # background sweep's job).
+            self.prune(time.monotonic(), max_remove=REQUEST_PATH_PRUNE_BUDGET)
+            if not self.routing.upsert(record):
+                if debug_enabled():
+                    debug_event(
+                        "register refused table-full",
+                        cid=model.cid,
+                        bucket=model.bucket,
+                        peer=f"{peer_ip}:{peer_port}",
+                    )
+                return self._response(
+                    peers=[], error="rate_limited", retry_after=max(1, int(self.ttl))
+                )
         if debug_enabled():
             debug_event(
                 "register ack",
@@ -314,7 +376,7 @@ class BootHandler:
     def _refresh(self, model: BootRefresh, peer_ip: str, peer_port: int) -> bytes | None:
         refused = self._admit(
             "refresh",
-            self._register_bucket,
+            self._register_pair,
             model.bucket,
             model.bucket_token,
             peer_ip,
@@ -336,6 +398,18 @@ class BootHandler:
                     peer=f"{peer_ip}:{peer_port}",
                 )
             return None
+        if not self._may_replace(model.cid, model.bucket, model.group, peer_ip):
+            # A foreign source must not renew someone else's record either;
+            # otherwise an attacker's overwrite (or a stale entry) would be kept
+            # alive by the victim's own refresh loop.
+            if debug_enabled():
+                debug_event(
+                    "refresh dropped foreign-source",
+                    cid=model.cid,
+                    bucket=model.bucket,
+                    peer=f"{peer_ip}:{peer_port}",
+                )
+            return None
         record.touch(self.ttl)
         if model.connected is not None:
             record.connected = model.connected
@@ -348,6 +422,20 @@ class BootHandler:
                 connected=record.connected,
             )
         return self._ack(peer_ip, peer_port)
+
+    def _may_replace(self, cid: str, bucket: str, group: str | None, peer_ip: str) -> bool:
+        """Whether ``peer_ip`` may create/replace the ``(cid, bucket, group)`` record.
+
+        An absent record is always claimable. A live record is owned by the
+        source network it registered from: only the same source IP may replace
+        or renew it, unless the frame was already token-authorized (a protected
+        or private bucket), which authenticates bucket membership from any
+        source — the same model ``leave`` uses.
+        """
+        record = self.routing.get(cid, bucket, group)
+        if record is None or record.ip == peer_ip:
+            return True
+        return self._private or bucket in self._protected
 
     def _leave(self, model: BootLeave, peer_ip: str) -> None:
         """Remove the record; unauthorized departures are silently ignored.
@@ -405,10 +493,12 @@ class BootHandler:
             if debug_enabled():
                 debug_event("query rate_limited pair", bucket=model.bucket, peer=peer_ip)
             return self._rate_limited(self._query_pair, pair_key)
-        if not self._limit_ok(self._query_bucket, model.bucket):
+        if not self._limit_ok(self._query_ip, peer_ip):
+            # Aggregate per-IP cap across every bucket: one source cannot sweep
+            # the bucket namespace to enumerate the peer population.
             if debug_enabled():
-                debug_event("query rate_limited bucket", bucket=model.bucket, peer=peer_ip)
-            return self._rate_limited(self._query_bucket, model.bucket)
+                debug_event("query rate_limited ip", bucket=model.bucket, peer=peer_ip)
+            return self._rate_limited(self._query_ip, peer_ip)
         refused = self._authorize_or_refuse(
             "query", model.bucket, model.bucket_token, peer_ip, peer_display=peer_ip
         )
@@ -438,12 +528,18 @@ class BootHandler:
         ``--protected-bucket``; a **private** node (``--private``) gates every
         bucket. The refusal is uniform (`token_required`) either way, so neither
         a wrong/missing token nor an unprovisioned bucket reveals that some
-        other bucket exists or is provisioned.
+        other bucket exists or is provisioned. The comparison runs in constant
+        time on the same 64-byte shapes whether or not the bucket has a key, so
+        timing does not reveal the provisioned set either.
         """
         if not (self._private or bucket in self._protected):
             return "ok"
         expected = self._tokens.get(bucket)
-        if expected is not None and verify_bucket_token(expected, token):
+        provided_valid = token is not None and is_valid_bucket_token(token)
+        candidate = token if token is not None and provided_valid else _DUMMY_TOKEN
+        reference = expected if expected is not None else _DUMMY_TOKEN
+        matched = constant_time_equals(reference.encode("ascii"), candidate.encode("ascii"))
+        if expected is not None and provided_valid and matched:
             return "ok"
         # Failed authorization: same uniform answer, same per-IP budget. On a
         # private node a bucket with no key loaded lands here as well.
@@ -490,20 +586,22 @@ class BootHandler:
         *,
         cid: str | None = None,
     ) -> bytes | None:
-        """Charge the bucket limiter, then authorize; ``None`` = admitted.
+        """Charge the per-(IP, bucket) limiter, then authorize; ``None`` = admitted.
 
-        Shared by register and refresh (both bucket-rate-limited and answering a
-        refusal frame); query keeps its own pair/bucket limiter pair.
+        Shared by register and refresh. The limiter is keyed by (source IP,
+        bucket) so a single abusive source cannot exhaust a budget shared with
+        every other peer of the bucket.
         """
-        if not self._limit_ok(limiter, bucket):
+        pair_key = f"{peer_ip}|{bucket}"
+        if not self._limit_ok(limiter, pair_key):
             if debug_enabled():
                 debug_event(
-                    f"{event} rate_limited bucket",
+                    f"{event} rate_limited pair",
                     cid=cid,
                     bucket=bucket,
                     peer=f"{peer_ip}:{peer_port}",
                 )
-            return self._rate_limited(limiter, bucket)
+            return self._rate_limited(limiter, pair_key)
         return self._authorize_or_refuse(
             event, bucket, token, peer_ip, peer_display=f"{peer_ip}:{peer_port}", cid=cid
         )

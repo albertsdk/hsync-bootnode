@@ -41,16 +41,17 @@ inside Docker.
 ## Provision group keys (protected buckets / private node)
 
 Group keys are a secret provisioned by the administrator, never shipped in the
-package. Install the file and the service unit picks it up as a systemd
-credential:
+package. The install creates `/etc/hsync-bootnode/group-keys` **empty**, which
+means open mode (no protected buckets); the service unit reads it as a systemd
+credential. Provision the keys over it:
 
 ```bash
 sudo install -m 0640 /path/to/group-keys /etc/hsync-bootnode/group-keys
 ```
 
-The file has one `bucket=<hex-group-key>` line per protected bucket. With the
-file present, the unit passes `--keys-fd`; to make a bucket protected, add
-`--protected-bucket BUCKET` with a drop-in, and for a fully private node set:
+The file has one `bucket=<hex-group-key>` line per protected bucket. To make a
+bucket protected, add `--protected-bucket BUCKET` with a drop-in, and for a
+fully private node set:
 
 ```bash
 sudo systemctl edit hsync-bootnode.service

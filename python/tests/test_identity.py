@@ -135,3 +135,11 @@ def test_load_identity_rejects_non_ecdsa(tmp_path, key_factory):
     _write_identity(path, key_factory())
     with pytest.raises(IdentityError):
         load_identity(path)
+
+
+def test_make_identity_dns_bind_host_uses_dns_san():
+    """A DNS-name bind host is recorded as a DNS SAN, not an IP SAN crash."""
+    node = make_identity(host="localhost")
+    san = node.certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    names = {n.value for n in san}
+    assert "localhost" in names

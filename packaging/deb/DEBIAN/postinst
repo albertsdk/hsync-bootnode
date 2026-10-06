@@ -11,16 +11,24 @@
 set -e
 
 KEYS_DIR="/etc/hsync-bootnode"
+KEYS_FILE="${KEYS_DIR}/group-keys"
 
 # -- Group-keys directory -----------------------------------------------------
-# The group-keys file is a SECRET provisioned by the administrator (never
-# shipped in the package, never listed in conffiles). The directory is
-# root-only so a future keys file dropped in place is protected by default.
+# The group-keys file is a SECRET the administrator provisions (never shipped in
+# the package, never listed in conffiles). The directory is root-only so the
+# file is protected by default. An empty file is created on install so the
+# service unit's LoadCredential= always succeeds: an empty credential means
+# open mode (no protected buckets), a provisioned one enables them.
 if [ ! -d "${KEYS_DIR}" ]; then
     mkdir -p "${KEYS_DIR}"
 fi
 chown root:root "${KEYS_DIR}" 2>/dev/null || true
 chmod 0750 "${KEYS_DIR}"
+if [ ! -e "${KEYS_FILE}" ]; then
+    : > "${KEYS_FILE}"
+    chown root:root "${KEYS_FILE}" 2>/dev/null || true
+    chmod 0600 "${KEYS_FILE}"
+fi
 
 # -- systemd ------------------------------------------------------------------
 if command -v systemctl >/dev/null 2>&1; then
@@ -29,7 +37,7 @@ fi
 
 echo "hsync-bootnode installed (service NOT enabled — no-log node, opt-in start)."
 echo "  Enable with:   sudo systemctl enable --now hsync-bootnode.service"
-echo "  Group keys (optional, protected buckets):"
-echo "    sudo install -m 0640 /path/to/group-keys ${KEYS_DIR}/group-keys"
+echo "  Protected buckets / private node (optional — leave the file empty for open mode):"
+echo "    sudo install -m 0640 /path/to/group-keys ${KEYS_FILE}"
 
 exit 0

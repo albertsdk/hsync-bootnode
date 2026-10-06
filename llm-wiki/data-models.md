@@ -92,9 +92,11 @@ excluded from the union: they are never validated on the input path.
 
 | Structure | Location | Role |
 |---|---|---|
-| `PeerRecord` | `python/src/hsync_bootnode/routing.py:29` | RAM-only routing entry keyed `(cid, bucket, group)`; carries `capacity` (advisory hint), `expires_at` (TTL) and a lazily-built materialized wire projection `wire` (`BootPeer | None`) |
-| `RoutingTable` | `python/src/hsync_bootnode/routing.py:60` | In-memory registry (`upsert`/`remove`/`get`/`prune`/`sample`/`count`); never persisted. Backed by three secondary indexes — `_by_group` (bucket+group → keys, O(1) `sample`), `_by_cid` (cid+bucket → keys, O(1) `remove`), `_pos` (key → list position for O(1) swap-remove). `prune` rebuilds the indexes in bulk when ≥ 50% of records expire, else removes incrementally. |
-| `TokenBucketLimiter` | `python/src/hsync_bootnode/ratelimit.py:22` | In-memory token bucket for the per-IP/per-bucket rate limits; `evict_stale` drops fully-refilled buckets (behaviour-identical, bounds memory) |
+| `PeerRecord` | `python/src/hsync_bootnode/routing.py:35` | RAM-only routing entry keyed `(cid, bucket, group)`; carries `capacity` (advisory hint), `expires_at` (TTL) and a lazily-built materialized wire projection `wire` (`BootPeer | None`) |
+| `RoutingTable` | `python/src/hsync_bootnode/routing.py:102` | In-memory registry (`upsert`→`bool`/`remove`/`get`/`prune`/`sample`/`count`/`source_ips`); never persisted. `upsert` returns `False` above a host-derived `max_records` ceiling or a `max_records_per_group` ceiling (so one bucket cannot dominate its sample), so the handler can apply backpressure. Backed by three secondary indexes — `_by_group` (bucket+group → keys, O(1) `sample`), `_by_cid` (cid+bucket → keys, O(1) `remove`), `_pos` (key → list position for O(1) swap-remove). `prune` rebuilds the indexes in bulk when ≥ 50% of records expire, else removes incrementally. |
+| `TokenBucketLimiter` | `python/src/hsync_bootnode/ratelimit.py:23` | In-memory token bucket for the per-IP/per-(IP, bucket) rate limits; `has_tokens` is a non-consuming peek used by the pre-parse malformed-frame gate; `max_keys` evicts the least-recently-used key on insert and `evict_stale` drops fully-refilled buckets, bounding key-state growth |
+| `ResourceLimits` | `python/src/hsync_bootnode/resources.py` | Host-derived ceilings (`max_peer_records`, `max_records_per_group`, `max_limiter_keys`, `max_active_connections`, `max_active_connections_per_ip`) from available RAM (the process's own cgroup limit, then `MemAvailable`, then sysconf) and CPU count; `detect()` is read-only/best-effort with a conservative fallback |
+| `ConnectionGuard` | `python/src/hsync_bootnode/server.py` | Per-IP handshake budget + per-IP and process-wide open-connection caps, sized by `ResourceLimits`; checked before any handshake work, released on `ConnectionTerminated` |
 | `NodeIdentity` | `python/src/hsync_bootnode/server.py` | Self-signed TLS identity (cert + ECDSA P-256 key). Persisted (`0600`/`0700`) by default via `load_or_create_identity`/`rotate_identity`, or built in memory by `make_identity` (`--ephemeral`). `expires_at` is the certificate `NotAfter`; `fingerprint` is the leaf-DER SHA-256 (`sha256:<hex>`), the trust anchor for client pinning (ADR-0034/ADR-0037) |
 
 ## Relationships
@@ -106,7 +108,7 @@ leave           ──► BootLeave                    ──► (no reply frame
 ```
 
 `BootPeer` is projected from a `PeerRecord` (handler `_to_peer`,
-`python/src/hsync_bootnode/handler.py:461`): the peer's advertised `endpoints[0]` is
+`python/src/hsync_bootnode/handler.py:659`): the peer's advertised `endpoints[0]` is
 preferred, falling back to the observed source endpoint. The projection is
 materialized once on `PeerRecord.wire` and reused on later samples — valid for the
 record's lifetime because `register` always builds a fresh `PeerRecord` and

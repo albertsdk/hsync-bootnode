@@ -103,6 +103,23 @@ def leave_frame(
     return frame
 
 
+def refresh_frame(
+    cid: str = CID,
+    bucket: str = "shared",
+    group: str | None = "home",
+    token: str | None = None,
+    connected: int | None = None,
+) -> dict:
+    frame: dict = {"protocol_version": "boot/1", "type": "refresh", "cid": cid, "bucket": bucket}
+    if group is not None:
+        frame["group"] = group
+    if token is not None:
+        frame["bucket_token"] = token
+    if connected is not None:
+        frame["connected"] = connected
+    return frame
+
+
 def test_register_acks_with_stun_echo_and_creates_record() -> None:
     h = make_handler()
     response = decoded(send(h, register_frame(), peer_ip="198.51.100.7", peer_port=54321))
@@ -506,9 +523,9 @@ def test_query_rate_limited_per_ip_bucket_pair() -> None:
     assert other is not None and other["error"] is None
 
 
-def test_register_rate_limited_per_bucket() -> None:
+def test_register_rate_limited_per_ip_bucket_pair() -> None:
     h = make_handler()
-    for _ in range(10):  # 10/min per bucket
+    for _ in range(10):  # 10/min per (IP, bucket)
         ack = decoded(send(h, register_frame(cid=CID2), peer_ip="1.1.1.1", peer_port=1))
         assert ack is not None and ack["type"] == "ack"
     response = decoded(send(h, register_frame(cid=CID2), peer_ip="1.1.1.1", peer_port=1))
@@ -728,25 +745,23 @@ def test_unknown_and_malformed_frames_are_dropped() -> None:
 
 
 def test_malformed_frames_have_their_own_budget() -> None:
-    """Validation happens first, so invalid frames never drain the valid-frame
-    bucket — that is exactly why they carry a separate small budget instead:
-    otherwise a parse storm from one connected peer would be free CPU work on
-    the event loop. Over budget the drop is the same silent no-op (never a new
-    oracle), and the budget gates invalid frames only: the same IP's valid
-    frames and any other IP are unaffected.
+    """An IP that floods invalid frames exhausts its own budget and is then
+    dropped BEFORE the parser runs, so a parse storm costs no event-loop CPU.
+    Invalid frames never drain the VALID-frame admission, and a different IP
+    starts from its own fresh budget.
     """
     h = make_handler()
     from hsync_bootnode.handler import PARSE_IP_BURST
 
     for _ in range(PARSE_IP_BURST):
         assert h.handle(b"{oops", peer_ip="10.0.0.9", peer_port=1) is None
-    # budget matters: the next invalid frame is dropped WITHOUT the pydantic work
+    # Over budget the IP is gated wholesale: even a well-formed frame from it is
+    # dropped pre-parse, which is exactly what bounds the parse storm.
     assert h.handle(b"{oops", peer_ip="10.0.0.9", peer_port=1) is None
-    # the budget is invalid-frame-ONLY: the same IP's valid frames still flow
-    ack = decoded(send(h, register_frame(cid=CID2), peer_ip="10.0.0.9", peer_port=1))
-    assert ack is not None and ack["type"] == "ack"
+    assert h.handle(json.dumps(register_frame(cid=CID2)), peer_ip="10.0.0.9", peer_port=1) is None
     # ...and a different IP starts from its own fresh budget
-    assert h.handle(b"{oops", peer_ip="10.0.0.8", peer_port=1) is None
+    ack = decoded(send(h, register_frame(cid=CID2), peer_ip="10.0.0.8", peer_port=1))
+    assert ack is not None and ack["type"] == "ack"
 
 
 def test_generic_per_ip_admission_cap() -> None:
@@ -910,3 +925,110 @@ def test_wire_serialization_is_compact_and_spec_ordered() -> None:
     assert decoded_ok["error"] is None and decoded_ok["retry_after"] is None
     # compact separators, and valid JSON that round-trips
     assert ok == json.dumps(decoded_ok, separators=(",", ":")).encode()
+
+
+# --- source-IP ownership (anti-hijack), per-IP isolation and bounded table ---
+
+
+def test_foreign_source_cannot_hijack_a_registration() -> None:
+    """A different source IP must not overwrite a live registration.
+
+    Regression for the registration-hijack vector: an attacker who learns a
+    ``(cid, bucket, group)`` (e.g. from an anonymous query) can no longer point
+    the victim's discovery record at its own endpoints.
+    """
+    h = make_handler()
+    ack = decoded(send(h, register_frame(host="10.0.0.1"), peer_ip="10.0.0.1", peer_port=1))
+    assert ack is not None and ack["type"] == "ack"
+    assert send(h, register_frame(host="203.0.113.9"), peer_ip="203.0.113.9", peer_port=2) is None
+    record = h.routing.get(CID, "shared", "home")
+    assert record is not None
+    assert record.ip == "10.0.0.1"
+    assert record.endpoints[0].host == "10.0.0.1"
+    # the victim still owns the record: its own refresh renews it and its leave
+    # removes it (the attacker's writes changed nothing)
+    refreshed = decoded(send(h, refresh_frame(), peer_ip="10.0.0.1", peer_port=1))
+    assert refreshed is not None and refreshed["type"] == "ack"
+    send(h, leave_frame(), peer_ip="10.0.0.1", peer_port=1)
+    assert h.routing.get(CID, "shared", "home") is None
+
+
+def test_foreign_source_cannot_renew_someone_elses_record() -> None:
+    """A foreign refresh is ignored, so it cannot keep a stale record alive."""
+    h = make_handler()
+    send(h, register_frame(), peer_ip="10.0.0.1", peer_port=1)
+    assert send(h, refresh_frame(), peer_ip="203.0.113.9", peer_port=2) is None
+    record = h.routing.get(CID, "shared", "home")
+    assert record is not None and record.ip == "10.0.0.1"
+
+
+def test_token_authorized_source_may_replace_a_protected_record() -> None:
+    """A token holder is authenticated bucket membership and may replace from any source."""
+    h = make_handler(protected=("shared",))
+    token = derive_bucket_token(b"kshared", "shared")
+    send(h, register_frame(token=token, host="10.0.0.1"), peer_ip="10.0.0.1", peer_port=1)
+    ack = decoded(
+        send(
+            h,
+            register_frame(token=token, host="203.0.113.9"),
+            peer_ip="203.0.113.9",
+            peer_port=2,
+        )
+    )
+    assert ack is not None and ack["type"] == "ack"
+    record = h.routing.get(CID, "shared", "home")
+    assert record is not None and record.ip == "203.0.113.9"
+
+
+def test_register_limit_is_isolated_per_source_ip() -> None:
+    """One source cannot exhaust the registration budget of another in the same bucket."""
+    h = make_handler()
+    for _ in range(10):  # burst 10 for (IP, bucket)
+        ack = decoded(send(h, register_frame(cid=CID2), peer_ip="1.1.1.1", peer_port=1))
+        assert ack is not None and ack["type"] == "ack"
+    limited = decoded(send(h, register_frame(cid=CID2), peer_ip="1.1.1.1", peer_port=1))
+    assert limited is not None and limited["error"] == "rate_limited"
+    other = decoded(send(h, register_frame(cid="o" * 21), peer_ip="2.2.2.2", peer_port=1))
+    assert other is not None and other["type"] == "ack"
+
+
+def test_query_ip_cap_is_isolated_per_source() -> None:
+    """The aggregate per-IP query cap throttles an enumerator, not its neighbours."""
+    from hsync_bootnode.handler import QUERY_IP_BURST
+
+    h = make_handler()
+    # Distinct buckets so the per-(IP, bucket) limiter never triggers first: the
+    # aggregate per-IP cap is what stops a namespace sweep.
+    for i in range(QUERY_IP_BURST):
+        send(h, query_frame(bucket=f"b{i}"), peer_ip="9.9.9.9", peer_port=1)
+    limited = decoded(send(h, query_frame(bucket="b-sweep"), peer_ip="9.9.9.9", peer_port=1))
+    assert limited is not None and limited["error"] == "rate_limited"
+    other = decoded(send(h, query_frame(), peer_ip="8.8.8.8", peer_port=1))
+    assert other is not None and other["error"] is None
+
+
+def test_routing_table_cap_applies_backpressure() -> None:
+    """The host-derived record cap refuses new keys instead of growing RAM."""
+    from hsync_bootnode.resources import ResourceLimits
+
+    limits = ResourceLimits(
+        max_peer_records=2,
+        max_limiter_keys=64,
+        max_active_connections=8,
+        max_active_connections_per_ip=8,
+        max_records_per_group=2,
+    )
+    h = BootHandler(limits=limits)
+    assert decoded(send(h, register_frame(cid=CID), peer_ip="1.1.1.1", peer_port=1)) is not None
+    assert decoded(send(h, register_frame(cid=CID2), peer_ip="1.1.1.1", peer_port=1)) is not None
+    # a third key in the same group is refused by the per-group ceiling...
+    same_group = decoded(send(h, register_frame(cid="y" * 21), peer_ip="1.1.1.1", peer_port=1))
+    assert same_group is not None and same_group["error"] == "rate_limited"
+    # ...and a new group is refused by the global ceiling (both are backpressure)
+    full = decoded(
+        send(h, register_frame(cid="z" * 21, group="other"), peer_ip="1.1.1.1", peer_port=1)
+    )
+    assert full is not None and full["error"] == "rate_limited"
+    # refreshing an existing key never grows the table and stays accepted
+    refreshed = decoded(send(h, refresh_frame(), peer_ip="1.1.1.1", peer_port=1))
+    assert refreshed is not None and refreshed["type"] == "ack"

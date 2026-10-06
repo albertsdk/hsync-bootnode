@@ -18,9 +18,10 @@ UDP :443
                        token authorization (declared protected buckets or
                        every bucket in node-wide private mode), rate limiters,
                        STUN-echo
-            ├─ routing.py    in-memory table keyed (cid, bucket, group)
-            ├─ ratelimit.py  sliding-window limiters (spec §5)
-            └─ tokens.py     bucket_token derivation + constant-time compare
+             ├─ routing.py    in-memory table keyed (cid, bucket, group), bounded
+             ├─ ratelimit.py  bounded sliding-window limiters (peek + eviction)
+             ├─ resources.py  host RAM/CPU-derived ceilings for table + limiters
+             └─ tokens.py     bucket_token derivation + constant-time compare
   └─ protocol.py  pydantic models for every boot/1 frame (extra="forbid")
   └─ upnp.py      zero-touch UDP port mapping via SSDP + SOAP (best-effort)
   └─ cli.py       Typer CLI: `hsync-bootnode run [OPTIONS]`, `--version`
@@ -31,11 +32,12 @@ UDP :443
 | Module | Responsibility | Key symbols |
 |---|---|---|
 | `python/src/hsync_bootnode/protocol.py` | `boot/1` frames; CID `^[A-Za-z0-9]{21}$`; 64-hex bucket token; client→server discriminated union; server→client `bytes` serializers | `BootRegister`, `BootRefresh`, `BootLeave`, `BootQuery`, `BootAck`, `BootResponse`, `BootPeer`, `Endpoint`, `ObservedEndpoint`, `BootFrame`, `BOOT_FRAME_ADAPTER`, `BOOT_ACK_ADAPTER`, `BOOT_RESPONSE_ADAPTER` |
-| `python/src/hsync_bootnode/routing.py` | RAM-only table, TTL/prune/sample, group-agnostic `leave`; secondary indexes (`_by_group`/`_by_cid`/`_pos`) + materialized `PeerRecord.wire` projection | `PeerRecord`, `RoutingTable` (`upsert`, `remove`, `prune`, `sample`, `count`) |
-| `python/src/hsync_bootnode/handler.py` | Request pipeline: rate-limit → validate (single pass) → authorize (protected-bucket policy: declared protected buckets, or every bucket when `private=True`) → mutate → reply | `BootHandler.handle`, `BootConfigError`, `OP_IP_BURST`, `WINDOW_SECONDS` |
-| `python/src/hsync_bootnode/ratelimit.py` | Sliding windows; `evict_stale` bounds memory (evicts fully-refilled buckets, behaviour-identical) | `TokenBucketLimiter` (`allow`, `retry_after`, `evict_stale`) |
+| `python/src/hsync_bootnode/routing.py` | RAM-only table, TTL/prune/sample, source-IP ownership on mutation, bounded by a `max_records` ceiling; secondary indexes (`_by_group`/`_by_cid`/`_pos`) + materialized `PeerRecord.wire` projection | `PeerRecord`, `RoutingTable` (`upsert` → `bool`, `remove`, `prune`, `sample`, `count`, `source_ips`) |
+| `python/src/hsync_bootnode/handler.py` | Request pipeline: malformed-frame pre-parse gate → validate (single pass) → per-IP admission → per-IP/per-(IP,bucket) limits → authorize (constant-time; declared protected buckets, or every bucket when `private=True`) → ownership check → mutate → reply | `BootHandler.handle`, `BootConfigError`, `OP_IP_BURST`, `WINDOW_SECONDS`, `_may_replace`, `_authorize` |
+| `python/src/hsync_bootnode/ratelimit.py` | Sliding windows with a `max_keys` population ceiling (oldest-key eviction) and a non-consuming `has_tokens` peek for the pre-parse gate; `evict_stale` drops fully-refilled buckets | `TokenBucketLimiter` (`allow`, `has_tokens`, `retry_after`, `evict_stale`) |
+| `python/src/hsync_bootnode/resources.py` | Read-only host detection (available/total RAM, cgroup limit, CPU count) → `ResourceLimits` ceilings for the routing table, limiter maps and connection guard; conservative fallback when `/proc` is hidden | `ResourceLimits` (`detect`, `as_fields`), `available_memory_bytes`, `total_memory_bytes`, `cpu_count` |
 | `python/src/hsync_bootnode/tokens.py` | token derivation `HMAC-SHA256(key, "boot/1" || bucket)[:32]` | `derive_bucket_token`, `verify_bucket_token` |
-| `python/src/hsync_bootnode/server.py` | QUIC adapter: self-signed TLS identity (`hsync_common.ssl_utils`, ECDSA P-256), RETRY, frame IO bound to 8 KiB (framing only — parsing/validation lives in `handler.py`); persistent by default, in-memory via `--ephemeral` (ADR-0034/ADR-0037) | `start_server`, `NodeIdentity`, `make_identity`, `load_or_create_identity`, `load_identity`, `rotate_identity`, `IdentityError`, `BootQuicProtocol` |
+| `python/src/hsync_bootnode/server.py` | QUIC adapter: self-signed TLS identity (`hsync_common.ssl_utils`, ECDSA P-256), RETRY, bounded receive windows (≤32 KiB/stream, ≤128 KiB/connection), frame IO bound to 8 KiB (framing only — parsing/validation lives in `handler.py`), per-IP/global connection guard; persistent identity by default, in-memory via `--ephemeral` (ADR-0034/ADR-0037) | `start_server`, `NodeIdentity`, `make_identity`, `load_or_create_identity`, `load_identity`, `rotate_identity`, `IdentityError`, `BootQuicProtocol`, `ConnectionGuard` |
 | `python/src/hsync_bootnode/upnp.py` | SSDP IGD discovery + SOAP `AddPortMapping`; stateless when no IGD | `UpnpManager.run`, `add_port_mapping`, `discover_igd` |
 | `python/src/hsync_bootnode/diagnostics.py` | Two stderr channels: **always-on `warn`/`error`** node health (peer-free by construction, field allow-list, error dedup with `suppressed=<n>`) and the opt-in **full operation log** (decisions #25, #35, #36); never on disk (no-log invariant); line format `<ISO-8601 UTC Z> - hsync-bootnode[<pid>] <level>: …` | `configure_debug`, `debug_enabled` (cheap predicate hot paths use to skip building `debug_event` fields when the opt-in sink is off), `debug_log`, `debug_event`, `warn_event`, `error_event`, `_emit`, `_sanitize`, `_PUBLIC_FIELDS` |
 | `python/src/hsync_bootnode/cli.py` | Typer multi-command app; group keys from `--keys-fd` / `HSYNC_BOOTNODE_KEYS_FD` (read once); fail-fast config; `--ttl`/`--debug`/`--ready-file` seams; `--identity`/`--public-host` + `identity show`/`rotate` | `run`, `identity_show`, `identity_rotate`, `main` (`--version`), `_load_keys` |
@@ -47,29 +49,37 @@ UDP :443
 1. `server.py` reads one newline-terminated frame (≤ 8 KiB, checked on the frame
    length itself so an oversized frame always closes the stream); a frame longer
    than 8 KiB closes the session silently (no-log).
-2. `BootHandler.handle` (`python/src/hsync_bootnode/handler.py:171`) validates the
-   raw frame in a single pass via the `BootFrame` discriminated union
+2. `BootHandler.handle` (`python/src/hsync_bootnode/handler.py:226`) first consults
+   the malformed-frame budget: an IP that has exhausted it is dropped before the
+   parser runs, so a parse flood costs no event-loop CPU. Otherwise the raw frame
+   is validated in a single pass via the `BootFrame` discriminated union
    (`BOOT_FRAME_ADAPTER.validate_json`). `ValidationError` → silent drop
-   (no-log, no oracle, no admission token consumed); only a *valid* frame then
-   charges the generic per-IP admission (~10 req/s, burst 50), so a garbage
-   sender cannot throttle neighbours behind a shared NAT IP.
-3. Type-specific limits: register/refresh 10/min per bucket; query 5/min per
-   (IP, bucket) and 30/min per bucket.
+   (no-log, no oracle); it charges only the malformed-frame budget, never the
+   valid-frame admission, so a garbage sender cannot throttle valid neighbours
+   behind a shared NAT IP. Only a *valid* frame then charges the generic per-IP
+   admission (~10 req/s, burst 50).
+3. Type-specific limits (every limiter keyed by source IP): register/refresh
+   10/min per (IP, bucket); query 5/min per (IP, bucket) plus an aggregate
+   20/min per IP across buckets (anti-enumeration). The routing table and the
+   limiter maps are bounded by `ResourceLimits` (host RAM/CPU), so per-IP/bucket
+   churn cannot grow them without limit.
 4. Protected-bucket check: if the bucket is gated — declared `--protected-bucket` on an open node,
-   or *any* bucket on a private node — `verify_bucket_token` decides; failures
-   are rate-limited after 5/min per IP and answered uniformly with
-   `token_required` / `rate_limited` (+ `retry_after`). A private node answers a
-   bucket with no key loaded exactly like a wrong token (no provisioned-set
-   oracle).
+   or *any* bucket on a private node — a constant-time compare decides, running
+   on the same 64-byte shapes whether or not the bucket has a key (no timing
+   side-channel on the provisioned set); failures are rate-limited after 5/min
+   per IP and answered uniformly with `token_required` / `rate_limited`
+   (+ `retry_after`).
 5. Mutation: `register` upserts (STUN-echo source `ip:port`) and copies the
    advisory fields onto the record (`capacity`, `reachable`, and the election
    advertisement `server_ready`/`force_master`/`never_master`/`startup_time`/
    `sync_direction` — decision 31); `refresh` touches TTL only and never creates
-   or mutates them; `leave` removes `(cid, bucket)` entries regardless of group
-   but now honours an ownership check — same-source records removed without a
-   token (owner IP), token-authenticated removal on private/protected buckets —
-   and a foreign-source `leave` is silently ignored, returning no frame either
-   way (the spec has no `leave` response).
+   or mutates them. `register`, `refresh` and `leave` all enforce **record
+   ownership**: a source other than the record's observed IP is silently refused
+   unless the frame was token-authorized on a private/protected bucket, so a
+   learned `(cid, bucket, group)` cannot hijack, keep alive, or evict another
+   peer's record. Creating a record above the host-derived table ceiling, or
+   above the per-`(bucket, group)` ceiling that keeps one sample from being
+   saturated, is refused with `rate_limited` (backpressure), never by growing RAM.
 6. Reply: `ack` (register/refresh, carries `observed_endpoint`) or `response`
    (query, random sample up to `limit`, every advertised endpoint relayed as the
    peer's candidate list, every advisory field relayed verbatim); returned
@@ -86,15 +96,18 @@ UDP :443
 - **Anti-amplification**: QUIC RETRY + address-validation before connection
   state (`start_server(..., retry=True)`, `python/src/hsync_bootnode/server.py`),
   and a node-side **transport guard** (`ConnectionGuard`,
-  `python/src/hsync_bootnode/server.py`): ~30 new handshakes/s (burst 100) and
-  ≤ 256 simultaneously-open connections per source IP, checked in
+  `python/src/hsync_bootnode/server.py`): a per-IP handshake budget (~30/s,
+  burst 100), a per-IP cap and a process-wide cap on simultaneously-open
+  connections, all sized by `ResourceLimits` from host RAM/CPU, checked in
   `BootQuicProtocol.datagram_received` before any handshake work; released on
-  `ConnectionTerminated`, lazily forgetting quiet/empty IPs. The guard shares
+  `ConnectionTerminated`, lazily forgetting quiet/empty IPs. QUIC receive windows
+  are bounded (≤32 KiB per stream, ≤128 KiB per connection). The guard shares
   the rate-limit seam (`--no-rate-limit`) so benchmarks stay unthrottled.
-- **Malformed-frame budget**: invalid/unknown frames are validated first (so
-  the valid-frame admission is not drained) but carry a separate ~30/min per IP
-  budget (burst 60, `handler.py` `_bad_parse_ip`), bounding the validation CPU
-  a single peer can force without adding any oracle — the drop stays silent.
+- **Malformed-frame budget**: invalid/unknown frames charge a separate ~30/min
+  per IP budget (burst 60, `handler.py` `_bad_parse_ip`), and once an IP exhausts
+  it that IP's frames are dropped **before** validation — so a parse storm costs
+  no validation CPU — without adding any oracle (the drop stays silent) and
+  without draining a NAT neighbour's valid-frame admission.
 - **Frame-domain tightness**: `bucket_token` must be 64 lowercase hex chars
   (`BucketToken` annotation, `protocol.py`) and `connected` is bounded to
   `0..2^53` (`CONNECTED_MAX`), so a token that cannot be a derivable HMAC output

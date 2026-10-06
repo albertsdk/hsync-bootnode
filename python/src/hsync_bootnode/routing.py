@@ -102,23 +102,48 @@ class PeerRecord:
 class RoutingTable:
     """Thread-safe in-memory registry of active peers (per ``boot/1``)."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        max_records: int | None = None,
+        max_records_per_group: int | None = None,
+    ) -> None:
         self._records: dict[tuple[str, str, str | None], PeerRecord] = {}
         self._by_group: dict[tuple[str, str | None], list[tuple[str, str, str | None]]] = {}
         self._by_cid: dict[tuple[str, str], set[tuple[str, str, str | None]]] = {}
         self._pos: dict[tuple[str, str, str | None], int] = {}
+        self._max_records = max_records
+        self._max_per_group = max_records_per_group
 
     # -- mutation ----------------------------------------------------------
 
-    def upsert(self, record: PeerRecord) -> None:
-        """Insert or refresh a peer record (register/refresh)."""
+    def upsert(self, record: PeerRecord) -> bool:
+        """Insert or refresh a peer record; ``False`` when a ceiling is hit.
+
+        An existing key is always updated (it does not grow the table). A new
+        key is refused once ``max_records`` is reached, or once its
+        ``(bucket, group)`` population reaches ``max_records_per_group`` — the
+        per-group ceiling stops one bucket from being filled to the whole
+        ceiling and dominating its random sample. Either refusal lets the caller
+        answer with backpressure instead of growing RAM without limit.
+        """
         key = (record.cid, record.bucket, record.group)
         if key not in self._records:
+            if self._max_records is not None and len(self._records) >= self._max_records:
+                return False
+            group_keys = self._by_group.get((record.bucket, record.group))
+            if (
+                self._max_per_group is not None
+                and group_keys is not None
+                and len(group_keys) >= self._max_per_group
+            ):
+                return False
             lst = self._by_group.setdefault((record.bucket, record.group), [])
             self._pos[key] = len(lst)
             lst.append(key)
             self._by_cid.setdefault((record.cid, record.bucket), set()).add(key)
         self._records[key] = record
+        return True
 
     def _unindex(self, key: tuple[str, str, str | None]) -> None:
         """Remove ``key`` from ``_by_group``/``_pos`` (O(1) swap-remove).

@@ -28,6 +28,7 @@ from pydantic import SecretStr
 from hsync_bootnode import __version__
 from hsync_bootnode.diagnostics import configure_debug, debug_log, error_event, warn_event
 from hsync_bootnode.handler import BootConfigError, BootHandler
+from hsync_bootnode.resources import ResourceLimits
 from hsync_bootnode.server import (
     ConnectionGuard,
     IdentityError,
@@ -250,6 +251,7 @@ def run(
 ) -> None:
     """Run the bootstrap node: single QUIC/UDP listener (boot/1)."""
     resolved_host, resolved_port = _resolve_listener(host, port)
+    limits = ResourceLimits.detect()
     try:
         keys = _load_keys(keys_fd)
         handler = BootHandler(
@@ -258,6 +260,7 @@ def run(
             group_keys=keys,
             ttl=float(ttl),
             enforce_rate_limits=not no_rate_limit,
+            limits=limits,
         )
         node_identity = _resolve_identity(
             identity, ephemeral, host=resolved_host, public_hosts=public_host
@@ -288,6 +291,7 @@ def run(
         f"  mode      : {'private (every frame needs a bucket_token)' if private else 'open'}\n"
         f"  group keys loaded: {len(keys)}\n"
         f"  ttl       : {ttl}s\n"
+        f"  limits    : <= {limits.max_peer_records} peers, <= {limits.max_active_connections} connections (host-derived)\n"
         f"  debug     : {'on (full operation log incl. peer identity, stderr only)' if debug else 'off (in-memory only)'}\n"
         f"  rate limit: {'disabled' if no_rate_limit else 'enabled'}\n"
         f"  upnp      : {'disabled' if no_upnp else 'enabled (zero-touch)'}"
@@ -312,6 +316,7 @@ def run(
                 ready_file,
                 identity=node_identity,
                 enforce_rate_limits=not no_rate_limit,
+                limits=limits,
             )
         )
     except (KeyboardInterrupt, asyncio.CancelledError):
@@ -480,12 +485,22 @@ async def _async_main(
     *,
     identity: NodeIdentity | None = None,
     enforce_rate_limits: bool = True,
+    limits: ResourceLimits | None = None,
 ) -> None:
     try:
         # The connection guard is the transport-level twin of the frame rate
-        # limits: per-IP handshake budget + cap on open connections. Disabled
-        # together with them by --no-rate-limit (the benchmark seam).
-        connection_guard = ConnectionGuard() if enforce_rate_limits else None
+        # limits: per-IP handshake budget, per-IP cap and a process-wide cap on
+        # open connections, all sized from the host resources. Disabled together
+        # with the frame limits by --no-rate-limit (the benchmark seam).
+        guard_limits = limits if limits is not None else ResourceLimits.detect()
+        connection_guard = (
+            ConnectionGuard(
+                active_max=guard_limits.max_active_connections_per_ip,
+                global_max=guard_limits.max_active_connections,
+            )
+            if enforce_rate_limits
+            else None
+        )
         server, bound_port, identity = await start_server(
             host,
             port,

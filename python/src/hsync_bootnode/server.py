@@ -64,10 +64,17 @@ BOOT_ALPN = "hsync-boot/1"
 BOOT_IDLE_TIMEOUT = 30.0
 # One boot/1 frame must not exceed 8 KiB (register carries at most 16 endpoints).
 MAX_FRAME_BYTES = 8192
+# QUIC flow-control bounds: a request frame is at most MAX_FRAME_BYTES and the
+# client only pipelines a few per stream, so small receive windows bound the
+# server-side buffering per stream/connection without ever stalling a legitimate
+# exchange (responses are governed by the peer's own advertised limits).
+MAX_STREAM_DATA_BYTES = 4 * MAX_FRAME_BYTES
+MAX_DATA_BYTES = 16 * MAX_FRAME_BYTES
 
-# Per-IP handshake admission and open-connection cap; RETRY only stops
-# *amplified* (spoofed) handshakes, so the node needs its own budget — full
-# rationale and sizing in the ConnectionGuard docstring.
+# Per-IP handshake admission and open-connection cap (the CLI also supplies a
+# process-wide cap from ResourceLimits); RETRY only stops *amplified* (spoofed)
+# handshakes, so the node needs its own budget — full rationale and sizing in
+# the ConnectionGuard docstring.
 HANDSHAKE_RATE_PER_SECOND = 30
 HANDSHAKE_BURST_PER_IP = 100
 CONNECTION_ACTIVE_MAX_PER_IP = 256
@@ -275,7 +282,12 @@ def _sans_for(host: str, public_hosts: Sequence[str]) -> list[x509.GeneralName]:
         except ValueError:
             sans.append(x509.DNSName(name))
     if host not in ("0.0.0.0", "::"):
-        sans.append(x509.IPAddress(ipaddress.ip_address(host)))
+        try:
+            sans.append(x509.IPAddress(ipaddress.ip_address(host)))
+        except ValueError:
+            # A DNS-name bind host (e.g. ``--host localhost``) has no IP SAN;
+            # record it as a DNS SAN instead of failing identity generation.
+            sans.append(x509.DNSName(host))
     else:
         sans.append(x509.DNSName("hsync-bootnode"))
     return sans
@@ -291,8 +303,9 @@ class ConnectionGuard:
     Two controls, both bound to the peer's source IP and never persisted
     (no-log): a token-bucket on new connections (the TLS handshake is the only
     step any RETRY-protected QUIC server cannot refuse for free) and a ceiling
-    on simultaneously-open connections (each one may hold up to 128 QUIC
-    streams, so unbounded connections also mean unbounded idle-task memory).
+    on simultaneously-open connections — per source IP and, when a process-wide
+    ceiling is supplied, across every source (each connection may hold up to 128
+    QUIC streams, so unbounded connections also mean unbounded idle-task memory).
 
     Sizing (see the module constants): the handshake budget stays far above
     what a whole NAT umbrella of legitimate clients can produce — they open a
@@ -306,11 +319,14 @@ class ConnectionGuard:
         handshake_rate: float = HANDSHAKE_RATE_PER_SECOND,
         handshake_burst: int = HANDSHAKE_BURST_PER_IP,
         active_max: int = CONNECTION_ACTIVE_MAX_PER_IP,
+        global_max: int | None = None,
     ) -> None:
         self._handshakes = TokenBucketLimiter(
             capacity=handshake_burst, refill=handshake_rate, window=1.0
         )
         self._active_max = active_max
+        self._global_max = global_max
+        self._total_active = 0
         # Seconds an IP must stay quiet (with all of its connections closed)
         # before evict_stale() forgets it: capacity/rate refills the bucket to
         # exactly the first-use value, so forgetting is decision-neutral.
@@ -321,13 +337,17 @@ class ConnectionGuard:
     def admit(self, peer_ip: str, *, now: float | None = None) -> bool:
         """Admit one new (connecting) connection from ``peer_ip``.
 
-        Returns False when the IP has no handshake budget left or already holds
-        ``active_max`` open connections; the caller must then refuse the
-        connection instead of running its handshake.
+        Returns False when the IP has no handshake budget left, already holds
+        ``active_max`` open connections, or the process-wide ``global_max``
+        ceiling would be exceeded; the caller must then refuse the connection
+        instead of running its handshake.
         """
         now = time.monotonic() if now is None else now
         entry = self._active.get(peer_ip)
         if entry is not None and entry[0] >= self._active_max:
+            return False
+        if self._global_max is not None and self._total_active >= self._global_max:
+            self._note(peer_ip, now)
             return False
         if not self._handshakes.allow(peer_ip, now=now):
             self._note(peer_ip, now)
@@ -337,10 +357,12 @@ class ConnectionGuard:
         else:
             entry[0] += 1
             entry[1] = now
+        self._total_active += 1
         return True
 
     def release(self, peer_ip: str, *, now: float | None = None) -> None:
         """Mark one connection from ``peer_ip`` as closed."""
+        self._total_active = max(0, self._total_active - 1)
         entry = self._active.get(peer_ip)
         if entry is None:
             return
@@ -351,6 +373,10 @@ class ConnectionGuard:
         """Active connections currently accounted for (``0`` when unknown)."""
         entry = self._active.get(peer_ip)
         return int(entry[0]) if entry is not None else 0
+
+    def total_count(self) -> int:
+        """Process-wide admitted-connection count (``global_max`` accounting)."""
+        return self._total_active
 
     def evict_stale(self, now: float | None = None) -> int:
         """Forget an IP once all of its connections closed and it went quiet.
@@ -380,12 +406,16 @@ def build_quic_configuration(
     identity: NodeIdentity,
     *,
     idle_timeout: float = BOOT_IDLE_TIMEOUT,
+    max_stream_data: int = MAX_STREAM_DATA_BYTES,
+    max_data: int = MAX_DATA_BYTES,
 ) -> QuicConfiguration:
     """Server-side QUIC/TLS configuration bound to the given TLS identity."""
     config = QuicConfiguration(
         is_client=False,
         alpn_protocols=[BOOT_ALPN],
         idle_timeout=idle_timeout,
+        max_stream_data=max_stream_data,
+        max_data=max_data,
     )
     config.certificate = identity.certificate
     config.private_key = identity.private_key

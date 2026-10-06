@@ -332,3 +332,28 @@ def _query_frame(token: str | None, bucket: str = "shared") -> dict:
     if token is not None:
         frame["bucket_token"] = token
     return frame
+
+
+def test_build_quic_configuration_bounds_receive_windows() -> None:
+    """The server advertises small flow-control windows (bounded recv buffering)."""
+    from hsync_bootnode.server import MAX_DATA_BYTES, MAX_STREAM_DATA_BYTES
+
+    config = build_quic_configuration(make_identity(host="127.0.0.1"))
+    assert config.is_client is False
+    assert config.max_stream_data == MAX_STREAM_DATA_BYTES
+    assert config.max_data == MAX_DATA_BYTES
+
+
+def test_connection_guard_global_cap_and_release() -> None:
+    """A process-wide cap bounds total open connections, independent of per-IP."""
+    guard = ConnectionGuard(
+        handshake_rate=1000.0, handshake_burst=1000, active_max=10, global_max=2
+    )
+    assert guard.admit("10.0.0.1", now=0.0) is True
+    assert guard.admit("10.0.0.2", now=0.0) is True
+    assert guard.admit("10.0.0.3", now=0.0) is False  # global ceiling reached
+    assert guard.total_count() == 2
+    guard.release("10.0.0.1", now=0.1)
+    assert guard.total_count() == 1
+    assert guard.admit("10.0.0.3", now=0.1) is True
+    assert guard.total_count() == 2

@@ -112,6 +112,8 @@ clients at the node with the `hsync p2p` bootnode argument (`hsync p2p <host>`)
   or throwaway nodes. Diagnostics on stderr come in two channels: an always-on,
   **peer-free** operational one (warnings/errors about the node itself) and the
   opt-in `--debug` operation log, the only one that can contain peer identity.
+- **No telemetry** — the node never phones home: no usage data, analytics or
+  statistics leave the process.
 - **Zero-knowledge / protected buckets** — group tokens are HMAC-SHA256
   capabilities compared in constant time; refusals are uniform and never reveal
   whether a bucket exists.
@@ -131,6 +133,7 @@ clients at the node with the `hsync p2p` bootnode argument (`hsync p2p <host>`)
 | [Benchmarks](bench/README.md) | L1–L5 measurement scope and methodology |
 | [Black-box suite](tests/README.md) | Language-neutral wire/CLI contract tests |
 | [Contributing](CONTRIBUTING.md) | Development setup, toolchain, tests and contribution guidelines |
+| [Report an issue](https://github.com/albertsdk/hsync-bootnode/issues) | Open development and bug tracking |
 
 ## Associated Ecosystem Components
 

@@ -73,3 +73,22 @@ async def test_refresh_unknown_cid_is_dropped(bootnode_factory, bucket, rng) -> 
             (json.dumps(refresh_frame(random_cid(rng), bucket)) + "\n").encode("utf-8")
         )
     assert result.outcome is RawOutcome.SILENT
+
+
+@pytest.mark.asyncio
+async def test_reregister_replaces_endpoints_without_duplicating(
+    bootnode_factory, bucket, rng
+) -> None:
+    """Re-registering a CID updates its record in place (upsert, never a duplicate)."""
+    handle = bootnode_factory()
+    cid = random_cid(rng)
+    async with BootClient(handle.port) as client:
+        await client.exchange(register_frame(cid, bucket, host="198.51.100.7", port=8443))
+        await client.exchange(register_frame(cid, bucket, host="198.51.100.8", port=9443))
+        response = await client.exchange(query_frame(bucket))
+    assert response["type"] == "response"
+    assert response["count"] == 1  # the second register replaced, did not append
+    assert response["peers"][0]["cid"] == cid
+    assert response["peers"][0]["endpoints"] == [
+        {"proto": "tcp", "host": "198.51.100.8", "port": 9443}
+    ]

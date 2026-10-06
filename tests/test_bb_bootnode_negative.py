@@ -102,3 +102,23 @@ async def test_leave_removes_record_anonymously(bootnode_factory, bucket, rng) -
         response = await client.exchange(query_frame(bucket))
     assert response["type"] == "response"
     assert response["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_partial_frame_then_disconnect_does_not_kill_node(
+    bootnode_factory, bucket, rng
+) -> None:
+    """A truncated NDJSON frame followed by a closed stream is inert, not fatal."""
+    handle = bootnode_factory()
+    async with BootClient(handle.port) as client:
+        # Half a frame, no terminating newline; ``send_raw`` closes the stream on
+        # exit, so the node sees a partial line then EOF.
+        result = await client.send_raw(b'{"protocol_version":"boot/1","type":"reg', timeout=0.5)
+        assert result.outcome is RawOutcome.SILENT  # nothing to reply to yet
+
+    # A fresh connection still works: the truncated frame neither crashed nor
+    # wedged the reader.
+    async with BootClient(handle.port) as client:
+        ack = await client.exchange(register_frame(random_cid(rng), bucket))
+    assert ack["type"] == "ack"
+    assert handle.proc.poll() is None

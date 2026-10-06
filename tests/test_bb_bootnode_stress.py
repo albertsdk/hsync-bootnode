@@ -40,6 +40,7 @@ from harness import (
     BootClient,
     RawOutcome,
     leave_frame,
+    proc_rss_mb,
     query_frame,
     random_cid,
     refresh_frame,
@@ -165,6 +166,22 @@ async def _register_peers(port: int, bucket: str, rng, count: int) -> list[str]:
             ack = await client.exchange(register_frame(cid, bucket))
             assert ack.get("type") == "ack", ack
     return cids
+
+
+async def _churn_register_leave(port: int, bucket: str, rng, *, rounds: int, peers: int) -> None:
+    """Register then ``leave`` ``peers`` distinct CIDs, ``rounds`` times, one connection."""
+    cids = [random_cid(rng) for _ in range(peers)]
+    async with BootClient(port) as client:
+        for _ in range(rounds):
+            for cid in cids:
+                ack = await client.exchange(register_frame(cid, bucket))
+                assert ack.get("type") == "ack", ack
+                # leave has no reply by contract → SILENT on a still-open stream.
+                result = await client.send_raw(
+                    (json.dumps(leave_frame(cid, bucket)) + "\n").encode(),
+                    timeout=_LEAVE_TIMEOUT,
+                )
+                assert result.outcome is RawOutcome.SILENT
 
 
 @pytest.mark.asyncio
@@ -297,4 +314,31 @@ async def test_ttl_sweep_converges_under_query_load(bootnode_factory, bucket, rn
 
     assert final["count"] == 0, f"expired peers still advertised: {final['peers']}"
     assert len(cids) == min(_PEERS, 40)
+    assert handle.proc.poll() is None
+
+
+@pytest.mark.asyncio
+async def test_churn_does_not_grow_memory_unbounded(bootnode_factory, bucket, rng) -> None:
+    """Register/leave churn must not leak: RSS growth stays bounded.
+
+    The node is RAM-only, so a per-record leak would eventually exhaust the
+    host; this asserts the routing table really releases a left peer instead of
+    only hiding it from queries.
+    """
+    handle = bootnode_factory(no_rate_limit=True)
+    pid = handle.node_pid
+    if pid is None or proc_rss_mb(pid) < 0:
+        pytest.skip("RSS unavailable on this host (Linux /proc required)")
+
+    peers = min(_PEERS, 100)
+    await _churn_register_leave(handle.port, bucket, rng, rounds=1, peers=peers)  # warm up
+    before = proc_rss_mb(pid)
+    for _ in range(3):
+        await _churn_register_leave(handle.port, bucket, rng, rounds=1, peers=peers)
+    after = proc_rss_mb(pid)
+
+    print(f"\n[BOOTSTRESS] churn-rss: before={before:.1f}MB after={after:.1f}MB peers={peers}")
+    # Python's allocator retains freed arenas, so the bound is generous — but
+    # finite: a leak of one routing/record object per churned CID would exceed it.
+    assert after - before < 20.0, f"RSS grew {after - before:.1f}MB under churn"
     assert handle.proc.poll() is None

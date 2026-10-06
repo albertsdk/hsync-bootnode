@@ -7,7 +7,11 @@ the wire protocol.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import re
+import signal
+import socket
 
 import pytest
 from harness import query_frame, register_frame, run_cli
@@ -160,3 +164,72 @@ def test_port_in_use_fails_fast_with_actionable_error() -> None:
         assert "Traceback" not in result.stderr
     finally:
         holder.close()
+
+
+@pytest.mark.asyncio
+async def test_sigterm_under_load_exits_cleanly(bootnode_factory, bucket, rng) -> None:
+    """SIGTERM mid-traffic still runs the graceful teardown (exit 0, ready file removed)."""
+    from harness import BootClient, random_cid
+
+    handle = bootnode_factory()
+    ready_file = handle.ready_file
+    assert ready_file is not None
+
+    async with BootClient(handle.port) as client:
+        await client.exchange(register_frame(random_cid(rng), bucket))
+
+        async def hammer() -> None:
+            # Keep the event loop busy with valid traffic until the node stops.
+            while True:
+                try:
+                    await client.exchange(query_frame(bucket), timeout=1.0)
+                except Exception:  # noqa: BLE001 - the node shutting down ends the loop
+                    return
+
+        load = asyncio.create_task(hammer())
+        await asyncio.sleep(0.1)  # let the load ramp before signalling
+
+        handle.proc.terminate()
+        returncode = await asyncio.to_thread(handle.proc.wait, 15)
+        load.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await load
+
+    assert returncode == 0
+    assert not ready_file.exists()
+
+
+@pytest.mark.asyncio
+async def test_sigint_exits_cleanly_and_removes_ready_file(bootnode_factory) -> None:
+    """Ctrl+C (SIGINT) follows the same graceful path as SIGTERM."""
+    handle = bootnode_factory()
+    ready_file = handle.ready_file
+    assert ready_file is not None
+
+    handle.proc.send_signal(signal.SIGINT)
+    returncode = await asyncio.to_thread(handle.proc.wait, 15)
+
+    assert returncode == 0
+    assert not ready_file.exists()
+
+
+@pytest.mark.asyncio
+async def test_ipv6_listener_serves(bootnode_factory, bucket, rng) -> None:
+    """``--host [::1]`` binds the IPv6 loopback and serves ``boot/1`` over it."""
+    from harness import BootClient, random_cid
+
+    if not socket.has_ipv6:
+        pytest.skip("IPv6 unavailable on this host")
+    probe = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+    try:
+        probe.bind(("::1", 0))
+    except OSError:
+        pytest.skip("IPv6 loopback unavailable on this host")
+    finally:
+        probe.close()
+
+    handle = bootnode_factory(host="[::1]")
+    async with BootClient(handle.port, host="::1") as client:
+        ack = await client.exchange(register_frame(random_cid(rng), bucket))
+    assert ack["type"] == "ack"
+    assert handle.proc.poll() is None

@@ -82,15 +82,15 @@ HSYNC_BB_BOOTNODE=1 HSYNC_BOOTNODE_BIN=/path/to/hsync-bootnode \
 
 | Module | Scenarios |
 |---|---|
-| `test_bb_bootnode_lifecycle.py` | `--version`, fail-fast config, readiness, graceful shutdown, debug mode (peer-aware stderr log), port-in-use bind failure (exit 3) |
-| `test_bb_bootnode_register.py` | STUN-echo ack, advertised/observed endpoints, refresh, unknown-CID refresh drop |
+| `test_bb_bootnode_lifecycle.py` | `--version`, fail-fast config, readiness, graceful shutdown (`SIGTERM` idle **and under load**, `SIGINT`), IPv6 `[::1]` listener, debug mode (peer-aware stderr log), port-in-use bind failure (exit 3) |
+| `test_bb_bootnode_register.py` | STUN-echo ack, advertised/observed endpoints, refresh, unknown-CID refresh drop, re-register replaces endpoints (upsert) |
 | `test_bb_bootnode_query.py` | peer listing, group filter, limit bounds, pipelined frames |
 | `test_bb_bootnode_protected_buckets.py` | uniform `token_required`, correct/wrong token, no oracle |
 | `test_bb_bootnode_private.py` | `--private`/envvar: every bucket gated, unkeyed bucket, gated `leave`, fail-fast without keys, banner |
 | `test_bb_bootnode_ratelimit.py` | burst → `rate_limited` + `retry_after` (query/register/bad-token) |
-| `test_bb_bootnode_negative.py` | malformed/unknown/oversized/forbidden frames, leave |
+| `test_bb_bootnode_negative.py` | malformed/unknown/oversized/forbidden frames, partial-frame-then-disconnect, leave |
 | `test_bb_bootnode_ttl.py` | TTL expiry convergence, refresh keeps peer alive |
-| `test_bb_bootnode_stress.py` | **opt-in** (`HSYNC_BB_STRESS=1`): sustained mixed load, full-bucket discovery, rate-limit burst + recovery, garbage storm, TTL sweep under query load |
+| `test_bb_bootnode_stress.py` | **opt-in** (`HSYNC_BB_STRESS=1`): sustained mixed load, full-bucket discovery, rate-limit burst + recovery, garbage storm, TTL sweep under query load, register/leave churn RSS-bound (no leak) |
 
 Per-IP rate-limit isolation between *distinct* source IPs is not exercised here
 (loopback forces a single source address); it is covered by the white-box unit

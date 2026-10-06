@@ -48,6 +48,22 @@ HSYNC_BOOTNODE_BIN=/path/to/hsync-bootnode python/.venv/bin/python bench/bench_q
 
 `--json-out FILE` writes machine-readable results on every tier.
 
+## Comparing two runs
+
+`bench/compare.py` pairs two `--json-out` runs (a file, or a directory of
+`*.json`) by operation name and flags a regression when an operation's median
+(`p50_ms`) grows past `--threshold` while its before-run mean sat at/above the
+`--min-mean-ms` noise floor; it exits 1 on any flagged regression. Same metrics
+on every tier, so it is the language-neutral way to quantify a change or the
+Python→Rust port:
+
+```bash
+python/.venv/bin/python bench/bench_handler.py --count 4000 --json-out /tmp/before.json
+# ... apply a change ...
+python/.venv/bin/python bench/bench_handler.py --count 4000 --json-out /tmp/after.json
+python/.venv/bin/python bench/compare.py /tmp/before.json /tmp/after.json
+```
+
 ## Shared helpers
 
 - `bench/common.py` — deterministic CIDs, timing/stats and node-process sampling

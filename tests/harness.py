@@ -66,11 +66,15 @@ def run_cli(args: Sequence[str], timeout: float = 30.0) -> subprocess.CompletedP
     )
 
 
-def free_udp_port() -> int:
-    """A free loopback UDP port (not reserved — the caller binds it)."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+def free_udp_port(family: int = socket.AF_INET) -> int:
+    """A free loopback UDP port (not reserved — the caller binds it).
+
+    ``family`` selects the address family so an IPv6 listener
+    (``--host [::1]``) can be given a free ``::1`` port, not an IPv4 one.
+    """
+    sock = socket.socket(family, socket.SOCK_DGRAM)
     try:
-        sock.bind(("127.0.0.1", 0))
+        sock.bind(("::1", 0) if family == socket.AF_INET6 else ("127.0.0.1", 0))
         return int(sock.getsockname()[1])
     finally:
         sock.close()
@@ -231,6 +235,7 @@ def start_bootnode(
     tmp_path: Path,
     *,
     port: int | None = None,
+    host: str = "127.0.0.1",
     args: Sequence[str] = (),
     keys: Mapping[str, str] | None = None,
     protected: Sequence[str] = (),
@@ -244,6 +249,8 @@ def start_bootnode(
 ) -> BootnodeProc:
     """Start a bootnode subprocess; ``keys`` are provisioned via ``--keys-fd``.
 
+    ``host`` is the ``--host`` bind address (default loopback IPv4); pass
+    ``"[::1]"`` for an IPv6 listener (the free port is then reserved on ``::1``).
     ``private`` appends ``--private``; ``env_extra`` adds environment variables on
     top of the scrubbed environment (used to exercise the envvar form of a flag,
     e.g. ``HSYNC_BOOTNODE_PRIVATE=1``, exactly as the service units set it).
@@ -251,10 +258,10 @@ def start_bootnode(
     to the operator's/CI's XDG state dir; pass ``ephemeral=False`` (with an
     explicit ``--identity``/``HSYNC_BOOTNODE_IDENTITY``) to test persistence.
     """
-    port = port or free_udp_port()
+    port = port or free_udp_port(socket.AF_INET6 if ":" in host else socket.AF_INET)
     ready_file = tmp_path / "ready.pid" if ready else None
 
-    cmd = [resolve_bin(), "run", "--host", "127.0.0.1", "--port", str(port), "--no-upnp"]
+    cmd = [resolve_bin(), "run", "--host", host, "--port", str(port), "--no-upnp"]
     if ephemeral:
         cmd += ["--ephemeral"]
     if ttl is not None:
@@ -353,6 +360,23 @@ def terminate(handle: BootnodeProc) -> None:
         proc.wait(timeout=5.0)
 
 
+def proc_rss_mb(pid: int) -> float:
+    """Resident set size of ``pid`` in MiB (Linux ``/proc``); ``-1.0`` if unavailable.
+
+    Mirrors ``bench/common.proc_rss_mb``; kept here as well so the test harness
+    has no dependency on the stdlib-only benchmark helper and can run on any
+    checkout. Used by the stress suite's leak bound.
+    """
+    try:
+        status = (Path("/proc") / str(pid) / "status").read_text(encoding="utf-8")
+    except OSError:
+        return -1.0
+    for line in status.splitlines():
+        if line.startswith("VmRSS:"):
+            return int(line.split()[1]) / 1024.0
+    return -1.0
+
+
 # ---------------------------------------------------------------------------
 # QUIC client (language-neutral: talks only boot/1 over the wire)
 # ---------------------------------------------------------------------------
@@ -374,8 +398,9 @@ class RawResult(NamedTuple):
 class BootClient:
     """One loopback QUIC connection speaking ``boot/1`` NDJSON frames."""
 
-    def __init__(self, port: int) -> None:
+    def __init__(self, port: int, host: str = "127.0.0.1") -> None:
         self._port = port
+        self._host = host
         self._protocol = None
         self._stack: contextlib.AsyncExitStack | None = None
 
@@ -384,7 +409,7 @@ class BootClient:
         self._stack = contextlib.AsyncExitStack()
         await self._stack.__aenter__()
         self._protocol = await self._stack.enter_async_context(
-            connect("127.0.0.1", self._port, configuration=config)
+            connect(self._host, self._port, configuration=config)
         )
         return self
 

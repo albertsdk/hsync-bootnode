@@ -28,7 +28,7 @@ hsync-bootnode --version
 | `--protected-bucket` | *(none)* | Bucket that requires a valid `bucket_token`. Repeatable. Declaring a protected bucket without provisioning its key fails fast at startup (exit code 2). |
 | `--keys-fd` | *(none)* | File descriptor carrying the group keys (see below). Environment variable form: `HSYNC_BOOTNODE_KEYS_FD`. |
 | `--private` | *(disabled flag)* | Private node: every frame must carry a valid `bucket_token`, for **every** bucket (not only `--protected-bucket`). Starting it with no group key fails fast (exit code 2). Environment variable form: `HSYNC_BOOTNODE_PRIVATE=1`. |
-| `--no-upnp` | *(disabled flag)* | Disable the zero-touch UPnP UDP mapping. |
+| `--upnp` | *(disabled flag)* | Map the QUIC port with UPnP (opt-in; off by default). |
 | `--ttl` | `60` | Record TTL in seconds (1–3600). Peers refresh every 30 s, so the default 60 s matches the spec. Lower it for faster convergence in tests. |
 | `--debug` | *(disabled flag)* | Emit the full operation log to stderr (opt-in): connections, frames, decisions, record changes and TTL sweeps, **including the peer identity** (CID, bucket, IP, port). Every line is timestamped and self-identifying (`2026-09-30T10:30:45.123Z - hsync-bootnode[1234] debug: …`). Stderr only — never written to disk; without it no peer data leaves memory. Environment variable form: `HSYNC_BOOTNODE_DEBUG=1`. |
 | `--ready-file` | *(none)* | Write the process PID to this path once the listener is bound (readiness seam, contains no peer data). Environment variable form: `HSYNC_BOOTNODE_READY_FILE`. An unwritable path fails fast with exit code 4. |
@@ -299,7 +299,8 @@ can rely on.
   instead of exhausting RAM or saturating a single bucket's sample. Every
   `boot/1` frame rejects unknown fields, and the deployed units are
   sandboxed (systemd `DynamicUser`, syscall filter).
-- **UPnP is hardened by default**: SSDP replies must originate from a private
+- **UPnP is opt-in and hardened**: off by default (`--upnp` enables it). SSDP
+  replies must originate from a private
   LAN address and their `LOCATION` must be `http(s)://<private-IP-literal>/…`
   (no hostnames, no external hosts, no redirects) — the device discovery cannot
   be steered into fetching arbitrary internal/external URLs. On a node with no
@@ -427,7 +428,7 @@ Edit the executable paths inside each unit to the location of your venv.
 | `error: cannot bind the QUIC/UDP listener … — the address is not available` | `--host` is not a local interface address: use a local IP, or `0.0.0.0` to listen on all of them. |
 | Client gets `token_required` | The bucket is gated (declared `--protected-bucket`, or every bucket on a private node) and the client's derived token is missing/wrong — check the group key on the client side. |
 | Client gets `rate_limited` | A limit was exceeded (per-IP ~10 req/s admission, 5/min failed tokens, 5/min queries per (IP, bucket), 20/min aggregate queries per IP, 10/min registers per (IP, bucket), or the node's host-derived table ceiling); wait for `retry_after` seconds. |
-| No UPnP mapping | Router without IGD, or mapping refused: the node keeps running stateless and reports it once on the always-on channel (`warn: upnp no igd on lan port=…` or `warn: upnp mapping unavailable reason=…`); publish a public UDP endpoint in another way or use `--no-upnp` to skip discovery entirely. |
+| No UPnP mapping | UPnP is off by default; with `--upnp` a router without IGD or a refused mapping keeps the node running stateless and reports it once on the always-on channel (`warn: upnp no igd on lan port=…` or `warn: upnp mapping unavailable reason=…`); publish a public UDP endpoint in another way or leave UPnP disabled. |
 | `error: readiness file not writable` (exit code 4) | `--ready-file` points at a path the node cannot create (missing parent directory, no permission, or a stale file that `O_EXCL` refuses to overwrite): create/remove the path or point the flag elsewhere. |
 | `warn: upnp mapping unavailable` / `error: session failed` in the logs | Always-on diagnostics, not peer data: the node degraded (no UPnP mapping) or one session failed unexpectedly and was isolated. Both are emitted without `--debug` and never contain a peer identity. |
 | Need to see what the node is doing | Operational warnings and errors are already on stderr (and in the service log). Start with `--debug` (or `HSYNC_BOOTNODE_DEBUG=1`) to add the full operation log, peer identity included. |

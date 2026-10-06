@@ -24,7 +24,7 @@ unprivileged port internally).
 ## Requirements (all methods)
 
 - UDP port 443 (or another port) reachable from the Internet
-- Optional: a UPnP-capable router for zero-touch UDP port mapping
+- Optional: a UPnP-capable router for zero-touch UDP port mapping (opt in with `--upnp`)
 
 ## How it works in one paragraph
 

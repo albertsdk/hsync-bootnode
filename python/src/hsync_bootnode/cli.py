@@ -189,7 +189,9 @@ def run(
         envvar=_DEFAULT_PRIVATE_ENV,
         help="Require a valid bucket_token on every frame (private node). Env: HSYNC_BOOTNODE_PRIVATE=1.",
     ),
-    no_upnp: bool = typer.Option(False, "--no-upnp", help="Disable UPnP mapping."),
+    upnp: bool = typer.Option(
+        False, "--upnp", help="Map the QUIC port with UPnP (opt-in; off by default)."
+    ),
     ttl: int = typer.Option(
         60,
         "--ttl",
@@ -294,7 +296,7 @@ def run(
         f"  limits    : <= {limits.max_peer_records} peers, <= {limits.max_active_connections} connections (host-derived)\n"
         f"  debug     : {'on (full operation log incl. peer identity, stderr only)' if debug else 'off (in-memory only)'}\n"
         f"  rate limit: {'disabled' if no_rate_limit else 'enabled'}\n"
-        f"  upnp      : {'disabled' if no_upnp else 'enabled (zero-touch)'}"
+        f"  upnp      : {'enabled (zero-touch)' if upnp else 'disabled'}"
     )
     typer.echo(banner)
 
@@ -312,7 +314,7 @@ def run(
                 resolved_host,
                 resolved_port,
                 handler,
-                no_upnp,
+                upnp,
                 ready_file,
                 identity=node_identity,
                 enforce_rate_limits=not no_rate_limit,
@@ -480,7 +482,7 @@ async def _async_main(
     host: str,
     port: int,
     handler: BootHandler,
-    no_upnp: bool,
+    upnp: bool,
     ready_file: str | None = None,
     *,
     identity: NodeIdentity | None = None,
@@ -525,7 +527,7 @@ async def _async_main(
             debug_log(f"readiness written to {ready_file}")
 
         tasks.append(asyncio.create_task(_prune_loop(handler, connection_guard)))
-        if not no_upnp:
+        if upnp:
             tasks.append(asyncio.create_task(UpnpManager(bound_port).run()))
 
         await asyncio.Future()  # serve forever

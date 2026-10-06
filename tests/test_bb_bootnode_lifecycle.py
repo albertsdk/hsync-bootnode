@@ -107,8 +107,8 @@ async def test_default_mode_keeps_peer_data_out_of_stderr(bootnode_factory, buck
     assert not [line for line in stderr.splitlines() if _DEBUG_LINE_RE.fullmatch(line)]
     assert cid not in stderr
     assert bucket not in stderr
-    # A healthy default run is silent: this suite always starts the node with
-    # --no-upnp, so no operational warning is expected either.
+    # A healthy default run is silent: UPnP is off by default, so no
+    # operational warning is expected either.
     assert not [line for line in stderr.splitlines() if _LINE_RE.fullmatch(line)]
 
 
@@ -124,7 +124,6 @@ def test_ready_file_failure_exits_4_without_a_traceback(tmp_path) -> None:
             "127.0.0.1",
             "--port",
             str(free_udp_port()),
-            "--no-upnp",
             "--ready-file",
             str(missing),
         ]

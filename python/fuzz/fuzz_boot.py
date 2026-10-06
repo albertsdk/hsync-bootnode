@@ -496,6 +496,11 @@ def _fuzz_ssdp(rng: random.Random) -> None:
 
     ok = upnp.is_private_http_location(location)
     _check(isinstance(ok, bool), "is_private_http_location domain", location)
+    # Half the time make the reply come from the host it names: the gate only
+    # fetches when the LOCATION host equals the reply source, so this exercises
+    # the positive fetch path instead of only the mismatching rejections.
+    if ok and rng.random() < 0.5:
+        source_ip = urlsplit(location).hostname or source_ip
     lan_src = upnp.is_lan_unicast_address(source_ip)
     _check(isinstance(lan_src, bool), "is_lan_unicast_address domain", source_ip)
     control = upnp._control_url_on_base(_BASE_URL, location)
@@ -530,7 +535,7 @@ def _fuzz_ssdp(rng: random.Random) -> None:
             f"fetch happened for source={source_ip!r} location={fetched[0]!r}",
             reply,
         )
-    elif location and upnp.is_private_http_location(location) and lan_src:
+    elif ok and upnp._location_host_matches_source(location, source_ip):
         _check(False, "valid LAN reply did not reach the fetch", reply)
 
 

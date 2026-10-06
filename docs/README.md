@@ -30,7 +30,7 @@ gone.
 - UDP port 443 (or any other UDP port) reachable from the Internet — the 443
   default is privileged: run as root, grant `CAP_NET_BIND_SERVICE` (the `.deb`
   and systemd unit do), or use a port ≥ 1024 (e.g. `--port 8443`)
-- Optional: a UPnP-capable router for zero-touch UDP port mapping
+- Optional: a UPnP-capable router for zero-touch UDP port mapping (opt in with `--upnp`)
 
 ## Start here
 

@@ -105,8 +105,8 @@ is gated too (an unauthenticated leave is silently dropped). Starting a private
 node with no group key fails fast with exit code 2. Env form:
 .BR HSYNC_BOOTNODE_PRIVATE=1 .
 .TP
-.B run\ \fR--no-upnp\fP
-Disable the zero-touch UPnP UDP port mapping.
+.B run\ \fR--upnp\fP
+Map the QUIC port with UPnP (opt\-in; off by default).
 .TP
 .BI run\ \fR--ttl\fP= SECONDS
 Record TTL in seconds (1\-3600). Default: 60 (peers refresh every 30 s).

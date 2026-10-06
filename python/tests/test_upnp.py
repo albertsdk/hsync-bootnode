@@ -275,3 +275,33 @@ def test_ssdp_replies_off_lan_are_discarded_unopened(monkeypatch: object) -> Non
     assert result is None  # the fake fetch returns None, so the walk keeps going
     # the off-LAN reply was discarded UNOPENED; only the on-LAN http reply triggered a fetch
     assert fetched == ["http://192.168.1.1:5000/rootDesc.xml"]
+
+
+def test_ssdp_location_host_must_match_reply_source(monkeypatch: object) -> None:
+    """A LAN reply naming a *different* private host is discarded unopened.
+
+    The reply source and its LOCATION host must be the same device: a spoofed
+    reply from one LAN host naming another would otherwise steer the fetch at a
+    host that never answered.
+    """
+    import hsync_bootnode.upnp as upnp_mod
+
+    reply = b"HTTP/1.1 200 OK\r\nLOCATION: http://192.168.1.1:5000/rootDesc.xml\r\n\r\n"
+    fetched: list[str] = []
+
+    def fake_fetch(location: str, local_ip: str) -> None:
+        fetched.append(location)
+        return None
+
+    monkeypatch.setattr(upnp_mod, "_igd_service_from_location", fake_fetch)
+    sock = _FakeSocket(
+        [
+            # LAN source (192.168.1.50) naming a different private host: refused.
+            (reply, ("192.168.1.50", 1900)),
+            # Same reply but the LOCATION host now equals the source: fetched.
+            (reply.replace(b"192.168.1.1", b"192.168.1.50"), ("192.168.1.50", 1900)),
+        ]
+    )
+    result = _first_igd_location(sock, 2.0, "192.168.1.10")  # type: ignore[arg-type]
+    assert result is None
+    assert fetched == ["http://192.168.1.50:5000/rootDesc.xml"]

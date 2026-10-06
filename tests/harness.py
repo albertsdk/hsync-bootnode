@@ -261,7 +261,7 @@ def start_bootnode(
     port = port or free_udp_port(socket.AF_INET6 if ":" in host else socket.AF_INET)
     ready_file = tmp_path / "ready.pid" if ready else None
 
-    cmd = [resolve_bin(), "run", "--host", host, "--port", str(port), "--no-upnp"]
+    cmd = [resolve_bin(), "run", "--host", host, "--port", str(port)]
     if ephemeral:
         cmd += ["--ephemeral"]
     if ttl is not None:

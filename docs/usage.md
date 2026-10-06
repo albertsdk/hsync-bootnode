@@ -42,7 +42,7 @@ path; the private key is never printed.
 
 ```bash
 hsync-bootnode identity show
-# sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+# → sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
 
 ### `identity rotate`
@@ -93,7 +93,7 @@ instead of stalling startup.
 
 Line format (comments and blank lines are ignored):
 
-```
+```text
 # bucket=<hex-group-key>
 shared=9f1c...
 home=44ab...
@@ -124,7 +124,7 @@ of a public service.
 
 ```bash
 # every bucket needs a key; without any key the node refuses to start (exit 2)
-hsync-bootnode run --host 0.0.0.0 --port 443 --private \
+hsync-bootnode run --private \
     --keys-fd 5 5< /etc/hsync-bootnode/group-keys
 ```
 

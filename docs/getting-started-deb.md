@@ -32,7 +32,7 @@ From the `hsync-bootnode` checkout (needs Docker for the cross build):
 
 ```bash
 ./compile.sh -t deb
-# output: dist/deb/hsync-bootnode_<ver>_<arch>.deb
+# → dist/deb/hsync-bootnode_<ver>_<arch>.deb
 ```
 
 `./compile.sh -t deb-all` cross-builds the `amd64`, `arm64` and `armhf` packages
@@ -74,7 +74,7 @@ sudo systemctl status hsync-bootnode.service
 ## Verify the node is running
 
 ```bash
-sudo journalctl -u hsync-bootnode.service -f
+sudo journalctl -u hsync-bootnode.service
 sudo hsync-bootnode identity show
 ```
 

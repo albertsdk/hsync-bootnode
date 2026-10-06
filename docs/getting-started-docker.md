@@ -20,12 +20,7 @@ start it:
 
 ```dotenv
 HSYNC_BOOTNODE_IMAGE=ghcr.io/albertsdk/hsync-bootnode:v1.0.0
-HSYNC_BOOTNODE_PORT=443
-HSYNC_BOOTNODE_DATA_DIR=./hsync-data
-HSYNC_UID=1000
-HSYNC_GID=1000
 HSYNC_BOOTNODE_IDENTITY=/var/lib/hsync-bootnode/identity.pem
-HSYNC_BOOTNODE_READY_FILE=/var/lib/hsync-bootnode/ready.pid
 # Private node / protected buckets (optional):
 #HSYNC_BOOTNODE_KEYS_PATH=/secure/path/group-keys
 #HSYNC_BOOTNODE_KEYS_FILE=/keys
@@ -51,20 +46,15 @@ docker run --rm -d --name hsync-bootnode-test \
   -p 443:8443/udp \
   --user "$(id -u):$(id -g)" \
   -v "$(pwd)/hsync-data:/var/lib/hsync-bootnode" \
-  ghcr.io/albertsdk/hsync-bootnode:v1.0.0 run --host 0.0.0.0 --port 8443
+  ghcr.io/albertsdk/hsync-bootnode:v1.0.0 run --port 8443
 docker logs hsync-bootnode-test
 docker stop hsync-bootnode-test
 ```
 
 ### Build the image from source
 
-The source build requires `hsync-bootnode` and `hsync-common` as sibling
-repositories. From the `hsync-bootnode` checkout:
-
-```bash
-./docker.sh build
-./docker.sh start
-```
+To build from source, follow the build steps in
+[Contributing](../CONTRIBUTING.md).
 
 `./docker.sh` also supports `stop`, `restart`, `status`, `logs -f`, `shell` and
 `clean`; it persists the identity under `./hsync-data`. Environment variables

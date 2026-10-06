@@ -33,9 +33,10 @@ default) so the fingerprint survives restarts, then distribute that fingerprint
 to clients:
 
 ```bash
-# default: persisted at $XDG_STATE_HOME/hsync/bootnode/identity.pem
-# pick an explicit path (0600 file, only the operator's key+cert) with --identity
+# start the node (in its own terminal, or as a service)
 hsync-bootnode run --identity /var/lib/hsync-bootnode/identity.pem
+
+# then, in another terminal, read the fingerprint:
 hsync-bootnode identity show
 ```
 
@@ -46,7 +47,7 @@ once at the prompt on a terminal).
 (e.g. the operator rotated the identity), accept it explicitly:
 
 ```bash
-hsync p2p <host> -b <bucket> --bootnode-fingerprint <new-fingerprint>
+hsync p2p HOST -b BUCKET --bootnode-fingerprint NEW_FINGERPRINT
 ```
 
 Or, if a client already pinned it, forget the stale pin with

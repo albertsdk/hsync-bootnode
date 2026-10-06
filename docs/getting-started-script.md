@@ -64,8 +64,7 @@ The installer waits for the node to write its readiness PID. Check the logs and
 the certificate fingerprint clients pin:
 
 ```bash
-INSTALL_DIR="$HOME/.local/share/hsync-bootnode"
-cd "$INSTALL_DIR"
+cd "$HOME/.local/share/hsync-bootnode"
 docker compose ps
 docker compose logs | grep -i fingerprint
 ```
@@ -73,8 +72,7 @@ docker compose logs | grep -i fingerprint
 ## Manage and update
 
 ```bash
-INSTALL_DIR="$HOME/.local/share/hsync-bootnode"
-cd "$INSTALL_DIR"
+cd "$HOME/.local/share/hsync-bootnode"
 docker compose logs -f
 docker compose restart
 docker compose down

@@ -7,14 +7,14 @@ speaks the `boot/1` protocol over QUIC (UDP, port 443 by default).
 Pick **one** installation method below and follow it to a running node. The
 methods are ordered from the simplest and most immediate to the most involved.
 
-| # | Method | Best for | Guide |
-| - | ------ | -------- | ----- |
-| 1 | **Installer script** (`install.sh` via `curl`) | Least setup on a host with Docker: one command, TLS identity persisted | [Install with the script](getting-started-script.md) |
-| 2 | **Docker / Compose** (manual) | You already manage containers, or want to build the image yourself | [Docker](getting-started-docker.md) |
-| 3 | **Debian/Ubuntu package** (`.deb`) | A Debian/Ubuntu host without Docker, managed by systemd | [Debian package](getting-started-deb.md) |
-| 4 | **RPM package** (`.rpm`) | A RHEL/Rocky/Alma/Fedora host without Docker, managed by systemd | [RPM package](getting-started-rpm.md) |
-| 5 | **Windows installer** (`.exe`) | A Windows Server x64 host: per-machine install, registers a Windows service | [Windows installer](getting-started-windows.md) |
-| 6 | **From source** (clone and run) | Development, or a host where you control the toolchain | [Run from source](getting-started-source.md) |
+| # | Method | Platform | Best for | Guide |
+| - | ------ | -------- | -------- | ----- |
+| 1 | **Installer script** (`install.sh` via `curl`) | <img src="assets/os/linux.svg" alt="Linux" width="16" height="16"> <img src="assets/os/apple.svg" alt="macOS" width="16" height="16"> | Least setup on a host with Docker: one command, TLS identity persisted | [Install with the script](getting-started-script.md) |
+| 2 | **Docker / Compose** (manual) | <img src="assets/os/linux.svg" alt="Linux" width="16" height="16"> <img src="assets/os/apple.svg" alt="macOS" width="16" height="16"> | You already manage containers, or want to build the image yourself | [Docker](getting-started-docker.md) |
+| 3 | **Debian/Ubuntu package** (`.deb`) | <img src="assets/os/debian.svg" alt="Debian" width="16" height="16"> <img src="assets/os/ubuntu.svg" alt="Ubuntu" width="16" height="16"> | A Debian/Ubuntu host without Docker, managed by systemd | [Debian package](getting-started-deb.md) |
+| 4 | **RPM package** (`.rpm`) | <img src="assets/os/redhat.svg" alt="Red Hat" width="16" height="16"> <img src="assets/os/fedora.svg" alt="Fedora" width="16" height="16"> | A RHEL/Rocky/Alma/Fedora host without Docker, managed by systemd | [RPM package](getting-started-rpm.md) |
+| 5 | **Windows installer** (`.exe`) | <img src="assets/os/windows.svg" alt="Windows" width="16" height="16"> | A Windows Server x64 host: per-machine install, registers a Windows service | [Windows installer](getting-started-windows.md) |
+| 6 | **From source** (clone and run) |  | Development, or a host where you control the toolchain | [Run from source](getting-started-source.md) |
 
 All methods result in the same node. The QUIC/UDP port must be reachable from
 the Internet (443 is the default; ports below 1024 need elevated privileges —

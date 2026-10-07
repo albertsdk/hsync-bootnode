@@ -26,7 +26,7 @@ gone.
 
 ## Requirements
 
-- Python 3.12+ (Linux, macOS, Windows)
+- <img src="assets/os/linux.svg" alt="Linux" width="16" height="16"> <img src="assets/os/apple.svg" alt="macOS" width="16" height="16"> <img src="assets/os/windows.svg" alt="Windows" width="16" height="16"> Python 3.12+ (Linux, macOS, Windows)
 - UDP port 443 (or any other UDP port) reachable from the Internet — the 443
   default is privileged: run as root, grant `CAP_NET_BIND_SERVICE` (the `.deb`
   and systemd unit do), or use a port ≥ 1024 (e.g. `--port 8443`)

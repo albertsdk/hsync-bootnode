@@ -6,7 +6,7 @@ as a systemd credential. No Docker and no Python are required.
 
 ## Prerequisites
 
-- Debian or Ubuntu, `amd64`, `arm64` or `armhf`
+- <img src="assets/os/debian.svg" alt="Debian" width="16" height="16"> <img src="assets/os/ubuntu.svg" alt="Ubuntu" width="16" height="16"> Debian or Ubuntu, `amd64`, `arm64` or `armhf`
 - A root shell or `sudo`
 - A UDP port reachable from the Internet (443 by default)
 

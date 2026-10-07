@@ -6,7 +6,7 @@ and registers it as the Windows service **`hsync-bootnode`** through
 
 ## Prerequisites
 
-- Windows 10/11 or Windows Server (x64)
+- <img src="assets/os/windows.svg" alt="Windows" width="16" height="16"> Windows 10/11 or Windows Server (x64)
 - Administrator rights
 - A UDP port reachable from the Internet (443 by default)
 

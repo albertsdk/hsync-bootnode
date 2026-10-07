@@ -411,9 +411,9 @@ Ready-made units are in `packaging/`:
 
 | OS | Unit | Install |
 |---|---|---|
-| Linux | `packaging/systemd/hsync-bootnode.service` | `sudo cp … /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now hsync-bootnode` — hardened (DynamicUser, syscall filter); group keys are read from a systemd credential. |
-| macOS | `packaging/launchd/it.hsync.bootnode.plist` | `sudo cp … /Library/LaunchDaemons/ && sudo launchctl bootstrap system …` — group keys are exposed as fd 3 by the embedded shell wrapper. |
-| Windows | `packaging/windows/hsync-bootnode-service.xml` | WinSW v2: rename `WinSW-x64.exe` to `hsync-bootnode-service.exe` next to the XML, adjust the venv path, then `.\hsync-bootnode-service.exe install` + `start`. |
+| <img src="assets/os/linux.svg" alt="Linux" width="16" height="16"> Linux | `packaging/systemd/hsync-bootnode.service` | `sudo cp … /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now hsync-bootnode` — hardened (DynamicUser, syscall filter); group keys are read from a systemd credential. |
+| <img src="assets/os/apple.svg" alt="macOS" width="16" height="16"> macOS | `packaging/launchd/it.hsync.bootnode.plist` | `sudo cp … /Library/LaunchDaemons/ && sudo launchctl bootstrap system …` — group keys are exposed as fd 3 by the embedded shell wrapper. |
+| <img src="assets/os/windows.svg" alt="Windows" width="16" height="16"> Windows | `packaging/windows/hsync-bootnode-service.xml` | WinSW v2: rename `WinSW-x64.exe` to `hsync-bootnode-service.exe` next to the XML, adjust the venv path, then `.\hsync-bootnode-service.exe install` + `start`. |
 
 Edit the executable paths inside each unit to the location of your venv.
 

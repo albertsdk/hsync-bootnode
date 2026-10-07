@@ -10,7 +10,7 @@ as a systemd credential. No Docker and no Python are required.
 
 ## Prerequisites
 
-- RHEL, Rocky Linux, AlmaLinux (9+) or Fedora, on `x86_64` or `aarch64`
+- <img src="assets/os/redhat.svg" alt="Red Hat" width="16" height="16"> <img src="assets/os/fedora.svg" alt="Fedora" width="16" height="16"> RHEL, Rocky Linux, AlmaLinux (9+) or Fedora, on `x86_64` or `aarch64`
 - A root shell or `sudo`
 - A UDP port reachable from the Internet (443 by default)
 

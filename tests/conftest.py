@@ -27,9 +27,10 @@ def _require_black_box() -> None:
 
 
 @pytest.fixture
-def rng() -> random.Random:
+def rng(request: pytest.FixtureRequest) -> random.Random:
     """Per-test RNG with a logged seed for reproducible failures."""
     seed = int.from_bytes(os.urandom(8), "big")
+    request.node.user_properties.append(("seed", seed))
     print(f"[seed] {seed}")
     return random.Random(seed)
 

@@ -28,20 +28,26 @@ _DEBUG_LINE_RE = re.compile(
 
 
 def test_version_flag_prints_protocol_and_impl() -> None:
+    # When: --version is run
     result = run_cli(["--version"])
+    # Then: the protocol and implementation name are printed
     assert result.returncode == 0
     assert "boot/1" in result.stdout
     assert "hsync-bootnode" in result.stdout
 
 
 def test_protected_bucket_without_key_fails_fast() -> None:
+    # When: --protected-bucket is set with no group key
     result = run_cli(["run", "--protected-bucket", "shared"])
+    # Then: fail-fast configuration error (exit 2)
     assert result.returncode == 2
     assert "configuration error" in result.stderr
 
 
 def test_startup_with_protected_bucket_and_keys_serves(bootnode_factory, bucket, group_key) -> None:
+    # Given: a protected bucket with a provisioned group key
     handle = bootnode_factory(protected=[bucket], keys={bucket: group_key})
+    # Then: the node is up and the ready file holds the application PID
     assert handle.proc.poll() is None
     assert handle.ready_file is not None
     # The ready file reports the application PID, which for a onefile-packaged
@@ -52,12 +58,15 @@ def test_startup_with_protected_bucket_and_keys_serves(bootnode_factory, bucket,
 
 @pytest.mark.asyncio
 async def test_ready_file_removed_on_graceful_sigterm(bootnode_factory) -> None:
+    # Given: a running node with a ready file
     handle = bootnode_factory()
     ready_file = handle.ready_file
     assert ready_file is not None and ready_file.read_text().strip().isdigit()
 
+    # When: SIGTERM is delivered
     handle.proc.terminate()
     handle.proc.wait(timeout=15)
+    # Then: clean exit (0) and the ready file is removed
     assert handle.proc.returncode == 0
     assert not ready_file.exists()
 
@@ -67,12 +76,16 @@ async def test_debug_mode_emits_the_full_operation_log(bootnode_factory, bucket,
     """``--debug`` follows the whole request life cycle, peer identity included."""
     from harness import BootClient, random_cid
 
+    # Given: a node started with --debug
     handle = bootnode_factory(debug=True)
     cid = random_cid(rng)
+    # When: a register + query are sent
     async with BootClient(handle.port) as client:
         await client.exchange(register_frame(cid, bucket))
         await client.exchange(query_frame(bucket))
 
+    # Then: the debug log records the full request life cycle, peer identity
+    #       included, and announces the opt-in peer-free
     stderr = handle.stderr_text()
     debug_lines = [line for line in stderr.splitlines() if " debug: " in line]
     assert debug_lines, stderr
@@ -98,11 +111,14 @@ async def test_default_mode_keeps_peer_data_out_of_stderr(bootnode_factory, buck
     """Without ``--debug`` nothing peer-related leaves memory."""
     from harness import BootClient, random_cid
 
+    # Given: a node started without --debug
     handle = bootnode_factory()
     cid = random_cid(rng)
+    # When: a register is sent
     async with BootClient(handle.port) as client:
         await client.exchange(register_frame(cid, bucket))
 
+    # Then: nothing peer-related reaches stderr
     stderr = handle.stderr_text()
     assert not [line for line in stderr.splitlines() if _DEBUG_LINE_RE.fullmatch(line)]
     assert cid not in stderr
@@ -116,7 +132,9 @@ def test_ready_file_failure_exits_4_without_a_traceback(tmp_path) -> None:
     """The readiness seam fails actionably (exit 4) and is reported on stderr."""
     from harness import free_udp_port
 
+    # Given: a --ready-file path in a missing directory
     missing = tmp_path / "missing-dir" / "ready.pid"
+    # When: the node starts
     result = run_cli(
         [
             "run",
@@ -128,6 +146,7 @@ def test_ready_file_failure_exits_4_without_a_traceback(tmp_path) -> None:
             str(missing),
         ]
     )
+    # Then: exit 4 with an actionable, traceback-free message
     assert result.returncode == 4
     assert "no such directory" in result.stderr
     assert "Traceback" not in result.stderr
@@ -140,6 +159,7 @@ def test_port_in_use_fails_fast_with_actionable_error() -> None:
     """A bind failure reports exit code 3 + an actionable message, no traceback."""
     import socket
 
+    # Given: a UDP socket already bound to a loopback port
     holder = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         holder.bind(("127.0.0.1", 0))
@@ -156,7 +176,9 @@ def test_port_in_use_fails_fast_with_actionable_error() -> None:
             probe.close()
             pytest.skip("UDP SO_REUSEPORT allows a second bind; cannot reproduce")
 
+        # When: the node tries to bind the same port
         result = run_cli(["run", "--host", "127.0.0.1", "--port", str(port)])
+        # Then: exit 3 with an actionable, traceback-free message
         assert result.returncode == 3
         assert "cannot bind" in result.stderr
         assert "already in use" in result.stderr
@@ -170,6 +192,7 @@ async def test_sigterm_under_load_exits_cleanly(bootnode_factory, bucket, rng) -
     """SIGTERM mid-traffic still runs the graceful teardown (exit 0, ready file removed)."""
     from harness import BootClient, random_cid
 
+    # Given: a running node with a registered peer
     handle = bootnode_factory()
     ready_file = handle.ready_file
     assert ready_file is not None
@@ -188,12 +211,14 @@ async def test_sigterm_under_load_exits_cleanly(bootnode_factory, bucket, rng) -
         load = asyncio.create_task(hammer())
         await asyncio.sleep(0.1)  # let the load ramp before signalling
 
+        # When: SIGTERM is delivered under sustained query load
         handle.proc.terminate()
         returncode = await asyncio.to_thread(handle.proc.wait, 15)
         load.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await load
 
+    # Then: clean exit (0) and the ready file is removed
     assert returncode == 0
     assert not ready_file.exists()
 
@@ -201,13 +226,16 @@ async def test_sigterm_under_load_exits_cleanly(bootnode_factory, bucket, rng) -
 @pytest.mark.asyncio
 async def test_sigint_exits_cleanly_and_removes_ready_file(bootnode_factory) -> None:
     """Ctrl+C (SIGINT) follows the same graceful path as SIGTERM."""
+    # Given: a running node with a ready file
     handle = bootnode_factory()
     ready_file = handle.ready_file
     assert ready_file is not None
 
+    # When: SIGINT is delivered
     handle.proc.send_signal(signal.SIGINT)
     returncode = await asyncio.to_thread(handle.proc.wait, 15)
 
+    # Then: clean exit (0) and the ready file is removed
     assert returncode == 0
     assert not ready_file.exists()
 
@@ -217,6 +245,7 @@ async def test_ipv6_listener_serves(bootnode_factory, bucket, rng) -> None:
     """``--host [::1]`` binds the IPv6 loopback and serves ``boot/1`` over it."""
     from harness import BootClient, random_cid
 
+    # Given: IPv6 loopback is available
     if not socket.has_ipv6:
         pytest.skip("IPv6 unavailable on this host")
     probe = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
@@ -227,8 +256,44 @@ async def test_ipv6_listener_serves(bootnode_factory, bucket, rng) -> None:
     finally:
         probe.close()
 
+    # When: the node binds [::1] and serves a register
     handle = bootnode_factory(host="[::1]")
     async with BootClient(handle.port, host="::1") as client:
         ack = await client.exchange(register_frame(random_cid(rng), bucket))
+    # Then: the register is served over IPv6
     assert ack["type"] == "ack"
     assert handle.proc.poll() is None
+
+
+def test_upnp_flag_is_reported_and_serves(bootnode_factory, bucket, rng) -> None:
+    """--upnp is reflected in the startup banner and the node still serves."""
+    # Given: a node started with --upnp (no IGD on loopback)
+    handle = bootnode_factory(args=["--upnp"])
+    # Then: the banner reports UPnP enabled
+    assert "upnp" in handle.stdout_text()
+    assert "enabled" in handle.stdout_text()
+
+
+@pytest.mark.asyncio
+async def test_upnp_node_still_serves_boot(bootnode_factory, bucket, rng) -> None:
+    """--upnp with no IGD must not block readiness or the wire."""
+    from harness import BootClient, random_cid
+
+    # Given: a node started with --upnp (no IGD on loopback)
+    handle = bootnode_factory(args=["--upnp"])
+    # When: a register is sent
+    async with BootClient(handle.port) as client:
+        ack = await client.exchange(register_frame(random_cid(rng), bucket))
+    # Then: it is served normally
+    assert ack["type"] == "ack"
+    assert handle.proc.poll() is None
+
+
+def test_invalid_ttl_fails_fast() -> None:
+    """--ttl outside 1..3600 is a CLI usage error (exit 2), no node started."""
+    # Given: the CLI bound (min=1, max=3600)
+    # When: --ttl 0 and --ttl 3601 are passed
+    for bad in ("0", "3601"):
+        result = run_cli(["run", "--ttl", bad])
+        # Then: both fail fast with exit 2
+        assert result.returncode == 2

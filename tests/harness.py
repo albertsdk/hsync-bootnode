@@ -18,6 +18,7 @@ import hmac
 import json
 import os
 import random
+import signal
 import socket
 import ssl
 import string
@@ -35,6 +36,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 BOOT_ALPN = "hsync-boot/1"
 _CID_ALPHABET = string.ascii_letters + string.digits
 _FP = "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
+
+# Single-frame byte bound on the wire (spec: oversized frames are refused and the
+# session dropped). Mirrors ``hsync_bootnode.server.MAX_FRAME_BYTES``; duplicated
+# here so the language-neutral harness never imports the implementation.
+MAX_FRAME_BYTES = 8192
 
 
 def resolve_bin() -> str:
@@ -292,7 +298,14 @@ def start_bootnode(
 
     stdout_f = (tmp_path / "stdout.log").open("wb")
     stderr_f = (tmp_path / "stderr.log").open("wb")
-    proc = subprocess.Popen(cmd, env=env, stdout=stdout_f, stderr=stderr_f, pass_fds=pass_fds)
+    proc = subprocess.Popen(
+        cmd,
+        env=env,
+        stdout=stdout_f,
+        stderr=stderr_f,
+        pass_fds=pass_fds,
+        start_new_session=True,
+    )
     stdout_f.close()
     stderr_f.close()
     if keys:
@@ -300,7 +313,11 @@ def start_bootnode(
 
     handle = BootnodeProc(proc, port, ready_file, tmp_path)
     if ready:
-        wait_ready(handle)
+        try:
+            wait_ready(handle)
+        except BaseException:
+            terminate(handle)
+            raise
     return handle
 
 
@@ -348,15 +365,28 @@ def wait_ready(handle: BootnodeProc, timeout: float = 15.0) -> None:
 
 
 def terminate(handle: BootnodeProc) -> None:
-    """Terminate the bootnode (SIGTERM, then SIGKILL fallback); no orphans."""
+    """Terminate the bootnode (SIGTERM, then SIGKILL fallback); no orphans.
+
+    The process runs in its own session (``start_new_session=True``), so the
+    whole group — including a onefile launcher's application child — is
+    signalled and reaped together on every exit path.
+    """
     proc = handle.proc
     if proc.poll() is not None:
         return
-    proc.terminate()
+    if hasattr(os, "killpg"):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    else:  # pragma: no cover - Windows fallback
+        proc.terminate()
     try:
         proc.wait(timeout=10.0)
     except subprocess.TimeoutExpired:
-        proc.kill()
+        if hasattr(os, "killpg"):
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        else:  # pragma: no cover - Windows fallback
+            proc.kill()
         proc.wait(timeout=5.0)
 
 

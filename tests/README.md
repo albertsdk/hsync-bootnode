@@ -73,7 +73,10 @@ HSYNC_BB_BOOTNODE=1 HSYNC_BOOTNODE_BIN=/path/to/hsync-bootnode \
   child process, so the two PIDs differ.
 - Each test starts a fresh subprocess with an environment scrubbed of every
   `HSYNC_*` variable and tears it down in a `finally`/fixture, so there are no
-  orphan processes or cross-test contamination.
+  orphan processes or cross-test contamination. The process runs in its own
+  session (`start_new_session`) and is terminated as a whole group (SIGTERM,
+  then SIGKILL), so a onefile launcher's application child is reaped too; a
+  readiness failure also terminates the spawned process before re-raising.
 - Protected-bucket keys are provisioned via `--keys-fd` (a pipe, never a file).
 - Test data (CIDs, buckets, group keys) is randomized per run; the RNG seed is
   logged (`[seed] <n>`) for reproducible failures.
@@ -82,13 +85,13 @@ HSYNC_BB_BOOTNODE=1 HSYNC_BOOTNODE_BIN=/path/to/hsync-bootnode \
 
 | Module | Scenarios |
 |---|---|
-| `test_bb_bootnode_lifecycle.py` | `--version`, fail-fast config, readiness, graceful shutdown (`SIGTERM` idle **and under load**, `SIGINT`), IPv6 `[::1]` listener, debug mode (peer-aware stderr log), port-in-use bind failure (exit 3) |
-| `test_bb_bootnode_register.py` | STUN-echo ack, advertised/observed endpoints, refresh, unknown-CID refresh drop, re-register replaces endpoints (upsert) |
-| `test_bb_bootnode_query.py` | peer listing, group filter, limit bounds, pipelined frames |
+| `test_bb_bootnode_lifecycle.py` | `--version`, fail-fast config, readiness, graceful shutdown (`SIGTERM` idle **and under load**, `SIGINT`), IPv6 `[::1]` listener, debug mode (peer-aware stderr log), port-in-use bind failure (exit 3), `--upnp` banner + serving, invalid `--ttl` fail-fast |
+| `test_bb_bootnode_register.py` | STUN-echo ack, advertised/observed endpoints, refresh ack, unknown-CID refresh drop, re-register replaces endpoints (upsert), multi-endpoint list relayed in order, refresh never mutates capacity/election, re-register after leave, leave removes across groups, 3-frame pipeline, refresh-after-expiry drop |
+| `test_bb_bootnode_query.py` | peer listing, group filter, limit bounds, pipelined frames, capacity + election-advertisement relay, reachable, default sample limit (20), upper bound accepted, bucket scoping, group-less exclusion, same-cid distinct groups |
 | `test_bb_bootnode_protected_buckets.py` | uniform `token_required`, correct/wrong token, no oracle |
 | `test_bb_bootnode_private.py` | `--private`/envvar: every bucket gated, unkeyed bucket, gated `leave`, fail-fast without keys, banner |
 | `test_bb_bootnode_ratelimit.py` | burst → `rate_limited` + `retry_after` (query/register/bad-token) |
-| `test_bb_bootnode_negative.py` | malformed/unknown/oversized/forbidden frames, partial-frame-then-disconnect, leave |
+| `test_bb_bootnode_negative.py` | malformed/unknown/oversized/forbidden frames, partial-frame-then-disconnect, leave, limit out-of-range, malformed token, exact frame-size boundary, wrong field types, endpoints bounds, invalid bucket name, group length, cid length, non-object JSON, leave unknown cid |
 | `test_bb_bootnode_ttl.py` | TTL expiry convergence, refresh keeps peer alive |
 | `test_bb_bootnode_stress.py` | **opt-in** (`HSYNC_BB_STRESS=1`): sustained mixed load, full-bucket discovery, rate-limit burst + recovery, garbage storm, TTL sweep under query load, register/leave churn RSS-bound (no leak) |
 

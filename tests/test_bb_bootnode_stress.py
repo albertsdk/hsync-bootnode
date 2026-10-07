@@ -184,8 +184,10 @@ async def _churn_register_leave(port: int, bucket: str, rng, *, rounds: int, pee
 @pytest.mark.asyncio
 async def test_sustained_mixed_load_stays_correct_and_alive(bootnode_factory, bucket, rng) -> None:
     """Concurrent register/query/refresh/leave load: every reply valid, node alive."""
+    # Given: a node with rate limits off
     handle = bootnode_factory(no_rate_limit=True)
     started = time.perf_counter()
+    # When: concurrent mixed-load workers run
     reports = await asyncio.gather(
         *(_mixed_worker(handle.port, bucket, rng, _ROUNDS) for _ in range(_CONNECTIONS))
     )
@@ -196,6 +198,7 @@ async def test_sustained_mixed_load_stays_correct_and_alive(bootnode_factory, bu
         total.merge(part)
     _report("mixed-load", total, elapsed)
 
+    # Then: zero contract violations, exact request count, node alive, p99 in budget
     assert total.errors == [], f"contract violations under load: {total.errors[:3]}"
     assert total.requests == _CONNECTIONS * _ROUNDS * 4
     assert handle.proc.poll() is None, "bootnode died under sustained load"
@@ -213,10 +216,11 @@ async def test_sustained_mixed_load_stays_correct_and_alive(bootnode_factory, bu
 @pytest.mark.asyncio
 async def test_registered_peers_all_discoverable_under_load(bootnode_factory, bucket, rng) -> None:
     """A peer registered under load is visible to a query on a fresh connection."""
+    # Given: a node with rate limits off and N registered peers
     handle = bootnode_factory(no_rate_limit=True)
     cids = await _register_peers(handle.port, bucket, rng, _PEERS)
 
-    # Concurrent queries must together still see the full, consistent bucket.
+    # When: concurrent queries run (each on a fresh connection)
     async def query_once() -> set[str]:
         async with BootClient(handle.port) as client:
             # limit is capped at 50 by the spec (``ge=1, le=50``); _PEERS is kept
@@ -229,6 +233,7 @@ async def test_registered_peers_all_discoverable_under_load(bootnode_factory, bu
     for result in await asyncio.gather(*(query_once() for _ in range(_CONNECTIONS))):
         seen |= result
 
+    # Then: every registered peer is discoverable
     assert seen == set(cids), "queries did not expose every registered peer"
     assert handle.proc.poll() is None
 
@@ -236,9 +241,10 @@ async def test_registered_peers_all_discoverable_under_load(bootnode_factory, bu
 @pytest.mark.asyncio
 async def test_rate_limit_burst_recovers(bootnode_factory, bucket) -> None:
     """Sustained burst trips ``rate_limited``; the node recovers after ``retry_after``."""
+    # Given: a node with limits ON
     handle = bootnode_factory()  # limits ON
     async with BootClient(handle.port) as client:
-        # Burst the query (IP,bucket) limiter (burst 10) to saturation.
+        # When: the query (IP,bucket) limiter is burst to saturation
         limited = None
         for _ in range(10):
             response = await client.exchange(query_frame(bucket))
@@ -251,7 +257,7 @@ async def test_rate_limit_burst_recovers(bootnode_factory, bucket) -> None:
         retry_after = limited["retry_after"]
         assert retry_after >= 1
 
-        # Recovery: once the bucket refills the very same request is served.
+        # Then: once the bucket refills the very same request is served
         await asyncio.sleep(retry_after + 0.2)
         recovered = await client.exchange(query_frame(bucket))
     assert recovered.get("error") is None, recovered
@@ -261,6 +267,7 @@ async def test_rate_limit_burst_recovers(bootnode_factory, bucket) -> None:
 @pytest.mark.asyncio
 async def test_garbage_storm_does_not_kill_node(bootnode_factory, bucket) -> None:
     """A storm of malformed/unknown frames is dropped silently; the node survives."""
+    # Given: a node with rate limits off and a batch of garbage frames
     handle = bootnode_factory(no_rate_limit=True)
     garbage_lines = [
         b"not-json-at-all\n",
@@ -283,8 +290,10 @@ async def test_garbage_storm_does_not_kill_node(bootnode_factory, bucket) -> Non
             # stream kept open (SILENT) — never a reply, never a crash.
             assert result.outcome is not RawOutcome.REPLY, result
 
+    # When: concurrent garbage storms run
     await asyncio.gather(*(storm() for _ in range(_CONNECTIONS)))
 
+    # Then: the node survives and still serves valid traffic
     assert handle.proc.poll() is None, "bootnode died under a garbage storm"
     # Still serving valid traffic afterwards.
     async with BootClient(handle.port) as client:
@@ -296,9 +305,11 @@ async def test_garbage_storm_does_not_kill_node(bootnode_factory, bucket) -> Non
 @pytest.mark.asyncio
 async def test_ttl_sweep_converges_under_query_load(bootnode_factory, bucket, rng) -> None:
     """Peers expire under continuous query load; the sweep keeps the node serving."""
+    # Given: a node with TTL=1 and N registered peers
     handle = bootnode_factory(no_rate_limit=True, ttl=1)
     cids = await _register_peers(handle.port, bucket, rng, min(_PEERS, 40))
 
+    # When: the TTL elapses under continuous query load
     deadline = time.monotonic() + 2.5
     async with BootClient(handle.port) as client:
         while time.monotonic() < deadline:
@@ -309,6 +320,7 @@ async def test_ttl_sweep_converges_under_query_load(bootnode_factory, bucket, rn
             await asyncio.sleep(0.05)
         final = await client.exchange(query_frame(bucket, limit=50))
 
+    # Then: expired peers converge to zero; the node survives
     assert final["count"] == 0, f"expired peers still advertised: {final['peers']}"
     assert len(cids) == min(_PEERS, 40)
     assert handle.proc.poll() is None
@@ -322,6 +334,7 @@ async def test_churn_does_not_grow_memory_unbounded(bootnode_factory, bucket, rn
     host; this asserts the routing table really releases a left peer instead of
     only hiding it from queries.
     """
+    # Given: a node with rate limits off and a measurable RSS (Linux /proc)
     handle = bootnode_factory(no_rate_limit=True)
     pid = handle.node_pid
     if pid is None or proc_rss_mb(pid) < 0:
@@ -330,10 +343,12 @@ async def test_churn_does_not_grow_memory_unbounded(bootnode_factory, bucket, rn
     peers = min(_PEERS, 100)
     await _churn_register_leave(handle.port, bucket, rng, rounds=1, peers=peers)  # warm up
     before = proc_rss_mb(pid)
+    # When: three churn rounds run
     for _ in range(3):
         await _churn_register_leave(handle.port, bucket, rng, rounds=1, peers=peers)
     after = proc_rss_mb(pid)
 
+    # Then: RSS growth stays bounded (a leak of one record per CID would exceed it)
     print(f"\n[BOOTSTRESS] churn-rss: before={before:.1f}MB after={after:.1f}MB peers={peers}")
     # Python's allocator retains freed arenas, so the bound is generous — but
     # finite: a leak of one routing/record object per churned CID would exceed it.

@@ -36,11 +36,13 @@ def test_wait_ready_accepts_app_pid_different_from_launcher(tmp_path) -> None:
     """Readiness must not require the ready PID to equal the launcher PID."""
     proc = _idle_proc()
     try:
+        # Given: a ready file holding the *application* PID (launcher PID + 1)
         ready = tmp_path / "ready.pid"
-        # Emulate a onefile launcher: the app writes its own (child) PID.
         ready.write_text(str(proc.pid + 1), encoding="utf-8")
         handle = _FakeHandle(proc, ready)
+        # When: wait_ready is awaited
         wait_ready(handle, timeout=2.0)
+        # Then: the application PID is recorded, not the launcher's
         assert handle.node_pid == proc.pid + 1
     finally:
         proc.terminate()
@@ -48,9 +50,11 @@ def test_wait_ready_accepts_app_pid_different_from_launcher(tmp_path) -> None:
 
 
 def test_wait_ready_raises_on_early_exit(tmp_path) -> None:
+    # Given: a process that already exited
     proc = subprocess.Popen([sys.executable, "-c", "pass"])
     proc.wait()
     handle = _FakeHandle(proc, tmp_path / "ready.pid")
+    # When/Then: wait_ready raises RuntimeError
     with pytest.raises(RuntimeError):
         wait_ready(handle, timeout=2.0)
 
@@ -58,7 +62,9 @@ def test_wait_ready_raises_on_early_exit(tmp_path) -> None:
 def test_wait_ready_raises_on_timeout(tmp_path) -> None:
     proc = _idle_proc()
     try:
+        # Given: a live process that never writes the ready file
         handle = _FakeHandle(proc, tmp_path / "ready.pid")
+        # When/Then: wait_ready raises TimeoutError
         with pytest.raises(TimeoutError):
             wait_ready(handle, timeout=0.5)
     finally:

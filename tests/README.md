@@ -50,6 +50,37 @@ HSYNC_BB_BOOTNODE=1 HSYNC_BB_STRESS=1 python/.venv/bin/python -m pytest -q tests
 Without `HSYNC_BB_STRESS=1` the module is skipped, so the default suite stays
 fast.
 
+### Security probes (opt-in)
+
+`tests/test_bb_bootnode_security.py` is gated **in addition** by
+`HSYNC_BB_SECURITY=1` and runs adversarial black-box probes (penetration-style)
+against the running node: authorization bypass (cross-bucket token replay,
+foreign-bucket eviction, malformed-token budget abuse, private-mode enumeration
+oracle), source spoofing from a second loopback address (127.0.0.2 register
+hijack / leave eviction), parser abuse (deep nesting, integer overflow, JSON
+infinity, unicode/NUL smuggling), DoS (pipelined burst, bucket-enumeration
+sweep, raw non-QUIC UDP garbage, concurrent handshake flood), wrong-ALPN
+handshake, authorization timing uniformity, secret handling (`--keys-fd` never
+leaks onto argv/env, identity file `0600`/`0700`, ephemeral writes nothing),
+log-forging via control characters and reply amplification.
+
+The probes are black-box by the same contract as the functional suite (CLI +
+`boot/1` wire only) and stay skipped in the default run because they send
+deliberately hostile traffic:
+
+```bash
+cd hsync-bootnode
+HSYNC_BB_BOOTNODE=1 HSYNC_BB_SECURITY=1 python/.venv/bin/python -m pytest -q tests/test_bb_bootnode_security.py
+```
+
+| Knob | Default | Meaning |
+|---|---|---|
+| `HSYNC_BB_BOOTNODE_SECURITY_FLOOD` | 120 | handshakes in the connection-flood probe |
+| `HSYNC_BB_BOOTNODE_SECURITY_TIMING` | 30 | rounds in the authorization timing probe |
+
+The 127.0.0.2 spoofing probes are skipped automatically where a second
+loopback alias cannot be bound.
+
 ## Language selection
 
 The executable under test is resolved from `HSYNC_BOOTNODE_BIN` (a path to the
@@ -93,6 +124,7 @@ HSYNC_BB_BOOTNODE=1 HSYNC_BOOTNODE_BIN=/path/to/hsync-bootnode \
 | `test_bb_bootnode_ratelimit.py` | burst → `rate_limited` + `retry_after` (query/register/bad-token) |
 | `test_bb_bootnode_negative.py` | malformed/unknown/oversized/forbidden frames, partial-frame-then-disconnect, leave, limit out-of-range, malformed token, exact frame-size boundary, wrong field types, endpoints bounds, invalid bucket name, group length, cid length, non-object JSON, leave unknown cid |
 | `test_bb_bootnode_ttl.py` | TTL expiry convergence, refresh keeps peer alive |
+| `test_bb_bootnode_security.py` | **opt-in** (`HSYNC_BB_SECURITY=1`): adversarial probes — authz bypass, source spoofing, parser abuse, DoS, wrong ALPN, timing side channel, secret handling, log forging, amplification |
 | `test_bb_bootnode_stress.py` | **opt-in** (`HSYNC_BB_STRESS=1`): sustained mixed load, full-bucket discovery, rate-limit burst + recovery, garbage storm, TTL sweep under query load, register/leave churn RSS-bound (no leak) |
 
 Per-IP rate-limit isolation between *distinct* source IPs is not exercised here

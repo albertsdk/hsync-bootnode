@@ -5,7 +5,7 @@ Version:        __VERSION__
 Release:        1%{?dist}
 Summary:        HSYNC - P2P bootstrap node (no-log)
 
-License:        MPL-2.0
+License:        BSD-3-Clause
 URL:            https://github.com/albertsdk/hsync-bootnode
 Packager:       Alberto Basso <17047798+albertsdk@users.noreply.github.com>
 

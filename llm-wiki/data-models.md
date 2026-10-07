@@ -24,7 +24,7 @@ guesses the frame kind from the payload shape.
 | `leave` | client → server | `BootLeave` (`python/src/hsync_bootnode/protocol.py::BootLeave`) | `cid`, `bucket`, `bucket_token?` |
 | `query` | client → server | `BootQuery` (`python/src/hsync_bootnode/protocol.py::BootQuery`) | `bucket`, `group?`, `bucket_token?`, `limit` (1–50, default 20) |
 | `ack` | server → client | `BootAck` (`python/src/hsync_bootnode/protocol.py::BootAck`) | `observed_endpoint`, `ttl`, `server_time`, `retry_after?` |
-| `response` | server → client | `BootResponse` (`python/src/hsync_bootnode/protocol.py::BootResponse`) | `peers[]`, `count`, `ttl`, `error?` (`token_required`/`rate_limited`), `retry_after?` |
+| `response` | server → client | `BootResponse` (`python/src/hsync_bootnode/protocol.py::BootResponse`) | `peers[]`, `count`, `ttl`, `error?` (`token_required`/`rate_limited`/`overloaded`), `retry_after?` |
 
 `capacity` (domain `0..32`, default `0`; `CAPACITY_MAX` at `python/src/hsync_bootnode/protocol.py::CAPACITY_MAX`) is the
 **advisory service-capacity hint**: the number of concurrent peer-download reads the

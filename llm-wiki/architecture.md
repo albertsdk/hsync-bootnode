@@ -37,10 +37,10 @@ UDP :443
 | `python/src/hsync_bootnode/ratelimit.py` | Thin facade over the `hsync_common.ratelimit.TokenBucketLimiter` SSOT (shared with `hsync-client`); keeps the import path used by the boot server/handler/tests | `TokenBucketLimiter` (`allow`, `has_tokens`, `retry_after`, `evict_stale`) |
 | `python/src/hsync_bootnode/resources.py` | Read-only host detection (available/total RAM, cgroup limit, CPU count) → `ResourceLimits` ceilings for the routing table, limiter maps and connection guard; conservative fallback when `/proc` is hidden | `ResourceLimits` (`detect`, `as_fields`), `available_memory_bytes`, `total_memory_bytes`, `cpu_count` |
 | `python/src/hsync_bootnode/tokens.py` | token derivation `HMAC-SHA256(key, "boot/1" || bucket)[:32]` | `derive_bucket_token`, `verify_bucket_token` |
-| `python/src/hsync_bootnode/server.py` | QUIC adapter: self-signed TLS identity (`hsync_common.ssl_utils`, ECDSA P-256), RETRY, bounded receive windows (≤32 KiB/stream, ≤128 KiB/connection), frame IO bound to 8 KiB (framing only — parsing/validation lives in `handler.py`), per-IP/global connection guard; persistent identity by default, in-memory via `--ephemeral` (ADR-0034/ADR-0037) | `start_server`, `NodeIdentity`, `make_identity`, `load_or_create_identity`, `load_identity`, `rotate_identity`, `IdentityError`, `BootQuicProtocol`, `ConnectionGuard` |
+| `python/src/hsync_bootnode/server.py` | QUIC adapter: self-signed TLS identity (`hsync_common.ssl_utils`, ECDSA P-256), RETRY, bounded receive windows (≤32 KiB/stream, ≤128 KiB/connection), frame IO bound to 8 KiB (framing only — parsing/validation lives in `handler.py`), per-IP/global connection guard; persistent identity by default, in-memory via `--ephemeral` (ADR-0034/ADR-0037), atomic unique-temp write + on-load key/cert consistency check (decision 54) | `start_server`, `NodeIdentity`, `make_identity`, `load_or_create_identity`, `load_identity`, `rotate_identity`, `IdentityError`, `_atomic_write_identity`, `_key_matches_certificate`, `BootQuicProtocol`, `ConnectionGuard` |
 | `python/src/hsync_bootnode/upnp.py` | Facade over the SSRF-hardened `hsync_common.upnp` SSOT (shared with `hsync-client`): adds the async `UpnpManager`; stateless when no IGD. Opt-in (`--upnp`) | `UpnpManager.run`, `add_port_mapping`, `discover_igd` |
 | `python/src/hsync_bootnode/diagnostics.py` | Two stderr channels: **always-on `warn`/`error`** node health (peer-free by construction, field allow-list, error dedup with `suppressed=<n>`) and the opt-in **full operation log** (decisions #25, #35, #36); never on disk (no-log invariant); line format `<ISO-8601 UTC Z> - hsync-bootnode[<pid>] <level>: …` | `configure_debug`, `debug_enabled` (cheap predicate hot paths use to skip building `debug_event` fields when the opt-in sink is off), `debug_log`, `debug_event`, `warn_event`, `error_event`, `_emit`, `_sanitize`, `_PUBLIC_FIELDS` |
-| `python/src/hsync_bootnode/cli.py` | Typer multi-command app; group keys from `--keys-fd` / `HSYNC_BOOTNODE_KEYS_FD` (read once); fail-fast config; `--ttl`/`--debug`/`--ready-file` seams; `--identity`/`--public-host` + `identity show`/`rotate` | `run`, `identity_show`, `identity_rotate`, `main` (`--version`), `_load_keys` |
+| `python/src/hsync_bootnode/cli.py` | Typer multi-command app; group keys from `--keys-fd` / `HSYNC_BOOTNODE_KEYS_FD` (read once, size- and time-bounded — decision 54); fail-fast config; `--ttl`/`--debug`/`--ready-file` seams; `--identity`/`--public-host` + `identity show`/`rotate` | `run`, `identity_show`, `identity_rotate`, `main` (`--version`), `_load_keys`, `_read_fd`, `_fd_readable_before` |
 | `python/fuzz/fuzz_boot.py` | Deterministic stdlib fuzz harness (decoder + SSDP/token validators; security invariants, not just crash-freedom; CI burst in `python/tests/test_fuzz_harness.py`) | `run_fuzz`, `Finding`, targets `handle`/`ssdp`/`token` |
 | `python/fuzz/fuzz_guided.py` | Coverage-guided driver on the same generators/invariants: per-iteration branch-arc signatures via `coverage.Coverage` (branch=True), evolving FIFO-capped corpus (cap 512), deterministic seeds, corpus persistence (`--corpus-out/--corpus-in`); ~140 it/s (tracing) vs ~20 000 it/s static | `run_guided`, `_ArcMeter.arcs`, `_guided_frame` |
 
@@ -79,7 +79,7 @@ UDP :443
    learned `(cid, bucket, group)` cannot hijack, keep alive, or evict another
    peer's record. Creating a record above the host-derived table ceiling, or
    above the per-`(bucket, group)` ceiling that keeps one sample from being
-   saturated, is refused with `rate_limited` (backpressure), never by growing RAM.
+   saturated, is refused with `overloaded` (capacity backpressure), never by growing RAM.
 6. Reply: `ack` (register/refresh, carries `observed_endpoint`) or `response`
    (query, random sample up to `limit`, every advertised endpoint relayed as the
    peer's candidate list, every advisory field relayed verbatim); returned
@@ -91,8 +91,10 @@ UDP :443
 - **No-log**: nothing peer-related is written to disk; the node's TLS identity
   (the operator's own key+cert, ADR-0034/ADR-0037 — not peer data) is kept by
   default as a stable, pin-able, rotatable identity, and `--ephemeral` keeps it
-  in memory instead. Verified by `python/tests/test_nolog.py` under a read-only
-  filesystem.
+  in memory instead. A persisted identity is written atomically through a unique
+  temp file (a crash cannot wedge the next start) and is loaded only when its
+  private key matches its certificate (decision 54). Verified by
+  `python/tests/test_nolog.py` under a read-only filesystem.
 - **Anti-amplification**: QUIC RETRY + address-validation before connection
   state (`start_server(..., retry=True)`, `python/src/hsync_bootnode/server.py`),
   and a node-side **transport guard** (`ConnectionGuard`,
@@ -198,7 +200,7 @@ Four consumer-facing ways to run a node, kept identical in shape to
 
 | Method | Files | Notes |
 |---|---|---|
-| Installer script | `install.sh` | Resolves the latest release (or a pinned `--version`), writes `.env` + a self-contained `compose.yaml` under `~/.local/share/hsync-bootnode`, runs `docker compose up -d` and waits for the readiness PID. Docker Compose only; never `sudo`. |
+| Installer script | `install.sh` | Resolves the latest release (or a pinned `--version`/`--image-digest`), writes `.env` + a self-contained `compose.yaml` under `~/.local/share/hsync-bootnode`, verifies the image's Sigstore signature (keyless cosign; `--no-verify` opts out), runs `docker compose up -d` and waits for the readiness PID. Docker Compose only; never `sudo`. |
 | Docker / Compose | `Dockerfile`, `Dockerfile.dockerignore`, `python/entrypoint.sh`, `compose.yaml`, `docker.sh` | Build context = repo parent (needs the sibling `hsync-common`); the entrypoint opens the mounted group-keys file as fd 3; the container binds the unprivileged UDP 8443, the host maps `HSYNC_BOOTNODE_PORT` (default 443); no new env vars. `docker.sh` builds/runs from source. |
 | Debian package | `packaging/deb/` (see above) | Hardened systemd unit, `DynamicUser`, `CAP_NET_BIND_SERVICE`, group keys as a systemd credential. |
 | From source | `run.sh` | Uniform clone-and-run: checks `../hsync-common`, creates `python/.venv` via Poetry, `exec hsync-bootnode`. Mirrors `hsync-server/run.sh`. |
@@ -210,11 +212,11 @@ Four consumer-facing ways to run a node, kept identical in shape to
 | `python/tests/test_handler.py` | Routing, TTL (frozen clock), protected buckets, private policy (every bucket gated, unkeyed bucket, gated `leave`), rate limits, STUN-echo, frame rejection |
 | `python/tests/test_scaffold.py` | Fixtures / spec contract + frame schema positives/negatives (rigid schema) |
 | `python/tests/test_fuzz_harness.py` | Bounded deterministic fuzz burst (decoder/SSDP/token invariant targets; long runs via `python/fuzz/fuzz_boot.py --seconds N`, decision #47) + coverage-guided burst (decision #48) |
-| `python/tests/test_server.py` | QUIC loopback: register/query/protected refusal, private-node refusal, garbage frames, pipelined frames on one stream, per-IP connection guard (cap + release) |
-| `python/tests/test_identity.py` | Persistent identity (default): create/load/rotate, `0600`/`0700` permissions, ECDSA P-256 only, SAN from bind + `--public-host`, 20-year validity, on-load permission hardening |
+| `python/tests/test_server.py` | QUIC loopback: register/query/protected refusal, private-node refusal, garbage frames, pipelined frames on one stream, per-IP connection guard (cap + release), session-failure diagnostics (peer-free always-on line + opt-in debug detail) |
+| `python/tests/test_identity.py` | Persistent identity (default): create/load/rotate, `0600`/`0700` permissions, ECDSA P-256 only, key/cert consistency, stale-temp recovery, SAN from bind + `--public-host`, 20-year validity, on-load permission hardening |
 | `python/tests/test_nolog.py` | Zero-write invariant under read-only fs |
 | `python/tests/test_upnp.py` | SSDP/SOAP shapes, error downgrade, stateless no-IGD, LOCATION/source/redirect hardening |
-| `python/tests/test_cli.py` | CLI version/fail-fast/keys-fd contract |
+| `python/tests/test_cli.py` | CLI version/fail-fast/keys-fd contract (size + time bounds, fd 1/2 refused) |
 | `tests/` (repo root) | **Black-box** suite (language-neutral): spawns the real binary (`HSYNC_BOOTNODE_BIN`), speaks only `boot/1` over QUIC, gated by `HSYNC_BB_BOOTNODE=1` |
 
 ### Black-box (language-neutral) tests

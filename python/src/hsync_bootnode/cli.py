@@ -12,8 +12,10 @@ from __future__ import annotations
 import asyncio
 import errno
 import os
+import select
 import signal
 import sys
+import time
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -76,6 +78,12 @@ _IDENTITY_HELP = "Path of the persisted identity file (default: the standard sta
 # Cap for the group-keys FD payload: anything bigger means the descriptor was
 # misrouted (or is stuck open).
 KEYS_FD_MAX_BYTES = 1 << 20
+# Bounded wall-clock budget for reading that payload. Keys are a handful of
+# short lines followed by EOF, so a descriptor that stays open without ever
+# returning EOF (a pipe held open, a misrouted device) must fail fast instead of
+# hanging startup. POSIX enforces it with select(); Windows only gets the byte
+# cap above (select() does not cover pipes/files there).
+KEYS_FD_READ_TIMEOUT_SECONDS = 5.0
 
 
 def default_identity_path() -> Path:
@@ -603,13 +611,21 @@ def _load_keys(keys_fd: int | None) -> dict[str, SecretStr]:
 def _read_fd(fd: int) -> str:
     """Read all bytes from an integer file descriptor (fd 1/2 excluded upstream).
 
-    The total payload is bounded (keys are finitely many 65-char lines); a
-    descriptor that never returns EOF (misrouted stdin, a pipe held open) must
-    fail fast instead of stalling startup or growing without bound.
+    The total payload is bounded (keys are finitely many short lines) and, on
+    POSIX, the wait is bounded in time too: a descriptor that never returns EOF
+    (a misrouted stdin, a pipe held open) fails fast instead of stalling startup
+    or growing without bound. On Windows ``select`` does not cover pipes/files,
+    so there only the byte cap applies.
     """
     chunks: list[bytes] = []
     total = 0
+    deadline = time.monotonic() + KEYS_FD_READ_TIMEOUT_SECONDS
     while True:
+        if not _fd_readable_before(fd, deadline):
+            raise BootConfigError(
+                f"group keys not received within {KEYS_FD_READ_TIMEOUT_SECONDS:g}s on "
+                f"fd {fd}: the descriptor must present whole, short lines and then EOF"
+            )
         chunk = os.read(fd, 4096)
         if not chunk:
             break
@@ -621,6 +637,26 @@ def _read_fd(fd: int) -> str:
             )
         chunks.append(chunk)
     return b"".join(chunks).decode("utf-8", errors="replace")
+
+
+def _fd_readable_before(fd: int, deadline: float) -> bool:
+    """Whether ``fd`` reports readable before ``deadline`` (best effort).
+
+    A selectable descriptor (a pipe, a socket, a regular file on POSIX) is waited
+    on with ``select``; a timeout returns ``False``. On Windows, and for any
+    descriptor ``select`` cannot cover, it reports ready so the byte cap — not a
+    timer — bounds the read.
+    """
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return False
+    if os.name == "nt":
+        return True
+    try:
+        readable, _, _ = select.select([fd], [], [], remaining)
+    except (OSError, ValueError):
+        return True
+    return bool(readable)
 
 
 def _install_uvloop() -> None:

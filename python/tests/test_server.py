@@ -306,6 +306,59 @@ async def test_unexpected_session_failure_is_reported_peer_free(capsys) -> None:
     assert "51000" not in err
 
 
+@pytest.mark.asyncio
+async def test_unexpected_session_failure_detail_is_debug_only(capsys, monkeypatch) -> None:
+    """The exception message reaches the operator only on the opt-in debug sink.
+
+    The always-on error line must stay class-only (peer-free by construction);
+    ``--debug`` adds the sanitized failure detail that makes the failure
+    actionable.
+    """
+    from collections import deque
+
+    from hsync_bootnode import diagnostics
+
+    monkeypatch.setattr(diagnostics, "_dedup", {})
+    monkeypatch.setattr(diagnostics, "_dedup_order", deque())
+
+    protocol = object.__new__(BootQuicProtocol)
+    protocol.peer_addr = ("203.0.113.9", 51000)
+    protocol.boot_handler = BootHandler()
+
+    class _FailingReader:
+        async def read(self, _size: int) -> bytes:
+            raise ValueError("boom detail")
+
+    class _Writer:
+        def is_closing(self) -> bool:
+            return False
+
+        def write(self, _data: bytes) -> None:
+            pass
+
+        async def drain(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    # Debug off: only the class-only always-on line, no detail.
+    monkeypatch.setattr(diagnostics, "_enabled", False)
+    await protocol._serve_stream(_FailingReader(), _Writer())
+    plain = capsys.readouterr().err
+    assert "error: session failed exc=ValueError" in plain
+    assert "session failure detail" not in plain
+    assert "boom detail" not in plain
+
+    # Debug on: the peer-aware sink carries the sanitized message.
+    monkeypatch.setattr(diagnostics, "_enabled", True)
+    await protocol._serve_stream(_FailingReader(), _Writer())
+    debugged = capsys.readouterr().err
+    assert (
+        "debug: session failure detail exc=ValueError error=ValueError('boom detail')" in debugged
+    )
+
+
 def _register_frame(token: str | None) -> dict:
     frame = {
         "protocol_version": "boot/1",

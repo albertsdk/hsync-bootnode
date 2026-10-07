@@ -19,6 +19,7 @@ import asyncio
 import ipaddress
 import os
 import re
+import tempfile
 import time
 from collections.abc import Callable, Sequence
 from datetime import datetime
@@ -35,7 +36,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 from hsync_common import ssl_utils
 
-from hsync_bootnode.diagnostics import debug_event, error_event, warn_event
+from hsync_bootnode.diagnostics import debug_enabled, debug_event, error_event, warn_event
 from hsync_bootnode.handler import BootHandler
 from hsync_bootnode.ratelimit import TokenBucketLimiter
 
@@ -138,6 +139,25 @@ def _identity_pem(identity: NodeIdentity) -> bytes:
     )
 
 
+def _key_matches_certificate(certificate: x509.Certificate, private_key: PrivateKey) -> bool:
+    """True when ``private_key`` is the key behind ``certificate``'s public key.
+
+    Both public keys are serialized to DER SubjectPublicKeyInfo and compared, so
+    an identity file that pairs a certificate with a different key (a corrupted
+    or hand-edited file, or a half-completed rotation) is refused at load with a
+    clear error instead of failing later inside the TLS handshake.
+    """
+    cert_public = certificate.public_key().public_bytes(
+        serialization.Encoding.DER,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    file_public = private_key.public_key().public_bytes(
+        serialization.Encoding.DER,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    return cert_public == file_public
+
+
 def make_identity(host: str = "0.0.0.0", *, public_hosts: Sequence[str] = ()) -> NodeIdentity:
     """Build a fresh in-memory self-signed identity (no disk writes).
 
@@ -183,11 +203,16 @@ def rotate_identity(
     Preserves the certificate SANs (from the explicit ``host``/``public_hosts``
     arguments); the old certificate is replaced atomically. The caller must
     distribute the new fingerprint to clients (two-pin rotation window).
+
+    Rotation is the recovery for a corrupted identity, so the current file is
+    only checked *structurally* (it must be a PEM identity): a key/certificate
+    mismatch does not block it. A file that is not an identity at all is
+    refused, so a mistyped path cannot overwrite unrelated data.
     """
     identity_path = Path(path)
     if not identity_path.exists():
         raise IdentityError(f"identity file {identity_path} does not exist; nothing to rotate")
-    load_identity(identity_path)  # fail early if the current file is unusable
+    _parse_identity_file(identity_path)  # structural guard only; see docstring
     identity = _generate_identity(host, public_hosts)
     _atomic_write_identity(identity_path, _identity_pem(identity))
     return identity
@@ -201,12 +226,46 @@ def load_identity(path: str | Path) -> NodeIdentity:
     return _load_identity_file(identity_path)
 
 
+def _parse_identity_file(identity_path: Path) -> tuple[x509.Certificate, PrivateKey]:
+    """Parse a combined cert+key PEM file, checking structure only.
+
+    Verifies the file holds a PEM certificate and an unencrypted PKCS#8 ECDSA
+    private key and returns them. It does NOT check that the key matches the
+    certificate (that is :func:`_load_identity_file`'s job) and does not touch
+    permissions, so it is safe to call on a file that is about to be replaced
+    (``identity rotate``). A malformed PEM raises :class:`IdentityError`, never
+    a raw ``ValueError``.
+    """
+    try:
+        data = identity_path.read_bytes()
+    except OSError as exc:
+        raise IdentityError(f"could not read identity file {identity_path}: {exc}") from exc
+    cert_match = _CERT_PEM_RE.search(data)
+    key_match = _KEY_PEM_RE.search(data)
+    if cert_match is None or key_match is None:
+        raise IdentityError(
+            f"identity file {identity_path} must contain a certificate and a "
+            "PKCS#8 private key; delete it and restart to regenerate"
+        )
+    try:
+        cert = x509.load_pem_x509_certificate(cert_match.group(0))
+        key = serialization.load_pem_private_key(key_match.group(0), password=None)
+    except ValueError as exc:
+        raise IdentityError(
+            f"identity file {identity_path} is not a valid PEM identity: {exc}"
+        ) from exc
+    if not isinstance(key, ec.EllipticCurvePrivateKey):
+        raise IdentityError(f"identity file {identity_path} must hold an ECDSA P-256 private key")
+    return cert, key
+
+
 def _load_identity_file(identity_path: Path) -> NodeIdentity:
     """Parse a combined cert+key PEM file into a :class:`NodeIdentity`.
 
     Fails with a clear error when the file does not contain both a certificate
-    and an unencrypted PKCS#8 private key (never falls back to a fresh identity,
-    which would silently rotate the pinned fingerprint).
+    and an unencrypted PKCS#8 private key, or when the private key does not
+    match the certificate (never falls back to a fresh identity, which would
+    silently rotate the pinned fingerprint).
 
     Unattended daemons need the key readable without a passphrase, so the
     *at-rest* protection is file permission: on load, a group/world-readable
@@ -214,10 +273,6 @@ def _load_identity_file(identity_path: Path) -> NodeIdentity:
     identity is the node's impersonation anchor — a leaked key lets an attacker
     take its fingerprint over).
     """
-    try:
-        data = identity_path.read_bytes()
-    except OSError as exc:
-        raise IdentityError(f"could not read identity file {identity_path}: {exc}") from exc
     try:
         mode = identity_path.stat().st_mode & 0o777
     except OSError as exc:
@@ -236,24 +291,36 @@ def _load_identity_file(identity_path: Path) -> NodeIdentity:
                 path=str(identity_path),
                 reason=type(exc).__name__,
             )
-    cert_match = _CERT_PEM_RE.search(data)
-    key_match = _KEY_PEM_RE.search(data)
-    if cert_match is None or key_match is None:
+    cert, key = _parse_identity_file(identity_path)
+    if not _key_matches_certificate(cert, key):
         raise IdentityError(
-            f"identity file {identity_path} must contain a certificate and a "
-            "PKCS#8 private key (run 'identity rotate' to regenerate it)"
+            f"identity file {identity_path} private key does not match its certificate "
+            "(run 'identity rotate' to regenerate a consistent pair)"
         )
-    cert = x509.load_pem_x509_certificate(cert_match.group(0))
-    key = serialization.load_pem_private_key(key_match.group(0), password=None)
-    if not isinstance(key, ec.EllipticCurvePrivateKey):
-        raise IdentityError(f"identity file {identity_path} must hold an ECDSA P-256 private key")
     return NodeIdentity(certificate=cert, private_key=key)
 
 
 def _atomic_write_identity(identity_path: Path, payload: bytes) -> None:
-    """Write the identity file atomically with owner-only permissions."""
-    tmp = identity_path.with_name(f".{identity_path.name}.tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, _IDENTITY_FILE_MODE)
+    """Write the identity file atomically with owner-only permissions.
+
+    The temporary file gets a **unique** name in the target directory instead of
+    the fixed ``.{name}.tmp``: a crash (SIGKILL between create and replace)
+    can leave a temp behind, and with a fixed name that leftover made the next
+    run fail forever on ``O_EXCL``, because the ``finally`` cleanup never runs
+    after SIGKILL. A unique name means a stale temp can never block a later
+    write; the legacy fixed-name temp from older versions, if present, is
+    removed here (the current scheme never creates that exact name). ``mkstemp``
+    creates the file ``0600``; it is chmodded explicitly and handed to
+    ``os.replace``, so a reader never observes a partial identity.
+    """
+    try:
+        os.unlink(identity_path.with_name(f".{identity_path.name}.tmp"))
+    except FileNotFoundError:
+        pass
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{identity_path.name}.", suffix=".tmp", dir=identity_path.parent
+    )
+    tmp = Path(tmp_name)
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(payload)
@@ -540,6 +607,11 @@ class BootQuicProtocol(QuicConnectionProtocol):
             # peer identity. Without this the traceback would reach asyncio's
             # fallback handler in an unformatted, undocumented shape.
             error_event("session failed", exc=type(exc).__name__)
+            if debug_enabled():
+                # The opt-in peer-aware channel gets the exception detail too: it
+                # may name the failing input, which is exactly what --debug is
+                # for. The always-on line above stays class-only and peer-free.
+                debug_event("session failure detail", exc=type(exc).__name__, error=repr(exc))
             return
         finally:
             debug_event("session close", peer=f"{peer_ip}:{peer_port}")

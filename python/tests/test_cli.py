@@ -7,6 +7,7 @@ import os
 import re
 import tempfile
 
+import pytest
 from typer.testing import CliRunner
 
 from hsync_bootnode.cli import (
@@ -113,6 +114,23 @@ def test_load_keys_caps_the_fd_payload(tmp_path) -> None:
     finally:
         os.close(fd)
         os.unlink(path)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the read timeout is enforced with select() (POSIX)")
+def test_load_keys_times_out_on_a_stuck_open_fd(monkeypatch) -> None:
+    """A descriptor held open without EOF must fail fast, not hang startup.
+
+    The write end stays open and silent, so the read would block forever without
+    the bounded wait; the configuration error is raised instead.
+    """
+    monkeypatch.setattr("hsync_bootnode.cli.KEYS_FD_READ_TIMEOUT_SECONDS", 0.05)
+    read_fd, write_fd = os.pipe()
+    try:
+        with pytest.raises(BootConfigError, match="not received within"):
+            _load_keys(read_fd)
+    finally:
+        os.close(read_fd)
+        os.close(write_fd)
 
 
 def test_ttl_out_of_range_is_rejected() -> None:

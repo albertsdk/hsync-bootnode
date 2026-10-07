@@ -435,7 +435,8 @@ never gets its own dialect, its own spec or its own fixtures.
   ordering, never hold a lock across `.await`, and never persist state to disk
   (the no-log invariant applies to Rust exactly as it does to Python).
 * **Behavioural parity**: refusals (`token_required`, `rate_limited` +
-  `retry_after`), framing, STUN-echo semantics and TTL handling must be
+  `retry_after`, and `overloaded` + advisory `retry_after` for capacity
+  backpressure), framing, STUN-echo semantics and TTL handling must be
   indistinguishable from the Python implementation on the wire — that is exactly
   what the language-neutral `tests/` suite verifies.
 

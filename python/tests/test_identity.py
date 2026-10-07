@@ -140,3 +140,105 @@ def test_make_identity_dns_bind_host_uses_dns_san():
     san = node.certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
     names = {n.value for n in san}
     assert "localhost" in names
+
+
+def test_load_identity_rejects_mismatched_key(tmp_path):
+    """A certificate paired with a different private key is refused at load.
+
+    Both are valid ECDSA P-256 files, so only the key/cert consistency check can
+    catch the mismatch — otherwise the TLS handshake would fail later, opaquely.
+    """
+    cert_key = ssl_utils.generate_ecdsa_private_key()
+    other_key = ssl_utils.generate_ecdsa_private_key()
+    cert = ssl_utils.build_self_signed_certificate(
+        cert_key,
+        subject_attrs=[x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, "hsync-bootnode")],
+        san_list=[x509.DNSName("hsync-bootnode")],
+        validity_days=30,
+    )
+    path = tmp_path / "mismatched.pem"
+    path.write_bytes(
+        ssl_utils.serialize_cert_pem(cert)
+        + b"\n"
+        + ssl_utils.serialize_private_key_unencrypted(other_key)
+    )
+    with pytest.raises(IdentityError, match="does not match its certificate"):
+        load_identity(path)
+
+
+def test_load_or_create_recovers_from_a_stale_temp_file(tmp_path):
+    """A leftover temp from a crashed run must not wedge the next start.
+
+    SIGKILL between temp creation and ``os.replace`` leaves the temp behind; with
+    the old fixed ``.{name}.tmp`` scheme the next run then failed on ``O_EXCL``
+    forever. The unique-temp write must succeed and clear the legacy leftover.
+    """
+    path = tmp_path / "identity.pem"
+    stale = tmp_path / ".identity.pem.tmp"
+    stale.write_bytes(b"partial write from a killed process")
+
+    node = load_or_create_identity(path, host="127.0.0.1")
+    assert path.is_file()
+    assert len(str(node.fingerprint)) == 64
+    assert not stale.exists()  # legacy fixed-name leftover is cleared
+    assert list(tmp_path.glob(".*.tmp")) == []  # and no temp survives the write
+
+
+def test_rotate_recovers_from_a_stale_temp_file(tmp_path):
+    """Rotation also survives an orphaned temp and stays atomic."""
+    path = tmp_path / "identity.pem"
+    load_or_create_identity(path)
+    stale = tmp_path / ".identity.pem.tmp"
+    stale.write_bytes(b"junk")
+
+    rotated = rotate_identity(path, host="127.0.0.1")
+    assert str(load_identity(path).fingerprint) == str(rotated.fingerprint)
+    assert not stale.exists()
+    assert list(tmp_path.glob(".*.tmp")) == []
+
+
+def test_rotate_recovers_from_a_mismatched_key_certificate(tmp_path):
+    """Rotation is the recovery for a corrupted (key/cert mismatch) identity.
+
+    ``load_identity`` refuses the mismatched pair, but ``identity rotate`` must
+    still replace it — otherwise a corrupted file would be unrecoverable.
+    """
+    cert_key = ssl_utils.generate_ecdsa_private_key()
+    other_key = ssl_utils.generate_ecdsa_private_key()
+    cert = ssl_utils.build_self_signed_certificate(
+        cert_key,
+        subject_attrs=[x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, "hsync-bootnode")],
+        san_list=[x509.DNSName("hsync-bootnode")],
+        validity_days=30,
+    )
+    path = tmp_path / "identity.pem"
+    path.write_bytes(
+        ssl_utils.serialize_cert_pem(cert)
+        + b"\n"
+        + ssl_utils.serialize_private_key_unencrypted(other_key)
+    )
+    with pytest.raises(IdentityError, match="does not match its certificate"):
+        load_identity(path)
+    rotated = rotate_identity(path, host="127.0.0.1")
+    assert str(load_identity(path).fingerprint) == str(rotated.fingerprint)
+
+
+def test_rotate_refuses_a_non_identity_file(tmp_path):
+    """Rotate must not overwrite a file that is not a PEM identity (safety)."""
+    path = tmp_path / "not-an-identity.pem"
+    original = b"just some text, not a PEM identity\n"
+    path.write_bytes(original)
+    with pytest.raises(IdentityError, match="must contain a certificate"):
+        rotate_identity(path, host="127.0.0.1")
+    assert path.read_bytes() == original  # untouched
+
+
+def test_load_identity_rejects_a_malformed_pem(tmp_path):
+    """A corrupted PEM block raises IdentityError, not a raw ValueError traceback."""
+    path = tmp_path / "identity.pem"
+    path.write_bytes(
+        b"-----BEGIN CERTIFICATE-----\nnot!valid!base64!\n-----END CERTIFICATE-----\n"
+        b"-----BEGIN PRIVATE KEY-----\nnot!valid!base64!\n-----END PRIVATE KEY-----\n"
+    )
+    with pytest.raises(IdentityError, match="not a valid PEM identity"):
+        load_identity(path)

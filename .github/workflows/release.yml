@@ -234,6 +234,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Keyless Sigstore signing (Fulcio cert + Rekor) uses the workflow's OIDC
+      # identity; install.sh verifies against exactly that identity.
+      id-token: write
     steps:
       - uses: actions/checkout@v7
         with: { path: hsync-bootnode }
@@ -266,6 +269,7 @@ jobs:
             echo "tags=ghcr.io/albertsdk/hsync-bootnode:${TAG},ghcr.io/albertsdk/hsync-bootnode:latest" >> "$GITHUB_OUTPUT"
           fi
       - name: Build and push
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -273,6 +277,13 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.tags.outputs.tags }}
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign the image (keyless, Sigstore)
+        # Sign the digest so every tag pointing at this manifest is covered.
+        # install.sh verifies this signature before it starts the node.
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "ghcr.io/albertsdk/hsync-bootnode@${DIGEST}"
 
   release:
     needs: [build-binaries, build-packages, image]

@@ -8,6 +8,8 @@ host directory, and starts the node with Docker Compose.
 
 - <img src="assets/os/linux.svg" alt="Linux" width="16" height="16"> <img src="assets/os/apple.svg" alt="macOS" width="16" height="16"> Linux or macOS with Docker Engine or Docker Desktop running
 - Docker Compose v2 (`docker compose version`)
+- `cosign` on `PATH` — the installer verifies the container image's Sigstore
+  signature before starting it (pass `--no-verify` to install without it)
 - A UDP port reachable from the Internet (443 by default)
 
 Docker must already be installed. The installer never invokes `sudo`, opens
@@ -39,6 +41,24 @@ chmod 700 install.sh
 
 On macOS, use `shasum -a 256 install.sh` and compare the result with the
 matching line in `SHA256SUMS`.
+
+### Verify the container image
+
+Before starting the node, the installer verifies the released image's
+**Sigstore (cosign) signature** — keyless, signed by the release workflow — and
+refuses to start an image whose signature does not match. This needs `cosign`
+on `PATH`. To pin an exact image instead of a mutable tag:
+
+```bash
+./install.sh --image-digest sha256:<64-hex-digest>
+```
+
+If you cannot install `cosign`, `--no-verify` skips the check (the image is then
+trusted on the registry reference alone):
+
+```bash
+./install.sh --no-verify
+```
 
 ### Choose the host port
 
@@ -89,7 +109,8 @@ same).
 ```
 
 Run `./install.sh --help` for version, install-directory, port, `--private`,
-`--keys-file`, `--no-start` and `--dry-run` options.
+`--keys-file`, `--image-digest`, `--no-verify`, `--no-start` and `--dry-run`
+options.
 
 ## Next
 

@@ -1023,12 +1023,12 @@ def test_routing_table_cap_applies_backpressure() -> None:
     assert decoded(send(h, register_frame(cid=CID2), peer_ip="1.1.1.1", peer_port=1)) is not None
     # a third key in the same group is refused by the per-group ceiling...
     same_group = decoded(send(h, register_frame(cid="y" * 21), peer_ip="1.1.1.1", peer_port=1))
-    assert same_group is not None and same_group["error"] == "rate_limited"
+    assert same_group is not None and same_group["error"] == "overloaded"
     # ...and a new group is refused by the global ceiling (both are backpressure)
     full = decoded(
         send(h, register_frame(cid="z" * 21, group="other"), peer_ip="1.1.1.1", peer_port=1)
     )
-    assert full is not None and full["error"] == "rate_limited"
+    assert full is not None and full["error"] == "overloaded"
     # refreshing an existing key never grows the table and stays accepted
     refreshed = decoded(send(h, refresh_frame(), peer_ip="1.1.1.1", peer_port=1))
     assert refreshed is not None and refreshed["type"] == "ack"

@@ -28,14 +28,23 @@ HSYNC_BOOTNODE_IDENTITY=/var/lib/hsync-bootnode/identity.pem
 ```
 
 The container binds the unprivileged UDP port `8443`; the host maps
-`HSYNC_BOOTNODE_PORT` (default `443`) to it. Start it:
+`HSYNC_BOOTNODE_PORT` (default `443`) to it. Verify the image signature before
+starting (the released image is signed keyless by the release workflow), then
+start it:
 
 ```bash
 chmod 600 .env compose.yaml
+cosign verify \
+  --certificate-identity-regexp '^https://github\.com/albertsdk/hsync-bootnode/\.github/workflows/release\.yml@refs/(heads|tags)/.*$' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  "${HSYNC_BOOTNODE_IMAGE:-ghcr.io/albertsdk/hsync-bootnode:v1.0.0}"
 docker compose config --quiet
 docker compose pull
 docker compose up -d
 ```
+
+The [`install.sh`](getting-started-script.md) path runs this verification for
+you (and can pin an exact digest with `--image-digest`).
 
 ### Quick container (diagnostic only)
 

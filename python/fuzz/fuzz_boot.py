@@ -384,11 +384,11 @@ def assert_reply(raw: bytes, out: bytes | None) -> None:
     _check(kind in ("ack", "response"), f"reply type {kind!r}", raw)
     error = frame.get("error")
     _check(
-        error in (None, "token_required", "rate_limited"),
+        error in (None, "token_required", "rate_limited", "overloaded"),
         f"reply error {error!r} outside the documented domain",
         raw,
     )
-    if error == "rate_limited":
+    if error in ("rate_limited", "overloaded"):
         retry = frame.get("retry_after")
         _check(isinstance(retry, int) and retry >= 1, f"retry_after {retry!r}", raw)
     if kind == "response":

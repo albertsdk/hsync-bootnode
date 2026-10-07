@@ -67,7 +67,9 @@ pinned by clients. Defaults to
 or
 .IR $XDG_STATE_HOME/hsync/bootnode/identity.pem ,
 and is created on first run. The file is written with 0600 permissions in a 0700
-directory and contains no peer data.
+directory and contains no peer data. On load the key is verified against the
+certificate, so a mismatched or corrupted file is refused instead of failing
+later in the TLS handshake.
 .TP
 .B run\ \fR--ephemeral\fP
 Keep the TLS identity in memory and write no identity file (read-only
@@ -92,7 +94,9 @@ File descriptor carrying the group keys, one
 .I bucket=<hex\-key>
 line per group; blank lines and
 .I #
-comments are ignored. Read once at startup, never written to disk.
+comments are ignored. Read once at startup, never written to disk. On POSIX the
+read is bounded in time, so a descriptor held open without EOF fails fast with a
+configuration error instead of hanging startup.
 .TP
 .B run\ \fR--private\fP
 Private node: every frame must carry a valid

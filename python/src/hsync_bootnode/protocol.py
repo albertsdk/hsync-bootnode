@@ -32,6 +32,7 @@ __all__ = [
     "PROTOCOL_VERSION_BOOT",
     "STARTUP_TIME_MAX",
     "BootAck",
+    "BootError",
     "BootFrame",
     "BootLeave",
     "BootPeer",
@@ -67,6 +68,12 @@ CAPACITY_MAX = 32
 # below reuses the same tokens the mDNS TXT record carries so a bootnode-relayed
 # peer ranks exactly like a LAN-discovered one.
 SyncDirection = Literal["bidirectional", "upload-only", "download-only"]
+
+# Uniform refusal codes on a ``response``: ``token_required`` (authorization),
+# ``rate_limited`` (per-IP/per-(IP,bucket) rate limit — ``retry_after`` is the
+# bucket refill) and ``overloaded`` (the node is at its host-derived routing-table
+# ceiling; backpressure, not a client abuse signal — ``retry_after`` is advisory).
+BootError = Literal["token_required", "rate_limited", "overloaded"]
 
 # Upper bound for the advisory ``connected`` count, like ``startup_time`` kept
 # inside the exactly-representable integer range of a JSON number: a wire value
@@ -265,7 +272,7 @@ class BootResponse(_BootFrame):
     peers: list[BootPeer] = Field(default_factory=list)
     count: int = Field(ge=0)
     ttl: int = Field(ge=1, le=3600)
-    error: Literal["token_required", "rate_limited"] | None = None
+    error: BootError | None = None
     retry_after: int | None = Field(default=None, ge=1)
 
 

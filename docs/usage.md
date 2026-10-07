@@ -50,7 +50,9 @@ hsync-bootnode identity show
 Regenerates the persisted key+cert and prints the new fingerprint, which the
 operator distributes to clients. `--identity PATH` is optional and defaults to
 the standard state path; the old fingerprint stays accepted by clients during the
-rotation window (two-pin window).
+rotation window (two-pin window). Rotation is also the recovery for a corrupted
+identity whose key no longer matches its certificate; a file that is not a valid
+PEM identity at all is refused (delete it and restart to regenerate).
 
 ```bash
 hsync-bootnode identity rotate --public-host boot.example.com
@@ -87,9 +89,9 @@ Prints the version and the protocol, e.g.
 Group keys provision **protected buckets**. The process reads them ONCE
 at startup from the given file descriptor — the key payload never touches a
 path inside the node's sandbox and is never written to disk. `stdout`/`stderr`
-(descriptors 1 and 2) are refused and the payload is capped (1 MiB): a
-misrouted or stuck-open descriptor fails fast with a configuration error
-instead of stalling startup.
+(descriptors 1 and 2) are refused, the payload is capped (1 MiB) and, on POSIX,
+the read is bounded in time (about five seconds): a misrouted or stuck-open
+descriptor fails fast with a configuration error instead of stalling startup.
 
 Line format (comments and blank lines are ignored):
 
@@ -295,8 +297,9 @@ can rely on.
   refusals are always answered (`rate_limited` + `retry_after`); the silent
   malformed-frame budget answers nothing (there is no oracle to hand out). The
   routing table and the limiter tables have host-derived ceilings, globally and
-  per bucket/group, so a registration flood is answered with backpressure
-  instead of exhausting RAM or saturating a single bucket's sample. Every
+  per bucket/group, so a registration flood is answered with `overloaded`
+  backpressure (`retry_after` advisory) instead of exhausting RAM or saturating
+  a single bucket's sample. Every
   `boot/1` frame rejects unknown fields, and the deployed units are
   sandboxed (systemd `DynamicUser`, syscall filter).
 - **UPnP is opt-in and hardened**: off by default (`--upnp` enables it). SSDP
@@ -337,8 +340,10 @@ hsync-bootnode run --identity /var/lib/hsync-bootnode/identity.pem \
 
 Each name/IP clients dial should be added with `--public-host` (repeatable) so a
 TLS client that validates the hostname — not only the fingerprint — accepts the
-handshake. The file is written with `0600` permissions in a `0700` directory.
-Read the fingerprint and distribute it to clients out of band:
+handshake. The file is written with `0600` permissions in a `0700` directory,
+and on load the node verifies that the private key matches the certificate,
+refusing a mismatched or corrupted file instead of failing later in the TLS
+handshake. Read the fingerprint and distribute it to clients out of band:
 
 ```bash
 hsync-bootnode identity show
@@ -370,11 +375,12 @@ timestamp, the emitting process, the level and the message:
 **Always on — node health (`warn` / `error`).** Operational events the operator
 must see without any flag: a UPnP mapping that could not be created, an
 unwritable `--ready-file`, an unexpected failure inside one QUIC session (which
-the listener isolates and keeps serving). This channel is **peer-free by
-construction**: it accepts only non-identifying fields, and passing a peer field
-is a programming error that raises rather than logging. Repeated identical errors
-are throttled and reported as `suppressed=<n>`, so a failing path cannot flood
-the log.
+the listener isolates and keeps serving; with `--debug` that same failure also
+carries the exception message on the peer-aware debug channel). This channel is
+**peer-free by construction**: it accepts only non-identifying fields, and
+passing a peer field is a programming error that raises rather than logging.
+Repeated identical errors are throttled and reported as `suppressed=<n>`, so a
+failing path cannot flood the log.
 
 **Opt-in — the full operation log (`debug`).** `--debug` (or
 `HSYNC_BOOTNODE_DEBUG=1`) adds the whole request life cycle on stderr —
@@ -427,7 +433,8 @@ Edit the executable paths inside each unit to the location of your venv.
 | `error: cannot bind the QUIC/UDP listener … — address already in use` | Another process (or another node instance) is using that UDP port: stop it, or pick a free port with `--port`. |
 | `error: cannot bind the QUIC/UDP listener … — the address is not available` | `--host` is not a local interface address: use a local IP, or `0.0.0.0` to listen on all of them. |
 | Client gets `token_required` | The bucket is gated (declared `--protected-bucket`, or every bucket on a private node) and the client's derived token is missing/wrong — check the group key on the client side. |
-| Client gets `rate_limited` | A limit was exceeded (per-IP ~10 req/s admission, 5/min failed tokens, 5/min queries per (IP, bucket), 20/min aggregate queries per IP, 10/min registers per (IP, bucket), or the node's host-derived table ceiling); wait for `retry_after` seconds. |
+| Client gets `rate_limited` | A per-source limit was exceeded (per-IP ~10 req/s admission, 5/min failed tokens, 5/min queries per (IP, bucket), 20/min aggregate queries per IP, 10/min registers per (IP, bucket)); wait for `retry_after` seconds — this counts against the source. |
+| Client gets `overloaded` | The node is at its host-derived routing-table ceiling (capacity backpressure, not a client abuse signal); retry after `retry_after` seconds, or prefer another bootnode. It is not counted against the source. |
 | No UPnP mapping | UPnP is off by default; with `--upnp` a router without IGD or a refused mapping keeps the node running stateless and reports it once on the always-on channel (`warn: upnp no igd on lan port=…` or `warn: upnp mapping unavailable reason=…`); publish a public UDP endpoint in another way or leave UPnP disabled. |
 | `error: readiness file not writable` (exit code 4) | `--ready-file` points at a path the node cannot create (missing parent directory, no permission, or a stale file that `O_EXCL` refuses to overwrite): create/remove the path or point the flag elsewhere. |
 | `warn: upnp mapping unavailable` / `error: session failed` in the logs | Always-on diagnostics, not peer data: the node degraded (no UPnP mapping) or one session failed unexpectedly and was isolated. Both are emitted without `--debug` and never contain a peer identity. |

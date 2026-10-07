@@ -28,6 +28,7 @@ from hsync_bootnode.protocol import (
     BUCKET_TOKEN_LEN,
     PROTOCOL_VERSION_BOOT,
     BootAck,
+    BootError,
     BootLeave,
     BootPeer,
     BootQuery,
@@ -344,9 +345,10 @@ class BootHandler:
         record.touch(self.ttl)
         if not self.routing.upsert(record):
             # Bounded table: reclaim expired entries once, then signal
-            # backpressure instead of growing RAM without limit. Pass ``now`` so
-            # this request-path sweep stays record-only (limiter eviction is the
-            # background sweep's job).
+            # backpressure with ``overloaded`` (the node is at its host-derived
+            # ceiling — not a client abuse signal) instead of growing RAM without
+            # limit. Pass ``now`` so this request-path sweep stays record-only
+            # (limiter eviction is the background sweep's job).
             self.prune(time.monotonic(), max_remove=REQUEST_PATH_PRUNE_BUDGET)
             if not self.routing.upsert(record):
                 if debug_enabled():
@@ -355,9 +357,10 @@ class BootHandler:
                         cid=model.cid,
                         bucket=model.bucket,
                         peer=f"{peer_ip}:{peer_port}",
+                        error="overloaded",
                     )
                 return self._response(
-                    peers=[], error="rate_limited", retry_after=max(1, int(self.ttl))
+                    peers=[], error="overloaded", retry_after=max(1, int(self.ttl))
                 )
         if debug_enabled():
             debug_event(
@@ -626,7 +629,7 @@ class BootHandler:
         self,
         *,
         peers: list[BootPeer],
-        error: Literal["token_required", "rate_limited"] | None,
+        error: BootError | None,
         retry_after: int | None,
     ) -> bytes:
         return BOOT_RESPONSE_ADAPTER.dump_json(

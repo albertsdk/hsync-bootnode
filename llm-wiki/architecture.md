@@ -49,7 +49,7 @@ UDP :443
 1. `server.py` reads one newline-terminated frame (≤ 8 KiB, checked on the frame
    length itself so an oversized frame always closes the stream); a frame longer
    than 8 KiB closes the session silently (no-log).
-2. `BootHandler.handle` (`python/src/hsync_bootnode/handler.py:226`) first consults
+2. `BootHandler.handle` (`python/src/hsync_bootnode/handler.py::BootHandler.handle`) first consults
    the malformed-frame budget: an IP that has exhausted it is dropped before the
    parser runs, so a parse flood costs no event-loop CPU. Otherwise the raw frame
    is validated in a single pass via the `BootFrame` discriminated union

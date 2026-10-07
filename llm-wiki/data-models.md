@@ -10,23 +10,23 @@ attributes; do not fork the shapes here.
 ## Common header
 
 Every frame carries `{protocol_version, type, ...}`. `_BootFrame`
-(`python/src/hsync_bootnode/protocol.py:104`) is the shared base: mandatory `type`
+(`python/src/hsync_bootnode/protocol.py::_BootFrame`) is the shared base: mandatory `type`
 discriminator plus `protocol_version` pinned to `boot/1`
-(`PROTOCOL_VERSION_BOOT`, `protocol.py:45`). The server routes on `type` and never
+(`PROTOCOL_VERSION_BOOT`, `python/src/hsync_bootnode/protocol.py::PROTOCOL_VERSION_BOOT`). The server routes on `type` and never
 guesses the frame kind from the payload shape.
 
 ## Frame inventory
 
 | Frame | Direction | Model | Fields (beyond the header) |
 |---|---|---|---|
-| `register` | client → server | `BootRegister` (`protocol.py:125`) | `cid`, `bucket`, `group?`, `bucket_token?`, `cert_fp`, `version`, `capacity`, `endpoints[]`, `connected?`, `server_ready?`, `force_master?`, `never_master?`, `startup_time?`, `sync_direction?` |
-| `refresh` | client → server | `BootRefresh` (`protocol.py:159`) | `cid`, `bucket`, `group?`, `bucket_token?`, `connected?` |
-| `leave` | client → server | `BootLeave` (`protocol.py:170`) | `cid`, `bucket`, `bucket_token?` |
-| `query` | client → server | `BootQuery` (`protocol.py:184`) | `bucket`, `group?`, `bucket_token?`, `limit` (1–50, default 20) |
-| `ack` | server → client | `BootAck` (`protocol.py:194`) | `observed_endpoint`, `ttl`, `server_time`, `retry_after?` |
-| `response` | server → client | `BootResponse` (`protocol.py:238`) | `peers[]`, `count`, `ttl`, `error?` (`token_required`/`rate_limited`), `retry_after?` |
+| `register` | client → server | `BootRegister` (`python/src/hsync_bootnode/protocol.py::BootRegister`) | `cid`, `bucket`, `group?`, `bucket_token?`, `cert_fp`, `version`, `capacity`, `endpoints[]`, `connected?`, `server_ready?`, `force_master?`, `never_master?`, `startup_time?`, `sync_direction?` |
+| `refresh` | client → server | `BootRefresh` (`python/src/hsync_bootnode/protocol.py::BootRefresh`) | `cid`, `bucket`, `group?`, `bucket_token?`, `connected?` |
+| `leave` | client → server | `BootLeave` (`python/src/hsync_bootnode/protocol.py::BootLeave`) | `cid`, `bucket`, `bucket_token?` |
+| `query` | client → server | `BootQuery` (`python/src/hsync_bootnode/protocol.py::BootQuery`) | `bucket`, `group?`, `bucket_token?`, `limit` (1–50, default 20) |
+| `ack` | server → client | `BootAck` (`python/src/hsync_bootnode/protocol.py::BootAck`) | `observed_endpoint`, `ttl`, `server_time`, `retry_after?` |
+| `response` | server → client | `BootResponse` (`python/src/hsync_bootnode/protocol.py::BootResponse`) | `peers[]`, `count`, `ttl`, `error?` (`token_required`/`rate_limited`), `retry_after?` |
 
-`capacity` (domain `0..32`, default `0`; `CAPACITY_MAX` at `protocol.py:63`) is the
+`capacity` (domain `0..32`, default `0`; `CAPACITY_MAX` at `python/src/hsync_bootnode/protocol.py::CAPACITY_MAX`) is the
 **advisory service-capacity hint**: the number of concurrent peer-download reads the
 peer declares it can serve (`0` = not a seeder). The handler copies it from
 `register` onto the record and relays it in every `query` peer, but it is **not
@@ -40,8 +40,8 @@ record carries (SSOT: `hsync-common` `protocol.p2p`/`protocol.pairing`), copied 
 `register` onto the record and echoed on every `query` peer so a bootnode-discovered
 peer ranks in the client's master election exactly like an mDNS-discovered one.
 Defaults when a peer advertises none: `false`, `false`, `false`, `0.0` (unknown;
-bounded by `STARTUP_TIME_MAX`, `protocol.py:71`) and `bidirectional`
-(`SyncDirection`, `protocol.py:69`). The node never interprets them, never orders the
+bounded by `STARTUP_TIME_MAX`, `python/src/hsync_bootnode/protocol.py::STARTUP_TIME_MAX`) and `bidirectional`
+(`SyncDirection`, `python/src/hsync_bootnode/protocol.py::SyncDirection`). The node never interprets them, never orders the
 sample by them, and they are **not authenticated** (the data plane authenticates
 identity by certificate pinning). Like `capacity`, a changed value requires a new
 `register` — `refresh` never mutates them.
@@ -64,14 +64,14 @@ The relayed list is advisory and unauthenticated, like the other peer fields.
 
 | Model | Owner | Fields |
 |---|---|---|
-| `Endpoint` (`protocol.py:96`) | `BootRegister.endpoints[]` | `proto` (`tcp`/`udp`), `host`, `port` |
-| `ObservedEndpoint` (`protocol.py:106`) | `BootAck.observed_endpoint` | `proto`, `ip`, `port` (STUN-echo of the source) |
-| `BootPeer` (`protocol.py:204`) | `BootResponse.peers[]` | `cid`, `endpoints[]`, `cert_fp`, `bucket`, `group?`, `version`, `capacity`, `reachable`, `server_ready`, `force_master`, `never_master`, `startup_time`, `sync_direction` |
+| `Endpoint` (`python/src/hsync_bootnode/protocol.py::Endpoint`) | `BootRegister.endpoints[]` | `proto` (`tcp`/`udp`), `host`, `port` |
+| `ObservedEndpoint` (`python/src/hsync_bootnode/protocol.py::ObservedEndpoint`) | `BootAck.observed_endpoint` | `proto`, `ip`, `port` (STUN-echo of the source) |
+| `BootPeer` (`python/src/hsync_bootnode/protocol.py::BootPeer`) | `BootResponse.peers[]` | `cid`, `endpoints[]`, `cert_fp`, `bucket`, `group?`, `version`, `capacity`, `reachable`, `server_ready`, `force_master`, `never_master`, `startup_time`, `sync_direction` |
 
 The client→server frames are dispatched in one pass by the discriminated union
 `BootFrame = Annotated[BootRegister | BootRefresh | BootLeave | BootQuery,
-Field(discriminator="type")]` (`protocol.py:251`) and validated from raw bytes via
-`BOOT_FRAME_ADAPTER` (`protocol.py:256`, a `TypeAdapter[BootFrame]`). The
+Field(discriminator="type")]` (`python/src/hsync_bootnode/protocol.py::BootFrame`) and validated from raw bytes via
+`BOOT_FRAME_ADAPTER` (`python/src/hsync_bootnode/protocol.py::BOOT_FRAME_ADAPTER`, a `TypeAdapter[BootFrame]`). The
 server→client frames (`BootAck`/`BootResponse`/`BootPeer`) are deliberately
 excluded from the union: they are never validated on the input path.
 
@@ -79,7 +79,7 @@ excluded from the union: they are never validated on the input path.
 
 | Constant | Location | Rule |
 |---|---|---|
-| `CID_PATTERN` | imported from `hsync_common.models.event` (`protocol.py:17`) and re-exported | `^[A-Za-z0-9]{21}$` — **SSOT import** (hsync-common), pinned to the boot/1 spec value by `test_cid_pattern_matches_boot1_spec` |
+| `CID_PATTERN` | imported from `hsync_common.models.event` (`hsync_common/models/event.py::CID_PATTERN`) and re-exported | `^[A-Za-z0-9]{21}$` — **SSOT import** (hsync-common), pinned to the boot/1 spec value by `test_cid_pattern_matches_boot1_spec` |
 | `BucketName` | `protocol.py` | canonical HSYNC bucket name via `hsync_common.path_validation.is_valid_bucket_name` (`[A-Za-z0-9]` with `-`/`_` in the middle, 1..63) — applied to every wire `bucket` |
 | `BucketToken` | `protocol.py` | 64 lowercase hex characters (grammar `_BUCKET_TOKEN_RE`, `BUCKET_TOKEN_LEN`) — enforced as a wire-model validator (decision #46), so a token outside the key-derivation domain is an invalid frame, not a failed-token attempt |
 | `BUCKET_TOKEN_LEN` | `protocol.py` | 64 (lowercase hex = `hex(32 bytes)`), derived as `HMAC-SHA256(key, "boot/1" || bucket)[:32]` |
@@ -92,8 +92,8 @@ excluded from the union: they are never validated on the input path.
 
 | Structure | Location | Role |
 |---|---|---|
-| `PeerRecord` | `python/src/hsync_bootnode/routing.py:35` | RAM-only routing entry keyed `(cid, bucket, group)`; carries `capacity` (advisory hint), `expires_at` (TTL) and a lazily-built materialized wire projection `wire` (`BootPeer | None`) |
-| `RoutingTable` | `python/src/hsync_bootnode/routing.py:102` | In-memory registry (`upsert`→`bool`/`remove`/`get`/`prune`/`sample`/`count`/`source_ips`); never persisted. `upsert` returns `False` above a host-derived `max_records` ceiling or a `max_records_per_group` ceiling (so one bucket cannot dominate its sample), so the handler can apply backpressure. Backed by three secondary indexes — `_by_group` (bucket+group → keys, O(1) `sample`), `_by_cid` (cid+bucket → keys, O(1) `remove`), `_pos` (key → list position for O(1) swap-remove). `prune` rebuilds the indexes in bulk when ≥ 50% of records expire, else removes incrementally. |
+| `PeerRecord` | `python/src/hsync_bootnode/routing.py::PeerRecord` | RAM-only routing entry keyed `(cid, bucket, group)`; carries `capacity` (advisory hint), `expires_at` (TTL) and a lazily-built materialized wire projection `wire` (`BootPeer | None`) |
+| `RoutingTable` | `python/src/hsync_bootnode/routing.py::RoutingTable` | In-memory registry (`upsert`→`bool`/`remove`/`get`/`prune`/`sample`/`count`/`source_ips`); never persisted. `upsert` returns `False` above a host-derived `max_records` ceiling or a `max_records_per_group` ceiling (so one bucket cannot dominate its sample), so the handler can apply backpressure. Backed by three secondary indexes — `_by_group` (bucket+group → keys, O(1) `sample`), `_by_cid` (cid+bucket → keys, O(1) `remove`), `_pos` (key → list position for O(1) swap-remove). `prune` rebuilds the indexes in bulk when ≥ 50% of records expire, else removes incrementally. |
 | `TokenBucketLimiter` | `hsync_common/ratelimit.py` (re-exported at `python/src/hsync_bootnode/ratelimit.py`) | Shared in-memory token bucket SSOT (also used by `hsync-client`) for the per-IP/per-(IP, bucket) rate limits; `has_tokens` is a non-consuming peek used by the pre-parse malformed-frame gate; `max_keys` evicts the least-recently-used key on insert and `evict_stale` drops fully-refilled buckets, bounding key-state growth |
 | `ResourceLimits` | `python/src/hsync_bootnode/resources.py` | Host-derived ceilings (`max_peer_records`, `max_records_per_group`, `max_limiter_keys`, `max_active_connections`, `max_active_connections_per_ip`) from available RAM (the process's own cgroup limit, then `MemAvailable`, then sysconf) and CPU count; `detect()` is read-only/best-effort with a conservative fallback |
 | `ConnectionGuard` | `python/src/hsync_bootnode/server.py` | Per-IP handshake budget + per-IP and process-wide open-connection caps, sized by `ResourceLimits`; checked before any handshake work, released on `ConnectionTerminated` |
@@ -108,7 +108,7 @@ leave           ──► BootLeave                    ──► (no reply frame
 ```
 
 `BootPeer` is projected from a `PeerRecord` (handler `_to_peer`,
-`python/src/hsync_bootnode/handler.py:659`): the peer's advertised `endpoints[0]` is
+`python/src/hsync_bootnode/handler.py::_to_peer`): the peer's advertised `endpoints[0]` is
 preferred, falling back to the observed source endpoint. The projection is
 materialized once on `PeerRecord.wire` and reused on later samples — valid for the
 record's lifetime because `register` always builds a fresh `PeerRecord` and

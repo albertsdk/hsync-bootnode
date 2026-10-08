@@ -86,7 +86,8 @@ excluded from the union: they are never validated on the input path.
 | `BucketProto` | `protocol.py` | `Literal["tcp", "udp"]` |
 | `CAPACITY_MAX` | `protocol.py` | 32 — upper bound of the advisory `capacity` hint (`0` = not a seeder); mirrors `serve_slots` |
 | `CONNECTED_MAX` | `protocol.py` | `2^53` — upper bound of the advisory `connected` count (like `STARTUP_TIME_MAX`: inside the exactly-representable integer range of a JSON number) |
-| `BOOT_DEFAULT_PORT` | imported from `hsync_common.constants` (`cli.py`, `_resolve_listener` effective default) | `443` — default UDP listener port (spec §Transport); single SSOT shared with `hsync-client` |
+| `BOOT_DEFAULT_PORT` | imported from `hsync_common.constants` (bootnode `cli.py` default; client bare-host default) | `443` — default UDP listener port (spec §Transport); single SSOT shared with `hsync-client` |
+| `BOOT_PORT_SET` | imported from `hsync_common.constants` (bootnode `--ports` recommended value; client `HSYNC_BOOTNODE_PORTS` fallback) | `(443, 53)` — ordered recommended reachability set (canonical QUIC then DNS); see decision 57 |
 
 ## Runtime (non-wire) structures
 

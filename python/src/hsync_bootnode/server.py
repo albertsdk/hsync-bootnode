@@ -57,6 +57,7 @@ __all__ = [
     "make_identity",
     "rotate_identity",
     "start_server",
+    "start_servers",
 ]
 
 # ALPN protocol advertised on the QUIC handshake (client and server must agree).
@@ -637,6 +638,59 @@ def _protocol_factory(
     return _create
 
 
+async def start_servers(
+    host: str,
+    ports: Sequence[int],
+    handler: BootHandler,
+    *,
+    retry: bool = True,
+    identity: NodeIdentity | None = None,
+    idle_timeout: float = BOOT_IDLE_TIMEOUT,
+    connection_guard: ConnectionGuard | None = None,
+) -> tuple[list[Any], list[int], NodeIdentity, list[tuple[int, BaseException]]]:
+    """Bind one QUIC/UDP listener per port, all sharing ONE process-wide
+    ``handler``, TLS identity and ``connection_guard``.
+
+    A single routing table backs every port (decision #21: state sharding would
+    break discovery — a peer registered via one port must be visible to a query
+    via another). Binding is **best-effort**: a port that cannot bind (address
+    in use, permission) is skipped and reported in ``failures`` so the node
+    still starts on the ports that are free (e.g. 443 when 53 is taken by a
+    local resolver). Raises the first ``OSError`` if **no** port could be bound.
+    """
+    if not ports:
+        raise ValueError("start_servers requires at least one port")
+    identity = identity or make_identity(host)
+    config = build_quic_configuration(identity, idle_timeout=idle_timeout)
+    factory = _protocol_factory(handler, connection_guard)
+
+    servers: list[Any] = []
+    bound_ports: list[int] = []
+    failures: list[tuple[int, BaseException]] = []
+    first_error: BaseException | None = None
+    for port in ports:
+        try:
+            server = await serve(
+                host,
+                port,
+                configuration=config,
+                retry=retry,
+                create_protocol=factory,
+            )
+        except OSError as exc:
+            failures.append((port, exc))
+            if first_error is None:
+                first_error = exc
+            continue
+        transport = server._transport
+        sockname = transport.get_extra_info("sockname") if transport is not None else None
+        bound_ports.append(int(sockname[1]) if sockname is not None else int(port))
+        servers.append(server)
+    if not servers and first_error is not None:
+        raise first_error
+    return servers, bound_ports, identity, failures
+
+
 async def start_server(
     host: str,
     port: int,
@@ -647,28 +701,24 @@ async def start_server(
     idle_timeout: float = BOOT_IDLE_TIMEOUT,
     connection_guard: ConnectionGuard | None = None,
 ) -> tuple[Any, int, NodeIdentity]:
-    """Start the QUIC/UDP listener and return ``(server, bound_port, identity)``.
+    """Start a single QUIC/UDP listener and return ``(server, bound_port, identity)``.
 
-    ``retry`` enables QUIC RETRY packets + address-validation tokens before any
-    connection state is allocated (spec: mandatory, anti-amplification).
-    ``connection_guard`` adds the node-side per-IP handshake budget and
-    active-connection cap (production: always provided when rate limits are
-    enabled; tests may pass ``None`` for an unguarded listener).
+    One-port wrapper over :func:`start_servers` (kept for callers/tests that bind
+    a single port). ``retry`` enables QUIC RETRY packets + address-validation
+    tokens before any connection state is allocated (spec: mandatory,
+    anti-amplification). ``connection_guard`` adds the node-side per-IP handshake
+    budget and active-connection cap.
     """
-    identity = identity or make_identity(host)
-    config = build_quic_configuration(identity, idle_timeout=idle_timeout)
-
-    server = await serve(
+    servers, bound_ports, identity, _ = await start_servers(
         host,
-        port,
-        configuration=config,
+        [port],
+        handler,
         retry=retry,
-        create_protocol=_protocol_factory(handler, connection_guard),
+        identity=identity,
+        idle_timeout=idle_timeout,
+        connection_guard=connection_guard,
     )
-    transport = server._transport
-    sockname = transport.get_extra_info("sockname") if transport is not None else None
-    bound_port = int(sockname[1]) if sockname is not None else int(port)
-    return server, bound_port, identity
+    return servers[0], bound_ports[0], identity
 
 
 class _OversizedFrame(Exception):

@@ -113,6 +113,21 @@ mismatch). If the client still waits, it means the node is reachable but no peer
 is registered in the bucket yet — nothing is wrong: see the client's
 [FAQ — p2p Mode](https://github.com/albertsdk/hsync-client/blob/main/docs/faq-p2p.md).
 
+## Some clients cannot reach my node even though it is up
+
+If only *some* clients fail while others work, the node is reachable but
+those clients' network **blocks outbound UDP 443**. Give them another door by
+listening on a second inbound port — 443 **and** 53, sharing one routing
+table, with both open in the host firewall:
+
+```bash
+hsync-bootnode run --ports 443,53
+```
+
+With a packaged install, set the same option through a unit/Compose override
+(see the Debian, Windows or Docker guide); for the full semantics see
+`--ports` in [usage.md](usage.md#run-options).
+
 ## Where can I read the pin the client stored?
 
 On the client host, in `bootnode_known_hosts.json` under `$XDG_STATE_HOME/hsync/`

@@ -23,8 +23,8 @@ from typing import NoReturn
 
 import typer
 from hsync_common import ssl_utils
-from hsync_common.constants import BOOT_DEFAULT_PORT
-from hsync_common.endpoint import parse_host_port
+from hsync_common.constants import BOOT_DEFAULT_PORT, BOOT_PORT_SET
+from hsync_common.endpoint import parse_host_port, parse_port_list
 from pydantic import SecretStr
 
 from hsync_bootnode import __version__
@@ -38,7 +38,7 @@ from hsync_bootnode.server import (
     load_identity,
     load_or_create_identity,
     rotate_identity,
-    start_server,
+    start_servers,
 )
 from hsync_bootnode.upnp import UpnpManager
 
@@ -132,29 +132,53 @@ def main(
         raise typer.Exit()
 
 
-def _resolve_listener(host: str | None, port: int | None) -> tuple[str, int]:
-    """Resolve the listener bind address/port from ``--host``/``--port``.
+def _parse_port_list(raw: str) -> list[int]:
+    """Parse a ``--ports`` value (comma-separated UDP ports, order preserved).
 
-    ``--host`` may carry a port (``HOST[:PORT]``); that port and ``--port`` are
-    mutually exclusive. Defaults: ``0.0.0.0`` and ``BOOT_DEFAULT_PORT``.
+    Thin strict wrapper over the shared ``hsync_common.endpoint.parse_port_list``
+    SSOT, which the client reuses in its lenient ``HSYNC_BOOTNODE_PORTS`` policy.
+    """
+    try:
+        ports = parse_port_list(raw, strict=True)
+    except ValueError as exc:
+        raise typer.BadParameter(f"--ports {exc}") from exc
+    if not ports:
+        raise typer.BadParameter("--ports requires at least one port")
+    return list(ports)
+
+
+def _resolve_listeners(
+    host: str | None, port: int | None, ports: str | None
+) -> tuple[str, list[int]]:
+    """Resolve the bind address and ordered UDP port set.
+
+    ``--ports`` (multi, comma-separated) is mutually exclusive with ``--port``
+    and with a port carried in ``--host HOST:PORT``. Otherwise the single value
+    comes from ``--port`` (or the host port) and defaults to
+    ``BOOT_DEFAULT_PORT``. ``--host`` may carry a port; the returned host is
+    always unbracketed.
     """
     resolved_host = "0.0.0.0"
-    resolved_port = BOOT_DEFAULT_PORT
+    host_port: int | None = None
     if host is not None:
         try:
             hp = parse_host_port(host)
         except ValueError as exc:
             raise typer.BadParameter(str(exc)) from exc
         resolved_host = hp.host
-        if hp.port is not None:
-            if port is not None:
-                raise typer.BadParameter(
-                    "specify the port either in --host HOST:PORT or with --port, not both"
-                )
-            resolved_port = hp.port
-    if port is not None:
-        resolved_port = port
-    return resolved_host, resolved_port
+        host_port = hp.port
+    if ports is not None:
+        if port is not None or host_port is not None:
+            raise typer.BadParameter(
+                "--ports is mutually exclusive with --port and a port in --host HOST:PORT"
+            )
+        return resolved_host, _parse_port_list(ports)
+    if port is not None and host_port is not None:
+        raise typer.BadParameter(
+            "specify the port either in --host HOST:PORT or with --port, not both"
+        )
+    single = port if port is not None else host_port
+    return resolved_host, [single if single is not None else BOOT_DEFAULT_PORT]
 
 
 @app.command()
@@ -176,6 +200,21 @@ def run(
         help=(
             f"UDP port (default {BOOT_DEFAULT_PORT} for QUIC/HTTP3). "
             "Mutually exclusive with a port in --host HOST:PORT. "
+            "Use --ports to listen on several UDP ports at once "
+            "(client-egress fallback). "
+            "Ports below 1024 need root or CAP_NET_BIND_SERVICE."
+        ),
+    ),
+    ports: str | None = typer.Option(
+        None,
+        "--ports",
+        metavar="P1,P2,...",
+        help=(
+            "Comma-separated UDP ports to listen on (multi-port; one process, one "
+            "routing table, so a peer on one port is visible to queries on another). "
+            "Mutually exclusive with --port and a port in --host HOST:PORT. "
+            f"Recommended reachability set: {','.join(map(str, BOOT_PORT_SET))} "
+            "(443 QUIC + 53 DNS; freeing the local resolver is usually required for 53). "
             "Ports below 1024 need root or CAP_NET_BIND_SERVICE."
         ),
     ),
@@ -198,7 +237,9 @@ def run(
         help="Require a valid bucket_token on every frame (private node). Env: HSYNC_BOOTNODE_PRIVATE=1.",
     ),
     upnp: bool = typer.Option(
-        False, "--upnp", help="Map the QUIC port with UPnP (opt-in; off by default)."
+        False,
+        "--upnp",
+        help="Map every bound QUIC/UDP port with UPnP (opt-in; off by default).",
     ),
     ttl: int = typer.Option(
         60,
@@ -259,8 +300,8 @@ def run(
         ),
     ),
 ) -> None:
-    """Run the bootstrap node: single QUIC/UDP listener (boot/1)."""
-    resolved_host, resolved_port = _resolve_listener(host, port)
+    """Run the bootstrap node: one or more QUIC/UDP listeners (boot/1)."""
+    resolved_host, resolved_ports = _resolve_listeners(host, port, ports)
     limits = ResourceLimits.detect()
     try:
         keys = _load_keys(keys_fd)
@@ -293,9 +334,15 @@ def run(
         identity_line = f"  identity  : {identity_path_display} (persisted)"
     else:
         identity_line = "  identity  : in-memory (ephemeral; clients cannot pin the fingerprint)"
+    # Single-port startup: hint at the multi-port option that makes the node
+    # reachable from a client network whose egress firewall blocks UDP 443.
+    multi_hint = (
+        " — add --ports 443,53 for client-egress reachability" if len(resolved_ports) == 1 else ""
+    )
     banner = (
         f"hsync-bootnode {__version__} — boot/1, no-log, in-memory\n"
-        f"  listener : {resolved_host}:{resolved_port} (QUIC/UDP, TLS 1.3, RETRY+address-validation)\n"
+        f"  listener : {resolved_host}:{','.join(map(str, resolved_ports))} "
+        f"(QUIC/UDP, TLS 1.3, RETRY+address-validation){multi_hint}\n"
         f"{identity_line}\n"
         f"  protected buckets: {', '.join(protected_bucket) or '(none)'}\n"
         f"  mode      : {'private (every frame needs a bucket_token)' if private else 'open'}\n"
@@ -320,7 +367,7 @@ def run(
         asyncio.run(
             _async_main(
                 resolved_host,
-                resolved_port,
+                resolved_ports,
                 handler,
                 upnp,
                 ready_file,
@@ -488,7 +535,7 @@ def _ready_file_error_message(exc: ReadyFileError) -> str:
 
 async def _async_main(
     host: str,
-    port: int,
+    ports: list[int],
     handler: BootHandler,
     upnp: bool,
     ready_file: str | None = None,
@@ -497,32 +544,43 @@ async def _async_main(
     enforce_rate_limits: bool = True,
     limits: ResourceLimits | None = None,
 ) -> None:
-    try:
-        # The connection guard is the transport-level twin of the frame rate
-        # limits: per-IP handshake budget, per-IP cap and a process-wide cap on
-        # open connections, all sized from the host resources. Disabled together
-        # with the frame limits by --no-rate-limit (the benchmark seam).
-        guard_limits = limits if limits is not None else ResourceLimits.detect()
-        connection_guard = (
-            ConnectionGuard(
-                active_max=guard_limits.max_active_connections_per_ip,
-                global_max=guard_limits.max_active_connections,
-            )
-            if enforce_rate_limits
-            else None
+    # The connection guard is the transport-level twin of the frame rate
+    # limits: per-IP handshake budget, per-IP cap and a process-wide cap on
+    # open connections, all sized from the host resources. Disabled together
+    # with the frame limits by --no-rate-limit (the benchmark seam).
+    guard_limits = limits if limits is not None else ResourceLimits.detect()
+    connection_guard = (
+        ConnectionGuard(
+            active_max=guard_limits.max_active_connections_per_ip,
+            global_max=guard_limits.max_active_connections,
         )
-        server, bound_port, identity = await start_server(
+        if enforce_rate_limits
+        else None
+    )
+    try:
+        servers, bound_ports, identity, failures = await start_servers(
             host,
-            port,
+            ports,
             handler,
             retry=True,
             identity=identity,
             connection_guard=connection_guard,
         )
     except OSError as exc:
-        raise ListenerBindError(host, port, _errno_from(exc)) from exc
-    typer.echo(f"  running   : {host}:{bound_port} — cert fingerprint {identity.fingerprint}")
-    debug_log(f"listener bound {host}:{bound_port} (retry+address-validation)")
+        raise ListenerBindError(host, ports[0], _errno_from(exc)) from exc
+    # Best-effort: a requested port that could not bind (address in use, e.g. 53
+    # held by the local resolver) is skipped with an always-on, peer-free warning
+    # instead of failing the whole node.
+    for failed_port, failure in failures:
+        errno_value = _errno_from(failure)
+        warn_event(
+            "listener port unavailable",
+            port=failed_port,
+            reason=os.strerror(errno_value) if errno_value is not None else "bind failed",
+        )
+    bound_display = ",".join(str(p) for p in bound_ports)
+    typer.echo(f"  running   : {host}:{bound_display} — cert fingerprint {identity.fingerprint}")
+    debug_log(f"listeners bound {host}:{bound_display} (retry+address-validation)")
 
     tasks: list[asyncio.Task] = []
     # Only remove a readiness file THIS process created: with O_EXCL a pre-existing
@@ -536,11 +594,17 @@ async def _async_main(
 
         tasks.append(asyncio.create_task(_prune_loop(handler, connection_guard)))
         if upnp:
-            tasks.append(asyncio.create_task(UpnpManager(bound_port).run()))
+            # One mapping per bound port: every offered door must also be mapped
+            # on the router, not just the first. A client may reach the node on
+            # any of them (e.g. 53 when its egress firewall blocks UDP 443), so a
+            # single mapping would leave the extra doors unreachable from the WAN.
+            for port in bound_ports:
+                tasks.append(asyncio.create_task(UpnpManager(port).run()))
 
         await asyncio.Future()  # serve forever
     finally:
-        server.close()
+        for server in servers:
+            server.close()
         for task in tasks:
             task.cancel()
         if ready_written and ready_file:

@@ -209,9 +209,19 @@ def query_frame(
 class BootnodeProc:
     """A running bootnode subprocess + its readiness/log handles."""
 
-    def __init__(self, proc: subprocess.Popen, port: int, ready_file: Path | None, log_dir: Path):
+    def __init__(
+        self,
+        proc: subprocess.Popen,
+        port: int,
+        ready_file: Path | None,
+        log_dir: Path,
+        *,
+        ports: Sequence[int] | None = None,
+    ):
         self.proc = proc
         self.port = port
+        # All bound UDP ports (multi-port, decision 57); ``port`` is the primary.
+        self.ports: tuple[int, ...] = tuple(ports) if ports else (port,)
         self.ready_file = ready_file
         # PID of the bootnode *application* process, read from the readiness file
         # by ``wait_ready``. It can differ from ``pid`` (the launcher): a
@@ -241,6 +251,7 @@ def start_bootnode(
     tmp_path: Path,
     *,
     port: int | None = None,
+    ports: Sequence[int] | None = None,
     host: str = "127.0.0.1",
     args: Sequence[str] = (),
     keys: Mapping[str, str] | None = None,
@@ -264,10 +275,18 @@ def start_bootnode(
     to the operator's/CI's XDG state dir; pass ``ephemeral=False`` (with an
     explicit ``--identity``/``HSYNC_BOOTNODE_IDENTITY``) to test persistence.
     """
-    port = port or free_udp_port(socket.AF_INET6 if ":" in host else socket.AF_INET)
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    if ports is not None:
+        resolved_ports = list(ports)
+        port = resolved_ports[0]
+        port_args = ["--ports", ",".join(str(p) for p in resolved_ports)]
+    else:
+        port = port or free_udp_port(family)
+        resolved_ports = [port]
+        port_args = ["--port", str(port)]
     ready_file = tmp_path / "ready.pid" if ready else None
 
-    cmd = [resolve_bin(), "run", "--host", host, "--port", str(port)]
+    cmd = [resolve_bin(), "run", "--host", host, *port_args]
     if ephemeral:
         cmd += ["--ephemeral"]
     if ttl is not None:
@@ -311,7 +330,7 @@ def start_bootnode(
     if keys:
         os.close(read_fd)
 
-    handle = BootnodeProc(proc, port, ready_file, tmp_path)
+    handle = BootnodeProc(proc, port, ready_file, tmp_path, ports=resolved_ports)
     if ready:
         try:
             wait_ready(handle)

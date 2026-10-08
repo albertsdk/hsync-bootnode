@@ -19,12 +19,17 @@ methods are ordered from the simplest and most immediate to the most involved.
 All methods result in the same node. The QUIC/UDP port must be reachable from
 the Internet (443 is the default; ports below 1024 need elevated privileges —
 the `.deb` systemd unit grants `CAP_NET_BIND_SERVICE`, the container binds an
-unprivileged port internally).
+unprivileged port internally). The node can also listen on **several** UDP
+ports at once, so a client whose network blocks UDP 443 can still reach it on
+another port (e.g. 443 + 53) — see `--ports` in
+[usage.md](usage.md#run-options).
 
 ## Requirements (all methods)
 
 - UDP port 443 (or another port) reachable from the Internet
 - Optional: a UPnP-capable router for zero-touch UDP port mapping (opt in with `--upnp`)
+- Optional: a **second** inbound UDP port (e.g. 53) if some clients' networks
+  block UDP 443 — see `--ports` in [usage.md](usage.md#run-options)
 
 ## How it works in one paragraph
 

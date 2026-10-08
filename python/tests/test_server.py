@@ -27,6 +27,7 @@ from hsync_bootnode.server import (
     build_quic_configuration,
     make_identity,
     start_server,
+    start_servers,
 )
 from hsync_bootnode.tokens import derive_bucket_token
 
@@ -165,6 +166,37 @@ async def test_loopback_register_query_and_protected_refusal() -> None:
             assert response["peers"][0]["endpoints"][0]["host"] == "198.51.100.7"
     finally:
         server.close()
+
+
+@pytest.mark.asyncio
+async def test_loopback_multi_port_shares_one_routing_table() -> None:
+    """One process, N ports, ONE routing table: a peer registered via one port
+    is visible to a query on another port (decision #21 — no sharding)."""
+    handler = BootHandler()
+    servers, ports, _identity, failures = await start_servers(
+        "127.0.0.1", [0, 0], handler, retry=True
+    )
+    assert len(servers) == 2
+    assert len(ports) == 2
+    assert ports[0] != ports[1]
+    assert failures == []
+    try:
+        client_config = QuicConfiguration(
+            is_client=True, alpn_protocols=[BOOT_ALPN], verify_mode=ssl.CERT_NONE
+        )
+        # register via the FIRST port
+        async with connect("127.0.0.1", ports[0], configuration=client_config) as protocol:
+            response = await _exchange(protocol, _register_frame(None))
+            assert response["type"] == "ack"
+        # query via the SECOND port → the peer registered on the first is visible
+        async with connect("127.0.0.1", ports[1], configuration=client_config) as protocol:
+            response = await _exchange(protocol, _query_frame(None))
+            assert response["error"] is None
+            assert response["count"] == 1
+            assert response["peers"][0]["cid"] == CID
+    finally:
+        for server in servers:
+            server.close()
 
 
 @pytest.mark.asyncio

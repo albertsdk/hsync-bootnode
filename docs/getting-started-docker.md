@@ -60,6 +60,22 @@ docker logs hsync-bootnode-test
 docker stop hsync-bootnode-test
 ```
 
+### Serve a second UDP port (optional)
+
+The shipped Compose maps a single host UDP port to the container's internal
+port. To also answer clients whose network blocks UDP 443, listen on a second
+internal port and map it to another host port:
+
+```yaml
+command: ["run", "--host", "0.0.0.0", "--ports", "8443,5353"]
+ports:
+  - "443:8443/udp"
+  - "53:5353/udp"
+```
+
+Both ports share one routing table; the container keeps using unprivileged
+ports. See `--ports` in [usage.md](usage.md#run-options).
+
 ### Build the image from source
 
 To build from source, follow the build steps in

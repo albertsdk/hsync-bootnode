@@ -52,6 +52,21 @@ cd python
 .venv/bin/hsync-bootnode identity show
 ```
 
+### Serve a second UDP port (optional)
+
+Clients whose network blocks UDP 443 can still reach the node if it listens
+on more than one port. Listen on 443 **and** 53 (a second port must also be
+open in the host firewall):
+
+```bash
+cd python
+.venv/bin/hsync-bootnode run --ports 443,53
+```
+
+The ports share one routing table, so a peer registered on one port is
+visible to a query on another. See `--ports` in
+[usage.md](usage.md#run-options).
+
 ## Standalone binary (no Python on the target)
 
 `compile.sh` freezes the node into a self-contained executable:

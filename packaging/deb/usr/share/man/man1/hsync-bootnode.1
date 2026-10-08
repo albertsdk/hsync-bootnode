@@ -1,4 +1,4 @@
-.TH HSYNC-BOOTNODE 1 "2026-10-06" "hsync-bootnode 1.0.0" "User Commands"
+.TH HSYNC-BOOTNODE 1 "2026-10-10" "hsync-bootnode 1.0.0" "User Commands"
 .SH NAME
 hsync-bootnode \- HSYNC P2P bootstrap node (no-log, zero-knowledge)
 .SH SYNOPSIS
@@ -58,6 +58,19 @@ UDP port (1\-65535). Default: 443 (QUIC/HTTP3). Ports below 1024 need root or
 .BR CAP_NET_BIND_SERVICE .
 Mutually exclusive with a port in
 .BR \-\-host .
+Use
+.B \-\-ports
+to listen on several UDP ports at once (client\-egress fallback).
+.TP
+.BI run\ \fR--ports\fP= P1,P2,...
+Comma-separated UDP ports to listen on in one process (multi-port). The
+listeners share one in-memory routing table, so a peer registered via one port
+is visible to a query on another. Use it to offer several inbound doors when a
+client's egress firewall may block UDP 443 but allow another UDP port; the
+recommended set is 443,53. Binding is best-effort: a port that cannot bind is
+skipped with an always-on warning and the node fails only if none bind.
+Mutually exclusive with
+.BR \-\-port .
 .TP
 .BI run\ \fR--identity\fP= PATH
 Path of the persistent TLS identity (key+cert), created on first run and reused
@@ -110,7 +123,10 @@ node with no group key fails fast with exit code 2. Env form:
 .BR HSYNC_BOOTNODE_PRIVATE=1 .
 .TP
 .B run\ \fR--upnp\fP
-Map the QUIC port with UPnP (opt\-in; off by default).
+Map every bound QUIC/UDP listener port with UPnP (opt\-in; off by default).
+With
+.BR \-\-ports ,
+each bound port is mapped so every offered door is also reachable from the WAN.
 .TP
 .BI run\ \fR--ttl\fP= SECONDS
 Record TTL in seconds (1\-3600). Default: 60 (peers refresh every 30 s).
@@ -223,6 +239,12 @@ Standalone executable (symlink to
 .TP
 Open mode (no protected buckets):
 .B hsync-bootnode run --host 0.0.0.0 --port 443
+.TP
+Listen on several UDP ports so clients whose egress firewall blocks UDP 443 can
+reach the node on another port (443 QUIC + 53 DNS; 53 may require freeing the
+local resolver):
+.br
+.B hsync-bootnode run --ports 443,53
 .TP
 Protected bucket with keys from a file descriptor:
 .br

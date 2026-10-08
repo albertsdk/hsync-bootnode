@@ -174,14 +174,14 @@ def _combined(result) -> str:
     return result.output + getattr(result, "stderr", "") or result.output
 
 
-def _patch_run_no_side_effects(monkeypatch, start_server) -> None:
+def _patch_run_no_side_effects(monkeypatch, start_servers) -> None:
     """Stub the listener start and the two process-global installers.
 
     ``run`` reaches ``_install_uvloop``/``_install_sigterm_handler`` before the
     bind; stubbing them keeps the test process free of a global event-loop policy
     swap and a SIGTERM handler.
     """
-    monkeypatch.setattr("hsync_bootnode.cli.start_server", start_server)
+    monkeypatch.setattr("hsync_bootnode.cli.start_servers", start_servers)
     monkeypatch.setattr("hsync_bootnode.cli._install_uvloop", lambda: None)
     monkeypatch.setattr("hsync_bootnode.cli._install_sigterm_handler", lambda: None)
 
@@ -233,18 +233,18 @@ def test_run_port_default_uses_the_shared_ssot() -> None:
     """The effective default port is the shared ``BOOT_DEFAULT_PORT`` (spec §Transport)."""
     from hsync_common.constants import BOOT_DEFAULT_PORT
 
-    from hsync_bootnode.cli import _resolve_listener
+    from hsync_bootnode.cli import _resolve_listeners
 
-    assert _resolve_listener(None, None) == ("0.0.0.0", BOOT_DEFAULT_PORT)
-    assert _resolve_listener("0.0.0.0", None) == ("0.0.0.0", BOOT_DEFAULT_PORT)
+    assert _resolve_listeners(None, None, None) == ("0.0.0.0", [BOOT_DEFAULT_PORT])
+    assert _resolve_listeners("0.0.0.0", None, None) == ("0.0.0.0", [BOOT_DEFAULT_PORT])
 
 
 def test_host_port_shorthand_is_accepted() -> None:
     """``--host HOST:PORT`` resolves host and port without a separate ``--port``."""
-    from hsync_bootnode.cli import _resolve_listener
+    from hsync_bootnode.cli import _resolve_listeners
 
-    assert _resolve_listener("0.0.0.0:8443", None) == ("0.0.0.0", 8443)
-    assert _resolve_listener("[::1]:8443", None) == ("::1", 8443)
+    assert _resolve_listeners("0.0.0.0:8443", None, None) == ("0.0.0.0", [8443])
+    assert _resolve_listeners("[::1]:8443", None, None) == ("::1", [8443])
 
 
 def test_host_port_and_port_flag_are_mutually_exclusive() -> None:
@@ -252,17 +252,40 @@ def test_host_port_and_port_flag_are_mutually_exclusive() -> None:
     import pytest
     import typer
 
-    from hsync_bootnode.cli import _resolve_listener
+    from hsync_bootnode.cli import _resolve_listeners
 
     with pytest.raises(typer.BadParameter):
-        _resolve_listener("0.0.0.0:8443", 8443)
+        _resolve_listeners("0.0.0.0:8443", 8443, None)
 
 
 def test_port_flag_alone_keeps_the_default_host() -> None:
     """``--port`` without ``--host`` binds all interfaces, as before."""
-    from hsync_bootnode.cli import _resolve_listener
+    from hsync_bootnode.cli import _resolve_listeners
 
-    assert _resolve_listener(None, 8443) == ("0.0.0.0", 8443)
+    assert _resolve_listeners(None, 8443, None) == ("0.0.0.0", [8443])
+
+
+def test_ports_flag_resolves_the_ordered_set() -> None:
+    """``--ports`` resolves a comma-separated ordered set and conflicts with --port."""
+    import pytest
+    import typer
+
+    from hsync_bootnode.cli import _resolve_listeners
+
+    assert _resolve_listeners(None, None, "443,53") == ("0.0.0.0", [443, 53])
+    # Whitespace around entries is tolerated; order is preserved.
+    assert _resolve_listeners("0.0.0.0", None, "53, 443") == ("0.0.0.0", [53, 443])
+
+    with pytest.raises(typer.BadParameter):
+        _resolve_listeners(None, 443, "443,53")  # --port + --ports
+    with pytest.raises(typer.BadParameter):
+        _resolve_listeners("0.0.0.0:8443", None, "443,53")  # host port + --ports
+    with pytest.raises(typer.BadParameter):
+        _resolve_listeners(None, None, "443,443")  # duplicate
+    with pytest.raises(typer.BadParameter):
+        _resolve_listeners(None, None, "0")  # out of range
+    with pytest.raises(typer.BadParameter):
+        _resolve_listeners(None, None, "443,notaport")  # non-integer
 
 
 class _FakeIdentity:
@@ -282,7 +305,7 @@ def test_ready_file_failure_is_actionable_exit_4(monkeypatch, tmp_path) -> None:
     """An unwritable --ready-file exits 4 with an actionable message, no traceback."""
 
     async def _start(*args, **kwargs):  # noqa: ANN002, ANN003
-        return _FakeServer(), 8443, _FakeIdentity()
+        return [_FakeServer()], [8443], _FakeIdentity(), []
 
     _patch_run_no_side_effects(monkeypatch, _start)
     ready = tmp_path / "missing-dir" / "ready.pid"
@@ -303,7 +326,7 @@ def test_ready_file_conflict_leaves_the_existing_file_alone(monkeypatch, tmp_pat
     """A pre-existing path is refused (O_EXCL) and never deleted by the node."""
 
     async def _start(*args, **kwargs):  # noqa: ANN002, ANN003
-        return _FakeServer(), 8443, _FakeIdentity()
+        return [_FakeServer()], [8443], _FakeIdentity(), []
 
     _patch_run_no_side_effects(monkeypatch, _start)
     ready = tmp_path / "ready.pid"
@@ -326,7 +349,7 @@ def test_debug_run_announces_the_peer_aware_stream(monkeypatch, tmp_path) -> Non
     """
 
     async def _start(*args, **kwargs):  # noqa: ANN002, ANN003
-        return _FakeServer(), 8443, _FakeIdentity()
+        return [_FakeServer()], [8443], _FakeIdentity(), []
 
     _patch_run_no_side_effects(monkeypatch, _start)
     ready = tmp_path / "missing-dir" / "ready.pid"

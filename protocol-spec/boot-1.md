@@ -7,7 +7,12 @@
 ## Transport
 
 - QUIC/UDP, default port **443** (the shared `BOOT_DEFAULT_PORT`; any UDP port is
-  selectable with `--port`). Single listener, no TCP fallback — zero legacy.
+  selectable with `--port`, and a recommended reachability set (`BOOT_PORT_SET`,
+  443 + 53) with `--ports`). **One process, one in-memory routing table, one or
+  more UDP listeners** (multi-port; no TCP fallback — zero legacy). Multiple
+  listeners share the same routing table so a peer registered via one port is
+  visible to a query on another; state sharding across processes is forbidden
+  (it would break discovery).
 - TLS 1.3 inside QUIC: the exchanged peer list is not readable by ISPs.
 - ALPN `hsync-boot/1`.
 - NDJSON payloads (one JSON object per line) over bidirectional QUIC streams;

@@ -71,6 +71,34 @@ sudo systemctl enable --now hsync-bootnode.service
 sudo systemctl status hsync-bootnode.service
 ```
 
+## Optional: serve a second UDP port
+
+If some clients' networks block UDP 443, the node can also listen on 53: the
+two ports share one routing table, so a peer registered on one is visible to a
+query on the other. The packaged unit pins a single port, so override its
+command with a drop-in:
+
+```bash
+sudo systemctl edit hsync-bootnode.service
+```
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/usr/bin/hsync-bootnode run --host 0.0.0.0 --ports 443,53
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart hsync-bootnode.service
+```
+
+Open UDP 53 in the host firewall too, and free that port if the local resolver
+already holds it. If you provisioned group keys, the unit passes `--keys-fd`
+automatically; keep `LoadCredential=` and add
+`--keys-fd 5 5<"$CREDENTIALS_DIRECTORY/group-keys"` to the command above. See
+`--ports` in [usage.md](usage.md#run-options).
+
 ## Verify the node is running
 
 ```bash

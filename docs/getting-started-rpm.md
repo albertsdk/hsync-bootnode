@@ -39,6 +39,9 @@ The package behaves exactly like the Debian package. Follow the steps in
 through
 [→ Start the service](getting-started-deb.md#start-the-service), using
 `sudo dnf upgrade hsync-bootnode-*.rpm` instead of `dpkg -i` to update.
+The optional
+[second UDP port](getting-started-deb.md#optional-serve-a-second-udp-port)
+drop-in applies unchanged.
 
 ## Next
 

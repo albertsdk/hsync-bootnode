@@ -69,6 +69,10 @@ unprivileged internal port. To use another public port, for example `8443`:
 ./install.sh --port 8443
 ```
 
+The installer maps a **single** host UDP port. To also serve a second port
+(e.g. 53) for clients whose network blocks UDP 443, use the manual Compose
+override in the [Docker guide](getting-started-docker.md#serve-a-second-udp-port-optional).
+
 ### Private node (authenticated bootstrap)
 
 A **private** node requires a valid `bucket_token` on every frame. Provision the

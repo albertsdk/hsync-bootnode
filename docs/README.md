@@ -31,6 +31,9 @@ gone.
   default is privileged: run as root, grant `CAP_NET_BIND_SERVICE` (the `.deb`
   and systemd unit do), or use a port ≥ 1024 (e.g. `--port 8443`)
 - Optional: a UPnP-capable router for zero-touch UDP port mapping (opt in with `--upnp`)
+- Optional: a **second** inbound UDP port (e.g. 53) so clients whose network
+  blocks UDP 443 can still reach the node — see `--ports` in
+  [usage.md](usage.md#run-options)
 
 ## Start here
 

@@ -37,6 +37,10 @@ Restart-Service hsync-bootnode
   `hsync-bootnode-service.exe` in the install directory.
 - Protected buckets / private node: set `HSYNC_BOOTNODE_PRIVATE` and the group
   keys in the service definition — see [Usage](../docs/usage.md).
+- To serve a **second** inbound UDP port (for clients whose network blocks UDP
+  443), add `--ports 443,53` to the service `<arguments>` in the XML above and
+  open the extra port — see `--ports` in
+  [Usage](../docs/usage.md#run-options).
 
 ## Update and remove
 

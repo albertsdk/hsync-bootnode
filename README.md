@@ -12,18 +12,20 @@ online without ever storing anything, speaking the `boot/1` protocol over QUIC
 your devices find each other, and the file data always flows directly between
 them.
 
-> **Why it exists:** the [HSYNC Client](https://github.com/albertsdk/hsync-client)'s
-> [p2p Mode](https://github.com/albertsdk/hsync-client/blob/main/docs/p2p-mode.md)
-> discovers peers over mDNS on the local network. A bootnode extends that same
-> mode across networks: same election, same transport, same peer-to-peer data
-> plane — only discovery differs.
+> New to HSYNC? Start with the [HSYNC Ecosystem](https://github.com/albertsdk/hsync/blob/main/README.md) for an overview of the platform before deploying a bootnode.
 
-> **Status:** v1 **complete and stable** (Python + aioquic): packaged, tested,
-> and the implementation clients currently talk to. A Rust/`quinn` port is
-> planned as an **additive v2** for higher handshake throughput, not a
-> prerequisite — this is a **multi-language** repository: one protocol, several
-> implementations sharing the same spec and fixtures (see the
-> [repository layout](CONTRIBUTING.md#repository-layout)).
+**Why it exists:** the [HSYNC Client](https://github.com/albertsdk/hsync-client)'s
+[p2p Mode](https://github.com/albertsdk/hsync-client/blob/main/docs/p2p-mode.md)
+discovers peers over mDNS on the local network. A bootnode extends that same
+mode across networks: same election, same transport, same peer-to-peer data
+plane — only discovery differs.
+
+**Status:** v1 **complete and stable** (Python + aioquic): packaged, tested,
+and the implementation clients currently talk to. A Rust/`quinn` port is
+planned as an **additive v2** for higher handshake throughput, not a
+prerequisite — this is a **multi-language** repository: one protocol, several
+implementations sharing the same spec and fixtures (see the
+[repository layout](CONTRIBUTING.md#repository-layout)).
 
 > 👉 **Operational Advisory:** the bootnode is discovery-only — it never stores
 > or relays file data. Provision protected buckets and pin its TLS fingerprint
@@ -161,10 +163,9 @@ The other components of the HSYNC ecosystem:
 The bootnode sits at the Internet edge, so security reports are taken seriously.
 Please use GitHub's **Private Vulnerability Reporting** rather than a public issue:
 
-👉 **[Report a vulnerability](https://github.com/albertsdk/hsync/security/advisories/new)**
+👉 **[Report a vulnerability](https://github.com/albertsdk/hsync-bootnode/security/advisories/new)**
 
-See the ecosystem [Security Policy](https://github.com/albertsdk/hsync/blob/main/SECURITY.md)
-for supported versions and hardening guidance.
+See our [Security Policy](SECURITY.md) for supported versions and hardening guidance.
 
 ## 🙋‍♂️ A note from the maintainer
 

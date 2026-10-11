@@ -13,7 +13,12 @@ set -euo pipefail
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly PY_DIR="${SCRIPT_DIR}/python"
 readonly SIBLING="${SCRIPT_DIR}/../hsync-common"
-readonly BIN="${PY_DIR}/.venv/bin/hsync-bootnode"
+# Console script path: Windows venvs use Scripts/ with a .exe suffix, POSIX bin/.
+case "$(uname -s)" in
+    MINGW*|CYGWIN*|MSYS*) readonly VENV_BIN_DIR="Scripts" BIN_EXT=".exe" ;;
+    *)                    readonly VENV_BIN_DIR="bin" BIN_EXT="" ;;
+esac
+readonly BIN="${PY_DIR}/.venv/${VENV_BIN_DIR}/hsync-bootnode${BIN_EXT}"
 
 if [[ ! -d "${SIBLING}" ]]; then
     printf 'Error: hsync-common must be checked out as a sibling of hsync-bootnode.\n' >&2

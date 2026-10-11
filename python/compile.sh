@@ -79,9 +79,14 @@ readonly OUTPUT_DIR="${OUTPUT_BASE}/${PLATFORM}"
 readonly ONEDIR_DEFAULT_DIR="${OUTPUT_BASE}/onedir"
 readonly BUILD_DIR="build"
 readonly VENV_DIR=".venv"
-# PyInstaller binary: the in-project venv wins; a pyinstaller found on PATH is
-# the fallback (see _resolve_pyinstaller). NOT readonly: it can be re-pointed.
-PYINSTALLER="${VENV_DIR}/bin/pyinstaller"
+# PyInstaller binary: the in-project venv wins, under Scripts/ on Windows venvs
+# and bin/ elsewhere; a pyinstaller found on PATH is the fallback (see
+# _resolve_pyinstaller). NOT readonly: it can be re-pointed.
+if [[ "${OS_NAME}" == "windows" ]]; then
+    PYINSTALLER="${VENV_DIR}/Scripts/pyinstaller.exe"
+else
+    PYINSTALLER="${VENV_DIR}/bin/pyinstaller"
+fi
 # --strip needs binutils and is unreliable on Windows; omit it there.
 readonly STRIP_FLAG="$([[ "${OS_NAME}" == "windows" ]] && echo "" || echo "--strip")"
 
@@ -185,7 +190,7 @@ check_prerequisites() {
     fi
     if ! _resolve_pyinstaller; then
         log_error "PyInstaller not found at ${PYINSTALLER} and not on PATH."
-        log_info "Install it with: .venv/bin/pip install pyinstaller"
+        log_info "Install it with: poetry install --with build"
         exit 1
     fi
     log_info "PyInstaller: ${PYINSTALLER}"

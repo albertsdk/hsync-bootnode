@@ -19,6 +19,7 @@ INSTALL_DIR="${DEFAULT_INSTALL_DIR}"
 VERSION="${DEFAULT_VERSION}"
 PUBLIC_PORT="443"
 PUBLIC_PORT_SET=false
+INSTALL_DIR_EXPLICIT=false
 PRIVATE=false
 KEYS_FILE=""
 START_SERVER=true
@@ -33,6 +34,9 @@ usage() {
 Install the HSYNC bootnode with Docker Compose.
 
 Usage: ./install.sh [options]
+
+When installing from the release download, forward options to bash (not curl):
+  curl -fsSL "https://github.com/${REPO}/releases/latest/download/install.sh" | bash -s -- [options]
 
 Options:
   --version VERSION       Image version to install, or 'latest' to resolve the
@@ -128,8 +132,9 @@ warn_if_snap_hidden_path() {
     printf '\nWarning: docker is the snap package and the snap "home" interface denies\n' >&2
     printf 'hidden paths under $HOME, so it cannot read %s/.env.\n' "${INSTALL_DIR}" >&2
     printf 'Fix: install Docker Engine (https://docs.docker.com/engine/install/) instead\n' >&2
-    printf 'of the snap, or re-run with a non-hidden --install-dir (e.g. --install-dir "%s").\n' \
-        "${HOME}/hsync-bootnode" >&2
+    printf 'of the snap, or re-run with a non-hidden directory:\n' >&2
+    printf '  curl -fsSL "https://github.com/%s/releases/latest/download/install.sh" | bash -s -- --install-dir "%s"\n' \
+        "${REPO}" "${HOME}/hsync-bootnode" >&2
 }
 
 # 'docker compose config' reads .env client-side, so it is the first command to
@@ -184,6 +189,7 @@ parse_args() {
             --install-dir)
                 [[ -n "${2:-}" ]] || fail "$1 requires a value"
                 INSTALL_DIR="$2"
+                INSTALL_DIR_EXPLICIT=true
                 shift 2
                 ;;
             --port)
@@ -353,6 +359,21 @@ main() {
         INSTALL_DIR="$(pwd)/${INSTALL_DIR}"
     fi
 
+    # Snap-packaged docker is confined and cannot read hidden paths under $HOME,
+    # so the default XDG install dir (~/.local/share/...) would break
+    # 'docker compose'. When the directory was not chosen explicitly, fall back
+    # to a non-hidden default instead of failing the whole install.
+    if docker_is_snap && path_has_hidden_component "${INSTALL_DIR}"; then
+        if [[ "${INSTALL_DIR_EXPLICIT}" == true ]]; then
+            fail "docker is the snap package and ${INSTALL_DIR} is under a hidden path; the snap 'home' interface denies hidden paths in \$HOME, so 'docker compose' cannot read .env there. Re-run with a non-hidden directory:
+  curl -fsSL \"https://github.com/${REPO}/releases/latest/download/install.sh\" | bash -s -- --install-dir \"${HOME}/hsync-bootnode\"
+or install Docker Engine from https://docs.docker.com/engine/install/ instead of the snap."
+        fi
+        printf 'Note: snap Docker cannot read hidden paths under $HOME; using %s instead of %s.\n' \
+            "${HOME}/hsync-bootnode" "${INSTALL_DIR}" >&2
+        INSTALL_DIR="${HOME}/hsync-bootnode"
+    fi
+
     if [[ -f "${INSTALL_DIR}/.env" && "${PUBLIC_PORT_SET}" == false ]]; then
         PUBLIC_PORT="$(read_env_value HSYNC_BOOTNODE_PORT)" ||
             fail "HSYNC_BOOTNODE_PORT is missing from ${INSTALL_DIR}/.env"
@@ -373,12 +394,6 @@ main() {
     printf 'Install directory: %s\n' "${INSTALL_DIR}"
     printf 'Image: %s\n' "${IMAGE_REF}"
     printf 'Endpoint: udp/%s\n' "${PUBLIC_PORT}"
-
-    # Snap-packaged docker is confined and cannot read hidden paths under $HOME,
-    # so the default XDG install dir (~/.local/share/...) breaks 'docker compose'.
-    if docker_is_snap && path_has_hidden_component "${INSTALL_DIR}"; then
-        fail "docker is the snap package and ${INSTALL_DIR} is under a hidden path; the snap 'home' interface denies hidden paths in \$HOME, so 'docker compose' cannot read .env there. Re-run with a non-hidden --install-dir (e.g. --install-dir \"${HOME}/hsync-bootnode\"), or install Docker Engine from https://docs.docker.com/engine/install/ instead of the snap."
-    fi
 
     if [[ "${DRY_RUN}" == true ]]; then
         printf 'Dry run: no files were changed.\n'

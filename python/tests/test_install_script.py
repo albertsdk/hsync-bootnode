@@ -42,6 +42,7 @@ def _run(
     snap_docker: bool = False,
     install_dir: Path | None = None,
     config_fails: bool = False,
+    use_default_dir: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
     """Run ``install.sh --no-start`` with stubbed tools; return (proc, state, log)."""
     bindir = tmp_path / "bin"
@@ -86,8 +87,12 @@ def _run(
     install_dir = tmp_path / "state" if install_dir is None else install_dir
     env = os.environ.copy()
     env["PATH"] = f"{bindir}:{tmp_path / 'snap' / 'bin'}:{env['PATH']}"
+    cmd = ["bash", str(INSTALL_SH)]
+    if not use_default_dir:
+        cmd += ["--install-dir", str(install_dir)]
+    cmd += ["--no-start", *args]
     proc = subprocess.run(
-        ["bash", str(INSTALL_SH), "--install-dir", str(install_dir), "--no-start", *args],
+        cmd,
         capture_output=True,
         text=True,
         env=env,
@@ -175,7 +180,7 @@ def test_snap_docker_rejects_a_hidden_install_dir(tmp_path: Path) -> None:
     assert proc.returncode != 0
     assert "snap" in proc.stderr
     assert "hidden path" in proc.stderr
-    assert "--install-dir" in proc.stderr
+    assert "bash -s -- --install-dir" in proc.stderr
     assert not hidden_dir.exists()
 
 
@@ -185,6 +190,19 @@ def test_snap_docker_allows_a_non_hidden_install_dir(tmp_path: Path) -> None:
     assert proc.returncode == 0, proc.stderr
 
 
+def test_snap_docker_adapts_a_default_hidden_install_dir(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """With snap docker and no explicit --install-dir, fall back to a non-hidden
+    default instead of failing the whole install."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    proc, _state, _log = _run(tmp_path, snap_docker=True, use_default_dir=True)
+    assert proc.returncode == 0, proc.stderr
+    assert (home / "hsync-bootnode" / ".env").exists()
+
+
 def test_compose_failure_hints_at_snap_hidden_paths(tmp_path: Path) -> None:
     """A snap docker failure carrying the hidden-path signature gets an
     actionable hint even where the pre-flight check did not catch it."""
@@ -192,4 +210,4 @@ def test_compose_failure_hints_at_snap_hidden_paths(tmp_path: Path) -> None:
     proc, _state, _log = _run(tmp_path, snap_docker=True, config_fails=True, install_dir=non_hidden)
     assert proc.returncode != 0
     assert "Warning: docker is the snap package" in proc.stderr
-    assert "non-hidden --install-dir" in proc.stderr
+    assert "bash -s -- --install-dir" in proc.stderr

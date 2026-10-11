@@ -4,4 +4,4 @@ No-log, in-memory, zero-knowledge "matchmaker" for the ``boot/1`` wire protocol.
 See ``protocol-spec/boot-1.md`` at the repository root (single source of truth).
 """
 
-__version__ = "1.0.2"
+__version__ = "1.0.3"

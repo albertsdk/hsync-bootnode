@@ -18,17 +18,20 @@ firewall ports, or changes router settings.
 ### Docker installed as a snap
 
 The snap-packaged `docker` is confined: its `home` interface denies hidden paths
-under `$HOME`. The default install directory `~/.local/share/hsync-bootnode` is
-hidden, so `docker compose` fails with `open .../.env: permission denied`.
-Install Docker Engine (<https://docs.docker.com/engine/install/>) instead of the
-snap, or install to a non-hidden directory:
+under `$HOME`, so it cannot read `.env` in the default install directory
+`~/.local/share/hsync-bootnode`. When it detects a snap `docker` and an install
+directory under a hidden path, the installer falls back to a non-hidden default
+(`$HOME/hsync-bootnode`) automatically. If you passed `--install-dir` explicitly,
+it stops before writing anything and tells you to re-run with a non-hidden
+directory:
 
 ```bash
 curl -fsSL https://github.com/albertsdk/hsync-bootnode/releases/latest/download/install.sh \
   | bash -s -- --install-dir "$HOME/hsync-bootnode"
 ```
 
-The installer detects this combination and stops before writing anything.
+Installing Docker Engine (<https://docs.docker.com/engine/install/>) instead of
+the snap avoids the constraint entirely.
 
 ## Install
 

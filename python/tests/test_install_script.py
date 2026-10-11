@@ -39,11 +39,17 @@ def _run(
     cosign_exit: int | None = 0,
     with_cosign: bool = True,
     with_curl: bool = False,
+    snap_docker: bool = False,
+    install_dir: Path | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
     """Run ``install.sh --no-start`` with stubbed tools; return (proc, state, log)."""
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    docker = bindir / "docker"
+    # A snap-packaged docker is exposed through /snap/bin; mirror that layout so
+    # the installer's snap detection sees the same path shape.
+    docker_dir = tmp_path / "snap" / "bin" if snap_docker else bindir
+    docker_dir.mkdir(parents=True, exist_ok=True)
+    docker = docker_dir / "docker"
     docker.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     docker.chmod(0o755)
 
@@ -68,9 +74,9 @@ def _run(
         )
         curl.chmod(0o755)
 
-    install_dir = tmp_path / "state"
+    install_dir = tmp_path / "state" if install_dir is None else install_dir
     env = os.environ.copy()
-    env["PATH"] = f"{bindir}:{env['PATH']}"
+    env["PATH"] = f"{bindir}:{tmp_path / 'snap' / 'bin'}:{env['PATH']}"
     proc = subprocess.run(
         ["bash", str(INSTALL_SH), "--install-dir", str(install_dir), "--no-start", *args],
         capture_output=True,
@@ -150,3 +156,21 @@ def test_release_workflow_signs_the_image() -> None:
     assert "sigstore/cosign-installer" in workflow
     assert "cosign sign --yes" in workflow
     assert "steps.build.outputs.digest" in workflow
+
+
+def test_snap_docker_rejects_a_hidden_install_dir(tmp_path: Path) -> None:
+    """Snap's home interface denies hidden paths under $HOME, so a snap-packaged
+    docker cannot read .env in the default ~/.local/share directory."""
+    hidden_dir = tmp_path / ".local" / "share" / "hsync-bootnode"
+    proc, _state, _log = _run(tmp_path, snap_docker=True, install_dir=hidden_dir)
+    assert proc.returncode != 0
+    assert "snap" in proc.stderr
+    assert "hidden path" in proc.stderr
+    assert "--install-dir" in proc.stderr
+    assert not hidden_dir.exists()
+
+
+def test_snap_docker_allows_a_non_hidden_install_dir(tmp_path: Path) -> None:
+    non_hidden = tmp_path / "hsync-bootnode"
+    proc, _state, _log = _run(tmp_path, snap_docker=True, install_dir=non_hidden)
+    assert proc.returncode == 0, proc.stderr

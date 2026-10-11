@@ -15,6 +15,21 @@ host directory, and starts the node with Docker Compose.
 Docker must already be installed. The installer never invokes `sudo`, opens
 firewall ports, or changes router settings.
 
+### Docker installed as a snap
+
+The snap-packaged `docker` is confined: its `home` interface denies hidden paths
+under `$HOME`. The default install directory `~/.local/share/hsync-bootnode` is
+hidden, so `docker compose` fails with `open .../.env: permission denied`.
+Install Docker Engine (<https://docs.docker.com/engine/install/>) instead of the
+snap, or install to a non-hidden directory:
+
+```bash
+curl -fsSL https://github.com/albertsdk/hsync-bootnode/releases/latest/download/install.sh \
+  | bash -s -- --install-dir "$HOME/hsync-bootnode"
+```
+
+The installer detects this combination and stops before writing anything.
+
 ## Install
 
 ### Quick install (one command, latest stable release)

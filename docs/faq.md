@@ -189,3 +189,15 @@ build on the machine itself there. Check the glibc of the destination with
 from the launcher only: the bundled Python and `libgcc_s` that actually need
 2.35 are invisible to `dpkg-shlibdeps`, so a successful `dpkg -i` does not prove
 the node will start.
+
+## Why does the installer fail with "open .../.env: permission denied"?
+
+```text
+open /home/USER/.local/share/hsync-bootnode/.env: permission denied
+```
+
+The snap-packaged `docker` is confined and cannot read hidden paths under
+`$HOME`; the default install directory `~/.local/share/hsync-bootnode` is
+hidden, so `docker compose` cannot load `.env`. Install Docker Engine instead of
+the snap, or use a non-hidden `--install-dir` — see
+[Getting Started — Docker installed as a snap](getting-started-script.md#docker-installed-as-a-snap).

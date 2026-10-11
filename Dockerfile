@@ -28,6 +28,14 @@ ENV POETRY_NO_INTERACTION=1 \
 # Minimal files needed for poetry install
 COPY hsync-bootnode/python/pyproject.toml hsync-bootnode/python/poetry.lock ./
 
+# poetry install also builds/installs the root project, which declares
+# `readme = "README.md"` in pyproject.toml, so the file must be present.
+COPY hsync-bootnode/python/README.md ./
+
+# The root project is installed (non-editable) to provide the `hsync-bootnode`
+# console script the entrypoint runs, so its package source must be present too.
+COPY hsync-bootnode/python/src ./src
+
 # Copy the path dependency so Poetry can resolve hsync-common, declared as
 # {path = "../../hsync-common"} -> /project/hsync-common at build time
 COPY hsync-common /project/hsync-common

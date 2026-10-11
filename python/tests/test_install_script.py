@@ -41,6 +41,7 @@ def _run(
     with_curl: bool = False,
     snap_docker: bool = False,
     install_dir: Path | None = None,
+    config_fails: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
     """Run ``install.sh --no-start`` with stubbed tools; return (proc, state, log)."""
     bindir = tmp_path / "bin"
@@ -50,7 +51,15 @@ def _run(
     docker_dir = tmp_path / "snap" / "bin" if snap_docker else bindir
     docker_dir.mkdir(parents=True, exist_ok=True)
     docker = docker_dir / "docker"
-    docker.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    docker_body = "#!/usr/bin/env bash\n"
+    if config_fails:
+        docker_body += (
+            'if [[ "$*" == *" config "* ]]; then\n'
+            "  printf 'open /.env: permission denied\\n' >&2\n"
+            "  exit 1\n"
+            "fi\n"
+        )
+    docker.write_text(docker_body + "exit 0\n", encoding="utf-8")
     docker.chmod(0o755)
 
     cosign_log = tmp_path / "cosign.log"
@@ -174,3 +183,13 @@ def test_snap_docker_allows_a_non_hidden_install_dir(tmp_path: Path) -> None:
     non_hidden = tmp_path / "hsync-bootnode"
     proc, _state, _log = _run(tmp_path, snap_docker=True, install_dir=non_hidden)
     assert proc.returncode == 0, proc.stderr
+
+
+def test_compose_failure_hints_at_snap_hidden_paths(tmp_path: Path) -> None:
+    """A snap docker failure carrying the hidden-path signature gets an
+    actionable hint even where the pre-flight check did not catch it."""
+    non_hidden = tmp_path / "hsync-bootnode"
+    proc, _state, _log = _run(tmp_path, snap_docker=True, config_fails=True, install_dir=non_hidden)
+    assert proc.returncode != 0
+    assert "Warning: docker is the snap package" in proc.stderr
+    assert "non-hidden --install-dir" in proc.stderr

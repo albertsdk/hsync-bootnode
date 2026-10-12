@@ -1,6 +1,6 @@
 [project]
 name = "hsync-bootnode"
-version = "1.0.3"
+version = "1.0.4"
 description = "HSYNC P2P bootstrap node (no-log, in-memory, zero-knowledge)"
 authors = [{name = "Alberto Basso", email = "17047798+albertsdk@users.noreply.github.com"}]
 license = "BSD-3-Clause"

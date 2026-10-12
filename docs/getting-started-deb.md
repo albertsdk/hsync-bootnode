@@ -85,7 +85,7 @@ sudo systemctl edit hsync-bootnode.service
 ```ini
 [Service]
 ExecStart=
-ExecStart=/usr/bin/hsync-bootnode run --host 0.0.0.0 --ports 443,53
+ExecStart=/usr/bin/hsync-bootnode run --host 0.0.0.0 --ports 443,53 --identity /var/lib/hsync-bootnode/identity.pem
 ```
 
 ```bash

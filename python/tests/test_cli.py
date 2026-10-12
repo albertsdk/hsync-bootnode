@@ -6,6 +6,7 @@ import errno
 import os
 import re
 import tempfile
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -405,3 +406,31 @@ def test_identity_options_are_documented_in_help() -> None:
     assert "--identity" in output
     assert "--ephemeral" in output
     assert "HSYNC_BOOTNODE_EPHEMERAL" in output
+
+
+_PACKAGED_UNIT = Path(__file__).resolve().parents[2] / (
+    "packaging/deb/usr/lib/systemd/system/hsync-bootnode.service"
+)
+_SOURCE_UNIT = Path(__file__).resolve().parents[2] / ("packaging/systemd/hsync-bootnode.service")
+# A DynamicUser has no resolvable home directory, so the packaged unit must
+# never rely on the default XDG state path (Path.home() raises RuntimeError).
+_IDENTITY_FLAG = "--identity /var/lib/hsync-bootnode/identity.pem"
+
+
+def test_packaged_unit_pins_the_identity_path() -> None:
+    """The deb unit passes an explicit identity path in every ExecStart branch."""
+    text = _PACKAGED_UNIT.read_text(encoding="utf-8")
+    assert "StateDirectory=hsync-bootnode" in text
+    for line in text.splitlines():
+        if line.startswith("ExecStart="):
+            assert _IDENTITY_FLAG in line, f"missing identity path: {line}"
+
+
+def test_packaged_unit_matches_the_source_unit() -> None:
+    """The deb and source units must not diverge on identity handling again."""
+    packaged = _PACKAGED_UNIT.read_text(encoding="utf-8")
+    source = _SOURCE_UNIT.read_text(encoding="utf-8")
+    assert ("StateDirectory=hsync-bootnode" in source) == (
+        "StateDirectory=hsync-bootnode" in packaged
+    )
+    assert (_IDENTITY_FLAG in source) == (_IDENTITY_FLAG in packaged)

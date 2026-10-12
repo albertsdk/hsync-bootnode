@@ -190,9 +190,7 @@ def test_snap_docker_allows_a_non_hidden_install_dir(tmp_path: Path) -> None:
     assert proc.returncode == 0, proc.stderr
 
 
-def test_snap_docker_adapts_a_default_hidden_install_dir(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_snap_docker_adapts_a_default_hidden_install_dir(tmp_path: Path, monkeypatch) -> None:
     """With snap docker and no explicit --install-dir, fall back to a non-hidden
     default instead of failing the whole install."""
     home = tmp_path / "home"

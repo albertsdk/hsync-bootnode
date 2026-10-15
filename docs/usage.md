@@ -218,7 +218,7 @@ A `register` may also carry the master-election advertisement: the three flags
 master election they would run on a local network:
 
 - `server_ready` marks the device that is currently serving the bucket: it wins
-  the election over a newcomer, even one pinned with `prefer_master`, so a peer
+  the election over a newcomer, even one set with `prefer_master`, so a peer
   that joins later does not trigger a takeover.
 - `never_master` excludes a device from candidacy (`hsync p2p --never-master`).
 - `startup_time` and `sync_direction` break remaining ties deterministically.

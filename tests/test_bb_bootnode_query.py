@@ -65,7 +65,7 @@ async def test_query_relays_the_election_advertisement(bootnode_factory, bucket,
                 cid_master,
                 bucket,
                 server_ready=True,
-                force_master=True,
+                prefer_master=True,
                 startup_time=1760000000.5,
                 sync_direction="download-only",
             )
@@ -80,12 +80,12 @@ async def test_query_relays_the_election_advertisement(bootnode_factory, bucket,
     assert response["count"] == 2
     relayed = {p["cid"]: p for p in response["peers"]}
     assert relayed[cid_master]["server_ready"] is True
-    assert relayed[cid_master]["force_master"] is True
+    assert relayed[cid_master]["prefer_master"] is True
     assert relayed[cid_master]["never_master"] is False
     assert relayed[cid_master]["startup_time"] == 1760000000.5
     assert relayed[cid_master]["sync_direction"] == "download-only"
     assert relayed[cid_never]["server_ready"] is False
-    assert relayed[cid_never]["force_master"] is False
+    assert relayed[cid_never]["prefer_master"] is False
     assert relayed[cid_never]["never_master"] is True
     assert relayed[cid_never]["startup_time"] == 0.0
     assert relayed[cid_never]["sync_direction"] == "bidirectional"

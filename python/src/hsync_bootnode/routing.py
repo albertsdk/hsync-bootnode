@@ -50,7 +50,7 @@ class PeerRecord:
     # Election advertisement relayed verbatim from ``register`` (defaults when
     # the peer advertised none). The node never interprets these values.
     server_ready: bool = False
-    force_master: bool = False
+    prefer_master: bool = False
     never_master: bool = False
     startup_time: float = 0.0
     sync_direction: SyncDirection = "bidirectional"
@@ -92,7 +92,7 @@ class PeerRecord:
             reachable=bool(model.endpoints),
             capacity=model.capacity,
             server_ready=model.server_ready,
-            force_master=model.force_master,
+            prefer_master=model.prefer_master,
             never_master=model.never_master,
             startup_time=model.startup_time,
             sync_direction=model.sync_direction,

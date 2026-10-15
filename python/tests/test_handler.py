@@ -257,7 +257,7 @@ def test_election_advertisement_round_trips_through_query() -> None:
         register_frame(
             cid=CID,
             server_ready=True,
-            force_master=True,
+            prefer_master=True,
             startup_time=1760000000.5,
             sync_direction="download-only",
         ),
@@ -273,12 +273,12 @@ def test_election_advertisement_round_trips_through_query() -> None:
     assert response["count"] == 2
     relayed = {p["cid"]: p for p in response["peers"]}
     assert relayed[CID]["server_ready"] is True
-    assert relayed[CID]["force_master"] is True
+    assert relayed[CID]["prefer_master"] is True
     assert relayed[CID]["never_master"] is False
     assert relayed[CID]["startup_time"] == 1760000000.5
     assert relayed[CID]["sync_direction"] == "download-only"
     assert relayed[CID2]["server_ready"] is False
-    assert relayed[CID2]["force_master"] is False
+    assert relayed[CID2]["prefer_master"] is False
     assert relayed[CID2]["never_master"] is True
     assert relayed[CID2]["startup_time"] == 0.0
     assert relayed[CID2]["sync_direction"] == "bidirectional"
@@ -296,7 +296,7 @@ def test_election_advertisement_defaults_and_survives_refresh() -> None:
     record = h.routing.get(CID, "shared", "home")
     assert record is not None
     assert record.server_ready is False
-    assert record.force_master is False
+    assert record.prefer_master is False
     assert record.never_master is False
     assert record.startup_time == 0.0
     assert record.sync_direction == "bidirectional"
@@ -912,7 +912,7 @@ def test_wire_serialization_is_compact_and_spec_ordered() -> None:
         "capacity",
         "reachable",
         "server_ready",
-        "force_master",
+        "prefer_master",
         "never_master",
         "startup_time",
         "sync_direction",

@@ -146,7 +146,7 @@ async def test_refresh_does_not_mutate_capacity_or_advertisement(
     cid = random_cid(rng)
     async with BootClient(handle.port) as client:
         await client.exchange(
-            register_frame(cid, bucket, capacity=7, server_ready=True, force_master=True)
+            register_frame(cid, bucket, capacity=7, server_ready=True, prefer_master=True)
         )
         # When: a refresh (no capacity/election fields) is sent, then a query
         await client.exchange(refresh_frame(cid, bucket))
@@ -155,7 +155,7 @@ async def test_refresh_does_not_mutate_capacity_or_advertisement(
     peer = response["peers"][0]
     assert peer["capacity"] == 7
     assert peer["server_ready"] is True
-    assert peer["force_master"] is True
+    assert peer["prefer_master"] is True
 
 
 @pytest.mark.asyncio

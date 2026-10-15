@@ -159,7 +159,7 @@ class BootRegister(_BootFrame):
     (``0`` = not a seeder). The bootnode relays it in ``query`` responses; the
     authoritative value is the authenticated ``serve_slots`` (ADR 0030).
 
-    ``server_ready``/``force_master``/``never_master``/``startup_time``/
+    ``server_ready``/``prefer_master``/``never_master``/``startup_time``/
     ``sync_direction`` are the **election advertisement**: the same values the
     mDNS TXT record carries, relayed verbatim in ``query`` peers so a
     bootnode-discovered peer ranks exactly like a LAN-discovered one. The node
@@ -179,7 +179,7 @@ class BootRegister(_BootFrame):
     endpoints: list[Endpoint] = Field(default_factory=list, max_length=16)
     connected: int | None = Field(default=None, ge=0, le=CONNECTED_MAX)
     server_ready: bool = False
-    force_master: bool = False
+    prefer_master: bool = False
     never_master: bool = False
     startup_time: float = Field(default=0.0, ge=0, le=STARTUP_TIME_MAX)
     sync_direction: SyncDirection = "bidirectional"
@@ -259,7 +259,7 @@ class BootPeer(BaseModel):
     capacity: int = Field(default=0, ge=0, le=CAPACITY_MAX)
     reachable: bool = True
     server_ready: bool = False
-    force_master: bool = False
+    prefer_master: bool = False
     never_master: bool = False
     startup_time: float = Field(default=0.0, ge=0, le=STARTUP_TIME_MAX)
     sync_direction: SyncDirection = "bidirectional"

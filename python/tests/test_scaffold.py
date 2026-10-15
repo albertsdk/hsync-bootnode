@@ -161,7 +161,7 @@ def test_election_advertisement_domain_bounds() -> None:
     }
     default = BootRegister(**register)
     assert default.server_ready is False
-    assert default.force_master is False
+    assert default.prefer_master is False
     assert default.never_master is False
     assert default.startup_time == 0.0
     assert default.sync_direction == "bidirectional"
@@ -169,12 +169,12 @@ def test_election_advertisement_domain_bounds() -> None:
     advertised = BootRegister(
         **register,
         server_ready=True,
-        force_master=True,
+        prefer_master=True,
         startup_time=1760000000.5,
         sync_direction="upload-only",
     )
     assert advertised.server_ready is True
-    assert advertised.force_master is True
+    assert advertised.prefer_master is True
     assert advertised.startup_time == 1760000000.5
     assert advertised.sync_direction == "upload-only"
 

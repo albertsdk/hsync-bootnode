@@ -208,17 +208,17 @@ authenticated data-plane handshake (ADR 0030), so a client must never treat
 random sample by `capacity`, so a self-declared value buys no priority; `refresh`
 neither carries nor changes it.
 
-## Election advertisement (`server_ready`, `force_master`, `never_master`)
+## Election advertisement (`server_ready`, `prefer_master`, `never_master`)
 
 A `register` may also carry the master-election advertisement: the three flags
-`server_ready`, `force_master`, `never_master` plus `startup_time` and
+`server_ready`, `prefer_master`, `never_master` plus `startup_time` and
 `sync_direction` (defaults: `false`, `false`, `false`, `0.0` and
 `bidirectional`). The node stores them and echoes them on every peer of a
 `query` response, so devices that find each other through the node run the same
 master election they would run on a local network:
 
 - `server_ready` marks the device that is currently serving the bucket: it wins
-  the election over a newcomer, even one pinned with `force_master`, so a peer
+  the election over a newcomer, even one pinned with `prefer_master`, so a peer
   that joins later does not trigger a takeover.
 - `never_master` excludes a device from candidacy (`hsync p2p --never-master`).
 - `startup_time` and `sync_direction` break remaining ties deterministically.

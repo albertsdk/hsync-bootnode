@@ -687,7 +687,7 @@ class BootHandler:
             capacity=record.capacity,
             reachable=record.reachable,
             server_ready=record.server_ready,
-            force_master=record.force_master,
+            prefer_master=record.prefer_master,
             never_master=record.never_master,
             startup_time=record.startup_time,
             sync_direction=record.sync_direction,

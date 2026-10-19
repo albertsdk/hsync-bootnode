@@ -55,13 +55,12 @@ class PeerRecord:
     startup_time: float = 0.0
     sync_direction: SyncDirection = "bidirectional"
     expires_at: float = field(default_factory=lambda: time.monotonic() + DEFAULT_TTL)
-    # Materialized wire projection, lazily built by BootHandler._to_peer. Valid for
-    # this object's lifetime: register always creates a NEW PeerRecord, and refresh
-    # only mutates connected/expires_at (neither is part of BootPeer). Every other
-    # field IS part of BootPeer (the endpoints list, capacity, reachable and the
-    # election advertisement), so none of them may be mutated in place after the
-    # wire cache is built; a changed value requires a fresh register (new
-    # PeerRecord), or the cache goes stale.
+    # Materialized wire projection, lazily built by BootHandler._to_peer. Valid
+    # until a field changes: register always creates a NEW PeerRecord, and a
+    # refresh that changes ``connected`` invalidates this cache. Every other
+    # field IS part of BootPeer (the endpoints list, capacity, reachable, the
+    # connected count and the election advertisement), so none of them may be
+    # mutated in place without a fresh register (new PeerRecord) or a reset.
     wire: BootPeer | None = field(default=None, repr=False, compare=False)
 
     def is_expired(self, now: float | None = None) -> bool:

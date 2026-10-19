@@ -257,6 +257,7 @@ class BootPeer(BaseModel):
     group: str | None = None
     version: str = Field(min_length=1, max_length=64)
     capacity: int = Field(default=0, ge=0, le=CAPACITY_MAX)
+    connected: int = Field(default=0, ge=0, le=CONNECTED_MAX)
     reachable: bool = True
     server_ready: bool = False
     prefer_master: bool = False

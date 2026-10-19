@@ -241,6 +241,32 @@ def test_capacity_defaults_to_zero_and_survives_refresh() -> None:
     response = decoded(send(h, query_frame(limit=10), peer_ip="10.0.0.1", peer_port=1111))
     assert response is not None
     assert response["peers"][0]["capacity"] == 0
+    # The advisory connected count was refreshed and must be relayed too.
+    assert response["peers"][0]["connected"] == 7
+
+
+def test_query_relays_the_connected_count() -> None:
+    """A peer's connected count is relayed so peers can display group presence."""
+    h = make_handler()
+    send(h, register_frame(connected=2), peer_ip="198.51.100.7", peer_port=54321)
+
+    response = decoded(send(h, query_frame(limit=10), peer_ip="10.0.0.1", peer_port=1111))
+
+    assert response is not None
+    assert response["peers"][0]["connected"] == 2
+
+
+def test_refresh_updates_a_cached_connected_count() -> None:
+    """A refresh invalidates the cached wire projection, not a stale count."""
+    h = make_handler()
+    send(h, register_frame(connected=1), peer_ip="198.51.100.7", peer_port=54321)
+    first = decoded(send(h, query_frame(limit=10), peer_ip="10.0.0.1", peer_port=1111))
+    assert first["peers"][0]["connected"] == 1
+
+    send(h, refresh_frame(connected=3), peer_ip="198.51.100.7", peer_port=54321)
+    second = decoded(send(h, query_frame(limit=10), peer_ip="10.0.0.1", peer_port=1111))
+
+    assert second["peers"][0]["connected"] == 3
 
 
 def test_election_advertisement_round_trips_through_query() -> None:
@@ -910,6 +936,7 @@ def test_wire_serialization_is_compact_and_spec_ordered() -> None:
         "group",
         "version",
         "capacity",
+        "connected",
         "reachable",
         "server_ready",
         "prefer_master",

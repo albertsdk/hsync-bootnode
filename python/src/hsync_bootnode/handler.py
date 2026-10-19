@@ -414,8 +414,11 @@ class BootHandler:
                 )
             return None
         record.touch(self.ttl)
-        if model.connected is not None:
+        if model.connected is not None and model.connected != record.connected:
             record.connected = model.connected
+            # ``connected`` is part of the wire projection: drop the cached
+            # BootPeer so the next query reflects the refreshed count.
+            record.wire = None
         if debug_enabled():
             debug_event(
                 "refresh ack",
@@ -685,6 +688,7 @@ class BootHandler:
             group=record.group,
             version=record.version,
             capacity=record.capacity,
+            connected=record.connected,
             reachable=record.reachable,
             server_ready=record.server_ready,
             prefer_master=record.prefer_master,

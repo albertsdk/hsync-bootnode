@@ -13,6 +13,7 @@ is covered separately by ``test_compile_script.py``).
 
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -38,3 +39,33 @@ def test_run_script_console_path_is_windows_aware() -> None:
     assert 'VENV_BIN_DIR="Scripts"' in script
     assert 'BIN_EXT=".exe"' in script
     assert 'readonly BIN="${PY_DIR}/.venv/${VENV_BIN_DIR}/hsync-bootnode${BIN_EXT}"' in script
+
+
+_WINDOWS = _ROOT / "packaging" / "windows"
+
+
+def test_frozen_service_passes_the_keys_file() -> None:
+    """WinSW cannot inherit a descriptor: the installed service uses the file."""
+    xml = (_WINDOWS / "hsync-bootnode-service-frozen.xml").read_text(encoding="utf-8")
+    assert "--keys-file %ProgramData%\\hsync-bootnode\\group-keys" in xml
+
+
+def test_source_service_documents_the_keys_file() -> None:
+    xml = (_WINDOWS / "hsync-bootnode-service.xml").read_text(encoding="utf-8")
+    assert "HSYNC_BOOTNODE_KEYS_FILE" in xml
+    assert "HSYNC_BOOTNODE_PRIVATE" in xml
+
+
+def test_windows_service_xml_is_well_formed() -> None:
+    """Comments must not contain ``--``: WinSW would refuse a malformed XML."""
+    for name in ("hsync-bootnode-service.xml", "hsync-bootnode-service-frozen.xml"):
+        ET.parse(_WINDOWS / name)
+
+
+def test_windows_installer_provisions_and_protects_the_keys_file() -> None:
+    """The frozen service needs the file present, read-only for LocalService."""
+    script = (_WINDOWS / "hsync-bootnode.iss").read_text(encoding="utf-8")
+    assert "group-keys" in script
+    assert "CurStepChanged" in script
+    assert "ssPostInstall" in script
+    assert "*S-1-5-19:R" in script

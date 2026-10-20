@@ -35,8 +35,16 @@ Restart-Service hsync-bootnode
   `C:\ProgramData\hsync-bootnode` (logs in the `logs` subdirectory).
 - The service definition is `hsync-bootnode-service.xml` next to
   `hsync-bootnode-service.exe` in the install directory.
-- Protected buckets / private node: set `HSYNC_BOOTNODE_PRIVATE` and the group
-  keys in the service definition — see [Usage](../docs/usage.md).
+- Protected buckets / private node: the installer creates
+  `C:\ProgramData\hsync-bootnode\group-keys` **empty** (open mode) and grants
+  administrators write access / `LocalService` read access. Provision one
+  `bucket=<hex-group-key>` line per protected bucket there and restart the
+  service. The installed service already passes `--keys-file` for that file; for
+  a fully private node uncomment the `HSYNC_BOOTNODE_PRIVATE` environment block
+  in `hsync-bootnode-service.xml` and restart. The node reads the file once at
+  startup and never writes it.
+- Read the fingerprint clients pin with
+  `hsync-bootnode identity show --identity C:\ProgramData\hsync-bootnode\identity.pem`.
 - To serve a **second** inbound UDP port (for clients whose network blocks UDP
   443), add `--ports 443,53` to the service `<arguments>` in the XML above and
   open the extra port — see `--ports` in

@@ -1,4 +1,4 @@
-.TH HSYNC-BOOTNODE 1 "2026-10-13" "hsync-bootnode 1.0.5" "User Commands"
+.TH HSYNC-BOOTNODE 1 "2026-10-20" "hsync-bootnode 1.0.5" "User Commands"
 .SH NAME
 hsync-bootnode \- HSYNC P2P bootstrap node (no-log, zero-knowledge)
 .SH SYNOPSIS
@@ -111,6 +111,18 @@ comments are ignored. Read once at startup, never written to disk. On POSIX the
 read is bounded in time, so a descriptor held open without EOF fails fast with a
 configuration error instead of hanging startup.
 .TP
+.BI run\ \fR--keys-file\fP= PATH
+File carrying the group keys in the same format as
+.BR \-\-keys\-fd ,
+read once at startup and never written. Portable alternative for service
+managers that cannot pass a descriptor (Windows/WinSW); mutually exclusive with
+.BR \-\-keys\-fd .
+The path must be a regular file (a symlink is refused); on POSIX a
+group-writable or world\-accessible file is reported on the always\-on warning
+channel (0640 group\-read is accepted).
+Env form:
+.BR HSYNC_BOOTNODE_KEYS_FILE .
+.TP
 .B run\ \fR--private\fP
 Private node: every frame must carry a valid
 .I bucket_token
@@ -174,6 +186,10 @@ to keep the TLS identity in memory (no identity file); same as
 Integer file descriptor carrying the group keys; same as
 .BR "run \-\-keys\-fd" .
 .TP
+.B HSYNC_BOOTNODE_KEYS_FILE
+Path of the group-keys file; same as
+.BR "run \-\-keys\-file" .
+.TP
 .B HSYNC_BOOTNODE_DEBUG
 Set to
 .I 1
@@ -209,10 +225,13 @@ e.g. python/compile.sh).
 Group keys for protected buckets, one
 .I bucket=<hex\-key>
 per line. The package creates it empty on install (an empty file means open
-mode — no protected buckets); the administrator provisions the keys over it
+mode \(em no protected buckets); the administrator provisions the keys over it
 (never part of the package; a root-only 0750 directory holds it). It is exposed
 to the service only through the systemd credential mechanism (see
 .BR HSYNC_BOOTNODE_KEYS_FD ).
+pass it with
+.B \-\-keys\-file
+instead when a service manager cannot inherit a descriptor (Windows).
 .TP
 .I /var/lib/hsync-bootnode/identity.pem
 Example explicit path for the persistent TLS identity (certificate + private
@@ -236,6 +255,9 @@ StandardOutput=null). Installed but not enabled: opt in with
 Standalone executable (symlink to
 .IR /usr/lib/hsync-bootnode/hsync-bootnode ).
 .SH EXAMPLES
+.TP
+Private node with the keys read from a file (portable form):
+.B hsync-bootnode run --private --keys-file /etc/hsync-bootnode/group-keys
 .TP
 Open mode (no protected buckets):
 .B hsync-bootnode run --host 0.0.0.0 --port 443

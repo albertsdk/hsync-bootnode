@@ -67,6 +67,13 @@ Filename: "{sys}\icacls.exe"; \
     Parameters: """{commonappdata}\hsync-bootnode"" /grant *S-1-5-19:(OI)(CI)M /T"; \
     Flags: runhidden waituntilterminated; \
     StatusMsg: "Preparing the HSYNC bootnode data directory..."
+; The group-keys file is created empty by [Code] before this section runs.
+; Administrators/SYSTEM keep full control, LocalService only reads it, and
+; inherited permissions are removed so the data-dir grant cannot widen it.
+Filename: "{sys}\icacls.exe"; \
+    Parameters: """{commonappdata}\hsync-bootnode\group-keys"" /inheritance:r /grant:r *S-1-5-32-544:F *S-1-5-18:F *S-1-5-19:R"; \
+    Flags: runhidden waituntilterminated; \
+    StatusMsg: "Protecting the HSYNC bootnode group keys file..."
 Filename: "{app}\hsync-bootnode-service.exe"; Parameters: "install"; \
     Flags: runhidden waituntilterminated; \
     StatusMsg: "Installing the HSYNC bootnode service..."
@@ -79,3 +86,18 @@ Filename: "{app}\hsync-bootnode-service.exe"; Parameters: "stop"; \
     Flags: runhidden waituntilterminated; RunOnceId: "StopService"
 Filename: "{app}\hsync-bootnode-service.exe"; Parameters: "uninstall"; \
     Flags: runhidden waituntilterminated; RunOnceId: "RemoveService"
+
+[Code]
+{ The frozen service always passes --keys-file, so the file must exist before
+  the service starts: an empty file means open mode (no protected buckets). }
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  KeysFile: String;
+begin
+  if CurStep = ssPostInstall then
+  begin
+    KeysFile := ExpandConstant('{commonappdata}\hsync-bootnode\group-keys');
+    if not FileExists(KeysFile) then
+      SaveStringToFile(KeysFile, '', False);
+  end;
+end;

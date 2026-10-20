@@ -14,6 +14,7 @@ import errno
 import os
 import select
 import signal
+import stat
 import sys
 import time
 from collections.abc import Sequence
@@ -54,9 +55,13 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 
-# Group keys arrive on a file descriptor ('bucket=<hex-key>' lines); envvar
-# form for the systemd/launchd/Windows wrappers. Read once, never written.
+# Group keys arrive on a file descriptor ('bucket=<hex-key>' lines) or an
+# operator-managed file; envvar forms for the systemd/launchd/Windows wrappers.
+# Read once, never written.
 _DEFAULT_KEYS_FD_ENV = "HSYNC_BOOTNODE_KEYS_FD"
+# Portable alternative for service managers that cannot inherit a descriptor
+# (Windows/WinSW): an operator-managed file, read once and never written.
+_DEFAULT_KEYS_FILE_ENV = "HSYNC_BOOTNODE_KEYS_FILE"
 # Opt-in peer-aware stderr debug stream (see diagnostics.py).
 _DEFAULT_DEBUG_ENV = "HSYNC_BOOTNODE_DEBUG"
 # Readiness seam: PID written here once the listener is bound (no peer data).
@@ -230,6 +235,16 @@ def run(
         envvar=_DEFAULT_KEYS_FD_ENV,
         help="FD with group keys (one 'bucket=<hex-key>' per line). Env: HSYNC_BOOTNODE_KEYS_FD.",
     ),
+    keys_file: str | None = typer.Option(
+        None,
+        "--keys-file",
+        envvar=_DEFAULT_KEYS_FILE_ENV,
+        help=(
+            "File with group keys (one 'bucket=<hex-key>' per line), read once "
+            "at startup. Alternative to --keys-fd for service managers that "
+            "cannot pass a descriptor (Windows). Env: HSYNC_BOOTNODE_KEYS_FILE."
+        ),
+    ),
     private: bool = typer.Option(
         False,
         "--private",
@@ -304,7 +319,7 @@ def run(
     resolved_host, resolved_ports = _resolve_listeners(host, port, ports)
     limits = ResourceLimits.detect()
     try:
-        keys = _load_keys(keys_fd)
+        keys = _load_keys(keys_fd, keys_file)
         handler = BootHandler(
             protected_buckets=protected_bucket,
             private=private,
@@ -649,8 +664,20 @@ async def _prune_loop(
             connection_guard.evict_stale()
 
 
-def _load_keys(keys_fd: int | None) -> dict[str, SecretStr]:
-    """Load 'bucket=<hex-key>' lines from the given FD (cross-platform)."""
+def _load_keys(keys_fd: int | None, keys_file: str | None = None) -> dict[str, SecretStr]:
+    """Load 'bucket=<hex-key>' lines from a descriptor or an operator file.
+
+    ``--keys-fd`` is the preferred source on POSIX service managers: the key
+    payload never has a path inside the sandbox that the process could reopen.
+    ``--keys-file`` is the portable alternative (a Windows service cannot
+    inherit an arbitrary descriptor): the file is read once at startup, never
+    written, and may be deleted by the operator afterwards. The two sources are
+    mutually exclusive.
+    """
+    if keys_fd is not None and keys_file is not None:
+        raise BootConfigError("--keys-fd and --keys-file are mutually exclusive")
+    if keys_file is not None:
+        return _load_keys_file(keys_file)
     if keys_fd is None or keys_fd < 0:
         return {}
     if keys_fd in (1, 2):
@@ -660,7 +687,42 @@ def _load_keys(keys_fd: int | None) -> dict[str, SecretStr]:
             f"refusing to read group keys from fd {keys_fd} (stdout/stderr); "
             "pass the descriptor of the actual keys file (e.g. --keys-fd 5)"
         )
-    raw = _read_fd(keys_fd)
+    return _parse_keys(_read_fd(keys_fd))
+
+
+def _load_keys_file(path: str) -> dict[str, SecretStr]:
+    """Read an operator-managed keys file once (see :func:`_load_keys`)."""
+    target = Path(path)
+    if target.is_symlink():
+        raise BootConfigError(f"refusing to read group keys from symlink {path}")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(target, flags)
+    except OSError as exc:
+        raise BootConfigError(f"cannot open group keys file {path}: {exc.strerror}") from exc
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise BootConfigError(f"group keys source {path} is not a regular file")
+        mode = stat.S_IMODE(info.st_mode)
+        if mode & 0o037:
+            # Group-write/execute or any world access is a real secret-handling
+            # defect; 0640 (group read) is accepted for service accounts. The
+            # file is the operator's (not peer data): warn on the always-on
+            # channel and keep serving instead of refusing a working deployment.
+            warn_event(
+                "group keys file permissions are too open",
+                path=str(path),
+                reason=f"mode {oct(mode)}; restrict it to 0600 or 0640",
+            )
+        raw = _read_fd(fd, source=f"file {path}")
+    finally:
+        os.close(fd)
+    return _parse_keys(raw)
+
+
+def _parse_keys(raw: str) -> dict[str, SecretStr]:
+    """Parse 'bucket=<hex-key>' lines (comments and blank lines ignored)."""
     keys: dict[str, SecretStr] = {}
     for raw_line in raw.splitlines():
         line = raw_line.strip()
@@ -672,15 +734,17 @@ def _load_keys(keys_fd: int | None) -> dict[str, SecretStr]:
     return keys
 
 
-def _read_fd(fd: int) -> str:
+def _read_fd(fd: int, *, source: str | None = None) -> str:
     """Read all bytes from an integer file descriptor (fd 1/2 excluded upstream).
 
     The total payload is bounded (keys are finitely many short lines) and, on
     POSIX, the wait is bounded in time too: a descriptor that never returns EOF
     (a misrouted stdin, a pipe held open) fails fast instead of stalling startup
     or growing without bound. On Windows ``select`` does not cover pipes/files,
-    so there only the byte cap applies.
+    so there only the byte cap applies. ``source`` only labels error messages
+    (a descriptor or an operator file).
     """
+    where = source or f"fd {fd}"
     chunks: list[bytes] = []
     total = 0
     deadline = time.monotonic() + KEYS_FD_READ_TIMEOUT_SECONDS
@@ -688,7 +752,7 @@ def _read_fd(fd: int) -> str:
         if not _fd_readable_before(fd, deadline):
             raise BootConfigError(
                 f"group keys not received within {KEYS_FD_READ_TIMEOUT_SECONDS:g}s on "
-                f"fd {fd}: the descriptor must present whole, short lines and then EOF"
+                f"{where}: the descriptor must present whole, short lines and then EOF"
             )
         chunk = os.read(fd, 4096)
         if not chunk:
@@ -696,7 +760,7 @@ def _read_fd(fd: int) -> str:
         total += len(chunk)
         if total > KEYS_FD_MAX_BYTES:
             raise BootConfigError(
-                f"group keys payload exceeded {KEYS_FD_MAX_BYTES} bytes on fd {fd}: "
+                f"group keys payload exceeded {KEYS_FD_MAX_BYTES} bytes on {where}: "
                 "the descriptor must present whole, short lines and EOF"
             )
         chunks.append(chunk)

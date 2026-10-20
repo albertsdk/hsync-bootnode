@@ -37,7 +37,7 @@ to clients:
 hsync-bootnode run --identity /var/lib/hsync-bootnode/identity.pem
 
 # then, in another terminal, read the fingerprint:
-hsync-bootnode identity show
+hsync-bootnode identity show --identity /var/lib/hsync-bootnode/identity.pem
 ```
 
 Clients then pin it with `--bootnode-fingerprint <fingerprint>` (or confirm it
@@ -80,7 +80,8 @@ hsync-bootnode run --identity /var/lib/hsync-bootnode/identity.pem \
 ```
 
 `--public-host` is repeatable. Changing the SAN requires regenerating the
-certificate, so the fingerprint changes too — see the rotation window above.
+certificate, so the fingerprint changes too — see the rotation window above, and
+repeat every public host when you rotate.
 
 ## How do I rotate the node identity without breaking clients?
 
@@ -89,13 +90,16 @@ a restart reuses the same fingerprint. To change it deliberately — e.g. after 
 suspected compromise — rotate it:
 
 ```bash
-hsync-bootnode identity rotate --public-host boot.example.com
+hsync-bootnode identity rotate --identity /var/lib/hsync-bootnode/identity.pem \
+    --public-host boot.example.com
 ```
 
 Rotation prints the new fingerprint; during the change window clients can be
 given both fingerprints (the client accepts up to two pins), then moved to the
-new one. A node started with `--ephemeral` is the exception: it keeps the identity
-in memory, so *any* restart changes the fingerprint — do not pin such a node.
+new one. Repeat every `--public-host` the node was created with: rotation does
+not copy the old SANs. A node started with `--ephemeral` is the exception: it
+keeps the identity in memory, so *any* restart changes the fingerprint — do not
+pin such a node.
 
 ## I ran a *public* node — do clients need a fingerprint?
 
@@ -155,8 +159,8 @@ or 2.36 (Debian 12). `-t deb` is **not** a fix: it builds that same host payload
 and merely moves the failure from exec time to `dpkg -i`.
 
 **Fix.** Use the cross-build target, which compiles inside a Debian 12
-(bookworm) container with its own CPython 3.12 and has a glibc floor of **2.35**,
-then install that package on the machine:
+(bookworm) container with its own CPython 3.12; the produced package's measured
+glibc floor is **2.35**, then install it on the machine:
 
 ```bash
 uname -m   # x86_64 → amd64; aarch64 → arm64; armv7l → armhf
@@ -180,10 +184,10 @@ dpkg-deb -x dist/deb/hsync-bootnode_*_amd64.deb /tmp/hsync-bootnode-bin
 run there freezes that machine's own interpreter and matches it by construction.
 It needs Python 3.12+ and the build dependencies (`CONTRIBUTING.md`).
 
-**Which targets work.** The container build reaches glibc 2.35, so Debian 12 and
-Ubuntu 22.04 or newer run it; Debian 11 and Ubuntu 20.04 (glibc 2.31) do not —
-build on the machine itself there. Check the glibc of the destination with
-`ldd --version | head -1`.
+**Which targets work.** The produced package requires `libc6 >= 2.35`, so
+Debian 12 and Ubuntu 22.04 or newer run it; Debian 11 and Ubuntu 20.04 (glibc
+2.31) do not — build on the machine itself there. Check the glibc of the
+destination with `ldd --version | head -1`.
 
 **Do not trust `Depends:`.** The `libc6` dependency of the package is computed
 from the launcher only: the bundled Python and `libgcc_s` that actually need
@@ -198,6 +202,8 @@ open /home/USER/.local/share/hsync-bootnode/.env: permission denied
 
 The snap-packaged `docker` is confined and cannot read hidden paths under
 `$HOME`; the default install directory `~/.local/share/hsync-bootnode` is
-hidden, so `docker compose` cannot load `.env`. Install Docker Engine instead of
-the snap, or use a non-hidden `--install-dir` — see
+hidden, so `docker compose` cannot load `.env`. The installer detects this and
+falls back to `$HOME/hsync-bootnode` automatically; an explicit `--install-dir`
+under a hidden path is refused. Install Docker Engine instead of the snap if you
+want to keep a hidden directory — see
 [Getting Started — Docker installed as a snap](getting-started-script.md#docker-installed-as-a-snap).

@@ -418,7 +418,7 @@ _finalize_deb_stage() {
 }
 
 # Compute the shared-library dependency string for the staged main executable
-# using dpkg-shlibdeps (e.g. "libc6 (>= 2.36)"); empty if unavailable. Must
+# using dpkg-shlibdeps (e.g. "libc6 (>= 2.35)"); empty if unavailable. Must
 # run in the target architecture's dpkg environment: on the host for
 # build_deb, inside the per-arch container for build_deb_all.
 # $1 = stage_dir
@@ -538,7 +538,9 @@ build_deb() {
 
 # Build .deb packages for all 3 Debian/Ubuntu architectures (amd64, arm64,
 # armhf) via Docker cross-builds — one build per arch (the builder base is the
-# multi-arch ``python:3.12-bookworm`` image, selected via --platform):
+# multi-arch ``python:3.12-bookworm`` image (base glibc 2.36; the produced
+# package's measured floor is libc6 >= 2.35, so it runs on Ubuntu 22.04/24.04 LTS
+# and Debian 12+), selected via --platform):
 #   amd64 → linux/amd64
 #   arm64 → linux/arm64
 #   armhf → linux/arm/v7
@@ -947,7 +949,8 @@ build_native() {
 # architecture: armhf (32-bit, armv7) and arm64 (64-bit, aarch64). PyInstaller
 # cannot cross-compile, so each binary is produced by running the selected
 # language's script inside an emulated python:3.12-bookworm container (Raspberry
-# Pi OS Bookworm is Debian 12 / glibc 2.36, matching the base image).
+# Pi OS Bookworm is Debian 12 / glibc 2.36; the produced binaries require
+# libc6 >= 2.35, so Bookworm runs them and Bullseye's 2.31 does not).
 #
 # Output: dist/rpi/<arch>/hsync-bootnode
 build_rpi() {

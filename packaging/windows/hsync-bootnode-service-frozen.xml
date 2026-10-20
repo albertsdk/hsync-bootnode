@@ -17,14 +17,17 @@
   <description>HSYNC P2P bootstrap node (boot/1, QUIC/UDP 443, no-log)</description>
 
   <executable>%BASE%\hsync-bootnode.exe</executable>
-  <arguments>run --host 0.0.0.0 --port 443 --identity %ProgramData%\hsync-bootnode\identity.pem</arguments>
+  <arguments>run --host 0.0.0.0 --port 443 --identity %ProgramData%\hsync-bootnode\identity.pem --keys-file %ProgramData%\hsync-bootnode\group-keys</arguments>
   <workingdirectory>%BASE%</workingdirectory>
 
   <startmode>Automatic</startmode>
   <onfailure action="restart" delay="5000"/>
 
-  <!-- Private node (protected-bucket policy node-wide): require a valid
-       bucket_token on every frame. Uncomment and set the group keys to enable.
+  <!-- The installer creates group-keys empty (open mode) and grants write
+       access to administrators only, read access to LocalService. Provision
+       one bucket=<hex-group-key> line per protected bucket there, then
+       uncomment this block for a private node (every bucket gated). -->
+  <!--
   <env name="HSYNC_BOOTNODE_PRIVATE" value="1"/>
   -->
 

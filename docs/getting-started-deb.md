@@ -4,6 +4,9 @@ The `.deb` installs the node as a hardened systemd service under a dynamic user
 with `CAP_NET_BIND_SERVICE` (so it can bind UDP 443), and provisions group keys
 as a systemd credential. No Docker and no Python are required.
 
+> The packages are built on Debian 12 (base glibc 2.36); the produced package
+> requires `libc6 >= 2.35`, so Ubuntu 22.04/24.04 LTS and Debian 12+ run it.
+
 ## Prerequisites
 
 - <img src="assets/os/debian.svg" alt="Debian" width="16" height="16"> <img src="assets/os/ubuntu.svg" alt="Ubuntu" width="16" height="16"> Debian or Ubuntu, `amd64`, `arm64` or `armhf`
@@ -49,13 +52,22 @@ credential. Provision the keys over it:
 sudo install -m 0640 /path/to/group-keys /etc/hsync-bootnode/group-keys
 ```
 
-The file has one `bucket=<hex-group-key>` line per protected bucket. To make a
-bucket protected, add `--protected-bucket BUCKET` with a drop-in, and for a
-fully private node set:
+The file has one `bucket=<hex-group-key>` line per protected bucket. A drop-in
+cannot append an argument to `ExecStart`, so replace the whole command while
+keeping the identity path, the keys source and the credential redirection:
 
 ```bash
 sudo systemctl edit hsync-bootnode.service
 ```
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/bin/sh -c 'exec /usr/bin/hsync-bootnode run --host 0.0.0.0 --port 443 --identity /var/lib/hsync-bootnode/identity.pem --protected-bucket BUCKET --keys-fd 5 5<"$CREDENTIALS_DIRECTORY/group-keys"'
+```
+
+For a fully private node (every bucket gated), an environment drop-in is enough
+and keeps the unit's command untouched:
 
 ```ini
 [Service]
@@ -94,21 +106,22 @@ sudo systemctl restart hsync-bootnode.service
 ```
 
 Open UDP 53 in the host firewall too, and free that port if the local resolver
-already holds it. If you provisioned group keys, the unit passes `--keys-fd`
-automatically; keep `LoadCredential=` and add
-`--keys-fd 5 5<"$CREDENTIALS_DIRECTORY/group-keys"` to the command above. See
-`--ports` in [usage.md](usage.md#run-options).
+already holds it. If you provisioned group keys, this override **loses** the
+unit's automatic `--keys-fd`: keep `LoadCredential=` and append
+`--keys-fd 5 5<"$CREDENTIALS_DIRECTORY/group-keys"` to the command (as in the
+protected-bucket example above). See `--ports` in
+[usage.md](usage.md#run-options).
 
 ## Verify the node is running
 
 ```bash
 sudo journalctl -u hsync-bootnode.service
-sudo hsync-bootnode identity show
+sudo hsync-bootnode identity show --identity /var/lib/hsync-bootnode/identity.pem
 ```
 
 The identity command prints the certificate fingerprint clients pin. The
-persistent identity lives at the node's state path and stays stable across
-restarts.
+persistent identity lives at `/var/lib/hsync-bootnode/identity.pem` (the unit's
+`StateDirectory`) and stays stable across restarts.
 
 ## Manage and update
 

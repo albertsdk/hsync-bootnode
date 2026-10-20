@@ -9,8 +9,9 @@ Install:
   3. .\hsync-bootnode-service.exe install
      .\hsync-bootnode-service.exe start
 
-The service runs in open mode (no protected buckets) unless HSYNC_P2P group
-keys are provisioned out of band; see docs/usage.md for the keys-fd contract.
+The service runs in open mode (no protected buckets) unless a group-keys file
+is provisioned and passed with the keys-file option; see docs/usage.md for the
+keys contract.
 -->
 <service>
   <id>hsync-bootnode</id>
@@ -24,9 +25,14 @@ keys are provisioned out of band; see docs/usage.md for the keys-fd contract.
   <startmode>Automatic</startmode>
   <onfailure action="restart" delay="5000"/>
 
-  <!-- Private node (protected-bucket policy node-wide): require a valid bucket_token on every
-       frame. Uncomment to enable; the node then needs a group key for every
-       bucket it serves and fails fast at startup when it has none.
+  <!-- Protected buckets / private node: create the keys file (one
+       bucket=<hex-group-key> line per protected bucket) and either add the
+       keys-file option pointing at it to the <arguments> above, or uncomment
+       HSYNC_BOOTNODE_KEYS_FILE below. For a fully private node (every bucket
+       gated) also uncomment HSYNC_BOOTNODE_PRIVATE. The service reads the file
+       once at startup and never writes it. -->
+  <!--
+  <env name="HSYNC_BOOTNODE_KEYS_FILE" value="C:\ProgramData\hsync-bootnode\group-keys"/>
   <env name="HSYNC_BOOTNODE_PRIVATE" value="1"/>
   -->
 

@@ -31,7 +31,10 @@ days and to keep you informed of remediation progress.
   data never passes through it.
 - **Uniform refusals** — protected buckets return a uniform `token_required`
   refusal that never reveals whether a bucket exists; group keys are read once
-  from a file descriptor (`--keys-fd`), never from a path inside the sandbox.
+  from a file descriptor (`--keys-fd`) or an operator-managed file
+  (`--keys-file`, for service managers that cannot pass a descriptor, e.g.
+  Windows), never from a path inside the sandbox on POSIX, and the node never
+  writes them to disk.
 - **Rate limiting** — in-memory per-IP/bucket sliding windows; over-limit
   requests receive `rate_limited` with `retry_after`. A node at its host-derived
   routing-table ceiling answers `overloaded` (capacity backpressure; advisory

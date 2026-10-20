@@ -134,6 +134,122 @@ def test_load_keys_times_out_on_a_stuck_open_fd(monkeypatch) -> None:
         os.close(write_fd)
 
 
+def test_load_keys_from_file(tmp_path) -> None:
+    """An operator file is a first-class key source (Windows has no fd seam)."""
+    path = tmp_path / "group-keys"
+    path.write_text("shared=abc123\n# operator comment\nhome=def456\n", encoding="utf-8")
+    keys = _load_keys(None, str(path))
+    assert set(keys) == {"shared", "home"}
+    assert keys["shared"].get_secret_value() == "abc123"
+    assert keys["home"].get_secret_value() == "def456"
+
+
+def test_load_keys_empty_file_means_open_mode(tmp_path) -> None:
+    path = tmp_path / "group-keys"
+    path.write_text("", encoding="utf-8")
+    assert _load_keys(None, str(path)) == {}
+
+
+def test_load_keys_missing_file_fails_fast(tmp_path) -> None:
+    with pytest.raises(BootConfigError, match="cannot open group keys file"):
+        _load_keys(None, str(tmp_path / "missing"))
+
+
+def test_load_keys_fd_and_file_are_mutually_exclusive(tmp_path) -> None:
+    path = tmp_path / "group-keys"
+    path.write_text("shared=abc123\n", encoding="utf-8")
+    read_fd, write_fd = os.pipe()
+    os.close(write_fd)
+    try:
+        with pytest.raises(BootConfigError, match="mutually exclusive"):
+            _load_keys(read_fd, str(path))
+    finally:
+        os.close(read_fd)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="creating a symlink needs a privilege on Windows")
+def test_load_keys_refuses_a_symlink(tmp_path) -> None:
+    real = tmp_path / "real"
+    real.write_text("shared=abc123\n", encoding="utf-8")
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    with pytest.raises(BootConfigError, match="symlink"):
+        _load_keys(None, str(link))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_load_keys_warns_on_loose_permissions(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "group-keys"
+    path.write_text("shared=abc123\n", encoding="utf-8")
+    path.chmod(0o644)
+    events: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        "hsync_bootnode.cli.warn_event",
+        lambda event, **fields: events.append((event, fields)),
+    )
+    assert set(_load_keys(None, str(path))) == {"shared"}
+    assert events and events[0][0] == "group keys file permissions are too open"
+    assert events[0][1]["path"] == str(path)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_load_keys_accepts_a_group_readable_file(tmp_path, monkeypatch) -> None:
+    """0640 is the documented service-account mode: group read is allowed."""
+    path = tmp_path / "group-keys"
+    path.write_text("shared=abc123\n", encoding="utf-8")
+    path.chmod(0o640)
+    events: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        "hsync_bootnode.cli.warn_event",
+        lambda event, **fields: events.append((event, fields)),
+    )
+    assert set(_load_keys(None, str(path))) == {"shared"}
+    assert events == []
+
+
+def test_load_keys_file_caps_the_payload(tmp_path) -> None:
+    from hsync_bootnode.cli import KEYS_FD_MAX_BYTES
+
+    path = tmp_path / "group-keys"
+    path.write_bytes(b"shared=abc123\n" * 100_000)
+    with pytest.raises(BootConfigError, match="exceeded"):
+        _load_keys(None, str(path))
+    assert KEYS_FD_MAX_BYTES > 0
+
+
+def test_keys_file_and_fd_are_rejected_by_the_cli(tmp_path) -> None:
+    path = tmp_path / "group-keys"
+    path.write_text("shared=abc123\n", encoding="utf-8")
+    result = runner.invoke(
+        app,
+        ["run", "--keys-fd", "5", "--keys-file", str(path)],
+        env=_EPHEMERAL_ENV,
+    )
+    combined = result.output + getattr(result, "stderr", "")
+    assert result.exit_code == 2
+    assert "mutually exclusive" in combined
+
+
+def test_missing_keys_file_fails_fast_via_the_cli(tmp_path) -> None:
+    result = runner.invoke(
+        app,
+        ["run", "--keys-file", str(tmp_path / "missing")],
+        env=_EPHEMERAL_ENV,
+    )
+    combined = result.output + getattr(result, "stderr", "")
+    assert result.exit_code == 2
+    assert "cannot open group keys file" in combined
+
+
+def test_keys_options_are_documented_in_help() -> None:
+    result = runner.invoke(app, ["run", "--help"])
+    assert result.exit_code == 0
+    output = _plain(result.output)
+    assert "--keys-fd" in output
+    assert "--keys-file" in output
+    assert "HSYNC_BOOTNODE_KEYS_FILE" in output
+
+
 def test_ttl_out_of_range_is_rejected() -> None:
     for bad in ("0", "-1", "3601"):
         result = runner.invoke(app, ["run", "--ttl", bad])

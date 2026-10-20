@@ -106,6 +106,8 @@ The installer waits for the node to write its readiness PID. Check the logs and
 the certificate fingerprint clients pin:
 
 ```bash
+# use your --install-dir instead if you passed one (the snap fallback may have
+# moved the default to $HOME/hsync-bootnode)
 cd "$HOME/.local/share/hsync-bootnode"
 docker compose ps
 docker compose logs | grep -i fingerprint
@@ -114,6 +116,7 @@ docker compose logs | grep -i fingerprint
 ## Manage and update
 
 ```bash
+# use your --install-dir instead if you passed one
 cd "$HOME/.local/share/hsync-bootnode"
 docker compose logs -f
 docker compose restart

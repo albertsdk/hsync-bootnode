@@ -28,9 +28,10 @@ implementations sharing the same spec and fixtures (see the
 [repository layout](CONTRIBUTING.md#repository-layout)).
 
 > 👉 **Operational Advisory:** the bootnode is discovery-only — it never stores
-> or relays file data. Provision protected buckets and pin its TLS fingerprint
-> before exposing it to the Internet, and keep validated backups of any state you
-> care about elsewhere.
+> or relays file data. If you need a closed network, provision protected buckets;
+> distribute the node's TLS fingerprint to clients (or let them confirm it once at
+> the prompt) so they can pin it. Keep validated backups of any state you care
+> about elsewhere.
 
 ---
 
@@ -155,7 +156,7 @@ The other components of the HSYNC ecosystem:
 - [HSYNC Common](https://github.com/albertsdk/hsync-common/blob/main/README.md) — Shared library: data models, protocol, delta transfer, hashing.
 - [HSYNC Server](https://github.com/albertsdk/hsync-server/blob/main/README.md) — Central sync hub: REST API, WebSocket relay, file storage.
 - [HSYNC Client](https://github.com/albertsdk/hsync-client/blob/main/README.md) — CLI client: Server Mode and p2p Mode.
-- [HSYNC Desktop](https://github.com/albertsdk/hsync-desktop/blob/main/README.md) — Desktop GUI front-end. *(in development)*
+- [HSYNC Desktop](https://github.com/albertsdk/hsync-desktop/blob/main/README.md) — Desktop GUI front-end.
 - [HSYNC Android](https://github.com/albertsdk/hsync-android/blob/main/README.md) — Android client app. *(in development)*
 
 ## Security & Vulnerability Reporting

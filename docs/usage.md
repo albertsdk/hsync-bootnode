@@ -28,9 +28,10 @@ hsync-bootnode --version
 | `--public-host` | *(none)* | Public hostname or IP to add to the certificate SAN (repeatable). |
 | `--protected-bucket` | *(none)* | Bucket that requires a valid `bucket_token`. Repeatable. Declaring a protected bucket without provisioning its key fails fast at startup (exit code 2). |
 | `--keys-fd` | *(none)* | File descriptor carrying the group keys (see below). Environment variable form: `HSYNC_BOOTNODE_KEYS_FD`. |
+| `--keys-file` | *(none)* | File carrying the group keys (same `bucket=<hex-key>` format); read once at startup and never written. Portable alternative to `--keys-fd` for service managers that cannot pass a descriptor (Windows/WinSW); the two are mutually exclusive. A missing/non-regular file or a symlink is a configuration error (exit code 2); on POSIX a group-writable or world-accessible file is reported on the always-on warning channel (0640 group-read is accepted). Environment variable form: `HSYNC_BOOTNODE_KEYS_FILE`. |
 | `--private` | *(disabled flag)* | Private node: every frame must carry a valid `bucket_token`, for **every** bucket (not only `--protected-bucket`). Starting it with no group key fails fast (exit code 2). Environment variable form: `HSYNC_BOOTNODE_PRIVATE=1`. |
 | `--upnp` | *(disabled flag)* | Map the QUIC/UDP listener port(s) with UPnP (opt-in; off by default). With `--ports`, every bound port is mapped, so each offered door is also reachable from the WAN side. |
-| `--ttl` | `60` | Record TTL in seconds (1–3600). Peers refresh every 30 s, so the default 60 s matches the spec. Lower it for faster convergence in tests. |
+| `--ttl` | `60` | Record TTL in seconds (1–3600). Peers refresh every 30 s by default, so 60 s leaves one refresh of headroom. It must stay **above** the clients' refresh interval (`HSYNC_BOOTNODE_REFRESH_INTERVAL`, 30 s by default): a shorter TTL expires live records between two refreshes. Lower it only when the clients refresh more often (tests). |
 | `--debug` | *(disabled flag)* | Emit the full operation log to stderr (opt-in): connections, frames, decisions, record changes and TTL sweeps, **including the peer identity** (CID, bucket, IP, port). Every line is timestamped and self-identifying (`2026-09-30T10:30:45.123Z - hsync-bootnode[1234] debug: …`). Stderr only — never written to disk; without it no peer data leaves memory. Environment variable form: `HSYNC_BOOTNODE_DEBUG=1`. |
 | `--ready-file` | *(none)* | Write the process PID to this path once the listener is bound (readiness seam, contains no peer data). Environment variable form: `HSYNC_BOOTNODE_READY_FILE`. An unwritable path fails fast with exit code 4. |
 | `--no-rate-limit` | *(disabled flag)* | Disable rate limiting entirely (benchmark/test seam). Environment variable form: `HSYNC_BOOTNODE_NO_RATE_LIMIT=1`. Never enable in production — it removes the anti-abuse limits the spec requires. |
@@ -50,13 +51,18 @@ hsync-bootnode identity show
 
 Regenerates the persisted key+cert and prints the new fingerprint, which the
 operator distributes to clients. `--identity PATH` is optional and defaults to
-the standard state path; the old fingerprint stays accepted by clients during the
-rotation window (two-pin window). Rotation is also the recovery for a corrupted
-identity whose key no longer matches its certificate; a file that is not a valid
-PEM identity at all is refused (delete it and restart to regenerate).
+the standard state path; a POSIX service that uses an explicit `--identity` must
+repeat that flag here. Give clients both the old and the new fingerprint
+(`--bootnode-fingerprint` is repeatable) during the rotation window; the node
+itself keeps only the new certificate. Rotation does **not** copy the old SANs,
+so repeat every `--public-host` the node was created with. Rotation is also the
+recovery for a corrupted identity whose key no longer matches its certificate;
+a file that is not a valid PEM identity at all is refused (delete it and restart
+to regenerate).
 
 ```bash
-hsync-bootnode identity rotate --public-host boot.example.com
+hsync-bootnode identity rotate --identity /var/lib/hsync-bootnode/identity.pem \
+    --public-host boot.example.com
 ```
 
 ### `--version`
@@ -69,7 +75,7 @@ Prints the version and the protocol, e.g.
 | Code | Meaning |
 |---|---|
 | 0 | Normal termination (Ctrl+C / SIGTERM). |
-| 2 | Configuration error: missing/duplicate group key, `--private` without a key, out-of-range `--ttl`, etc. The node refuses to start. |
+| 2 | Configuration error: missing group key (a duplicate `bucket=` line is last-wins), `--private` without a key, `--keys-fd` together with `--keys-file`, out-of-range `--ttl`, etc. The node refuses to start. |
 | 3 | Listener bind failure: the port is privileged, already in use, or `--host` is not a local address. The stderr message explains how to fix it. |
 | 4 | Readiness-file failure: `--ready-file` points at a path the node cannot create (missing parent directory, no permission, or a stale file the `O_EXCL` seam refuses to overwrite). |
 
@@ -78,6 +84,7 @@ Prints the version and the protocol, e.g.
 | Variable | Meaning |
 |---|---|
 | `HSYNC_BOOTNODE_KEYS_FD` | Same as `--keys-fd`; the env-var form is what service wrappers set. |
+| `HSYNC_BOOTNODE_KEYS_FILE` | Same as `--keys-file`; the portable source for service managers that cannot pass a descriptor (Windows/WinSW). |
 | `HSYNC_BOOTNODE_IDENTITY` | Same as `--identity`; overrides the default state path of the persistent TLS identity. |
 | `HSYNC_BOOTNODE_EPHEMERAL` | Same as `--ephemeral`; set to `1` to keep the identity in memory (no identity file). |
 | `HSYNC_BOOTNODE_PRIVATE` | Same as `--private`; set to `1` to require a valid `bucket_token` on every frame. |
@@ -85,14 +92,24 @@ Prints the version and the protocol, e.g.
 | `HSYNC_BOOTNODE_READY_FILE` | Same as `--ready-file`; the readiness PID path used by tests/orchestrators. |
 | `HSYNC_BOOTNODE_NO_RATE_LIMIT` | Same as `--no-rate-limit`; benchmark/test seam, never in production. |
 
-## Group keys (`--keys-fd` / `HSYNC_BOOTNODE_KEYS_FD`)
+## Group keys (`--keys-fd` / `--keys-file`)
 
-Group keys provision **protected buckets**. The process reads them ONCE
-at startup from the given file descriptor — the key payload never touches a
-path inside the node's sandbox and is never written to disk. `stdout`/`stderr`
-(descriptors 1 and 2) are refused, the payload is capped (1 MiB) and, on POSIX,
-the read is bounded in time (about five seconds): a misrouted or stuck-open
-descriptor fails fast with a configuration error instead of stalling startup.
+Group keys provision **protected buckets**. They are read ONCE at startup from
+either a **file descriptor** (`--keys-fd`; the preferred form on POSIX service
+managers, where the key payload never has a path inside the sandbox that the
+process could reopen) or an **operator-managed file** (`--keys-file`; the
+portable form for Windows/WinSW and simple setups). The node never writes the
+key material to disk in either form. `stdout`/`stderr` (descriptors 1 and 2) are
+refused, the payload is capped (1 MiB) and, on POSIX, a descriptor read is
+bounded in time (about five seconds): a misrouted or stuck-open descriptor fails
+fast with a configuration error instead of stalling startup. `--keys-fd` and
+`--keys-file` are mutually exclusive.
+
+For `--keys-file`, the path must be a regular file (a symlink is refused),
+a group-writable or world-accessible file is reported on the always-on warning
+channel (0640 group-read is accepted), and the operator may delete the file
+after startup (the node keeps the keys in memory; restarting requires the file
+again).
 
 Line format (comments and blank lines are ignored):
 
@@ -107,6 +124,13 @@ Example with a systemd credential (fd 5):
 ```bash
 hsync-bootnode run --protected-bucket shared --keys-fd 5 \
     5< /etc/hsync-bootnode/group-keys
+```
+
+The portable file form (same payload, used by the Windows service):
+
+```bash
+hsync-bootnode run --protected-bucket shared \
+    --keys-file /etc/hsync-bootnode/group-keys
 ```
 
 Notes:
@@ -148,18 +172,23 @@ Notes:
   new protocol version and no client-side mode switch.
 - Refusals stay uniform (`token_required`, then `rate_limited` with
   `retry_after`): a client cannot tell which buckets exist or are provisioned.
-- Deployment: uncomment the `HSYNC_BOOTNODE_PRIVATE=1` example in the unit
-  shipped with your OS (see "Deploying as a service"); the env-var form is
-  exactly equivalent to the flag.
+- Deployment: uncomment the `HSYNC_BOOTNODE_PRIVATE=1` example in the unit or
+  service XML shipped with your OS (see "Deploying as a service"); the env-var
+  form is exactly equivalent to the flag. On Windows the keys file is passed
+  with `--keys-file` (the installer creates it empty and grants LocalService
+  read access).
 
 ### Provisioning and key rotation
 
 1. Mint one 64-hex group key per bucket (for example `openssl rand -hex 32`).
 2. Write one `bucket=<key>` line per bucket to
-   `/etc/hsync-bootnode/group-keys` (0640, root-owned) and start the node with
-   `--private --keys-fd 5`. An **empty** file means no protected buckets (open
-   mode); a standard service install ships it empty, so the node starts open
-   until you provision keys.
+   `/etc/hsync-bootnode/group-keys` (0640, root-owned) and pass it to the node
+   with `--keys-fd 5` (the packaged systemd/launchd units) or
+   `--keys-file /etc/hsync-bootnode/group-keys` (Windows and simple setups).
+   An **empty** file means no protected buckets (open mode); a standard service
+   install ships it empty, so the node starts open until you provision keys.
+   `--private` with an empty file is a configuration error (exit 2): provision
+   at least one key before enabling private mode.
 3. Distribute the same key to the clients allowed in that bucket: they derive
    `HMAC-SHA256(key, "boot/1" || bucket)[:32]` and send only the derived token.
 
@@ -247,11 +276,13 @@ can rely on.
   RAM with the configured `--ttl` (default 60 s, max 3600 s); the routing table,
   the group keys and the rate-limit windows are all in memory. Stop the process and
   every trace of the network is gone.
-- **No peer data on disk, ever** — the routing table, the group keys and the
-  rate-limit windows live only in memory. The single on-disk artifact is the
-  node's own self-signed key+cert (ECDSA P-256, `0600` inside a `0700`
-  directory), kept by default so the fingerprint is stable and clients can pin
-  it; `--ephemeral` drops even that and writes nothing to disk.
+- **No peer data on disk, ever** — the routing table and the rate-limit windows
+  live only in memory; the group keys are read once into memory and never
+  written. The only persistent artifact is the node's own self-signed key+cert
+  (ECDSA P-256, `0600` inside a `0700` directory), kept by default so the
+  fingerprint is stable and clients can pin it; `--ephemeral` drops even that.
+  With `--ready-file` (used by the container installer) an ephemeral PID file is
+  also written and removed on graceful shutdown.
 - **Uniform refusals (no enumeration oracle)** — a wrong/missing token and a bucket
   with no key loaded are answered with the same `token_required` (then
   `rate_limited` with `retry_after`), compared in constant time in both cases, so
@@ -287,7 +318,8 @@ can rely on.
   any handshake work runs and sized from the host's RAM and CPU. QUIC receive
   windows are bounded too, so a connection cannot buffer unbounded input. A
   connection or handshake flood is throttled without external help (works with a
-  bare listener, no firewall/nginx needed).
+  bare listener, no firewall/nginx needed for per-source floods; a distributed
+  volumetric attack still needs upstream mitigation).
 - **Layered in-memory rate limits**, every window keyed by source address so one
   peer cannot exhaust another's budget: the valid-frame admission (~10 req/s,
   burst 50), per-`(IP, bucket)` windows for `register`/`refresh` (10/min) and
@@ -328,8 +360,9 @@ can rely on.
 
 The node keeps a persistent, self-signed TLS identity (ECDSA P-256), created on
 first run and reused afterwards, so its fingerprint is stable across restarts and
-clients can pin it. Its key+cert is the node's **only** on-disk artifact (never
-peer data). By default it lives at
+clients can pin it. Its key+cert is the node's only **persistent** artifact
+(never peer data; with `--ready-file` an ephemeral PID file is also written and
+removed on graceful shutdown). By default it lives at
 `$XDG_STATE_HOME/hsync/bootnode/identity.pem` (`~/.local/state/…`); set an
 explicit path (e.g. a service directory) with `--identity`:
 
@@ -347,7 +380,7 @@ refusing a mismatched or corrupted file instead of failing later in the TLS
 handshake. Read the fingerprint and distribute it to clients out of band:
 
 ```bash
-hsync-bootnode identity show
+hsync-bootnode identity show --identity /var/lib/hsync-bootnode/identity.pem
 ```
 
 `--ephemeral` writes no identity file: the fingerprint then changes on every
@@ -356,11 +389,14 @@ throwaway node. Clients authenticate the node by fingerprint: a terminal confirm
 the first contact at the prompt, an unattended client pins it with
 `--bootnode-fingerprint` (or trusts the first sighting with `--bootnode-tofu`);
 see the client `p2p-bootnode` documentation. To rotate the key
-(e.g. after a suspected compromise), regenerate it and move clients to the new
-fingerprint in a two-pin window:
+(e.g. after a suspected compromise), regenerate it, give clients both the old
+and the new fingerprint (`--bootnode-fingerprint` is repeatable) during the
+rotation window, then move them to the new one. Rotation does **not** copy the
+old SANs: repeat every `--public-host` the node was created with.
 
 ```bash
-hsync-bootnode identity rotate --public-host boot.example.com
+hsync-bootnode identity rotate --identity /var/lib/hsync-bootnode/identity.pem \
+    --public-host boot.example.com
 ```
 
 ## Diagnostics
@@ -395,17 +431,19 @@ Neither channel ever writes to disk from the process: without `--debug` no peer
 data leaves memory, and `--debug` is for a specific troubleshooting session, not
 a permanent setting. The shipped units store stderr in the operating system's log
 — bound its retention there (`/etc/systemd/journald.conf`: `SystemMaxUse=`,
-`MaxRetentionSec=`, then `journalctl -u hsync-bootnode`; a launchd file rotated
-by `newsyslog`; the WinSW log).
+`MaxRetentionSec=`, then `journalctl -u hsync-bootnode`; the launchd log file
+`/var/log/hsync-bootnode.err`, which you rotate with `newsyslog` or trim
+periodically; the WinSW log).
 
 The `--ready-file`/`HSYNC_BOOTNODE_READY_FILE` seam writes the process PID to
 the given path once the QUIC listener is bound (and removes it on graceful
 shutdown). It carries no peer data and exists so tests and orchestrators can
 await readiness deterministically. A path the node cannot write (missing
-directory, no permission, an existing stale file) fails fast with exit code 4 and
-an actionable message instead of a traceback. The Docker entrypoint removes a
-stale readiness file before `exec`, so a container killed ungracefully
-(`docker kill` timeout → SIGKILL) never leaves the next start wedged.
+directory, no permission, or an existing file — even a stale one) fails fast
+with exit code 4 and an actionable message instead of a traceback. The Docker
+entrypoint removes a stale readiness file before `exec`, so a container killed
+ungracefully (`docker kill` timeout → SIGKILL) never leaves the next start
+wedged.
 
 ## Deploying as a service
 
@@ -428,8 +466,11 @@ Edit the executable paths inside each unit to the location of your venv.
 
 | Symptom | Cause / fix |
 |---|---|
-| `configuration error: protected bucket(s) without a group key …` | You declared `--protected-bucket` without provisioning its key: pass `--keys-fd`/`HSYNC_BOOTNODE_KEYS_FD` with a matching `bucket=<key>` line. |
-| `configuration error: private node without any group key …` | You started a private node (`--private` / `HSYNC_BOOTNODE_PRIVATE=1`) without provisioning a key: pass `--keys-fd` with at least one `bucket=<key>` line. |
+| `configuration error: protected bucket(s) without a group key …` | You declared `--protected-bucket` without provisioning its key: pass `--keys-fd`/`HSYNC_BOOTNODE_KEYS_FD` or `--keys-file`/`HSYNC_BOOTNODE_KEYS_FILE` with a matching `bucket=<key>` line. |
+| `configuration error: private node without any group key …` | You started a private node (`--private` / `HSYNC_BOOTNODE_PRIVATE=1`) without provisioning a key: pass a keys source with at least one `bucket=<key>` line. |
+| `configuration error: cannot open group keys file …` | `--keys-file` points at a missing or unreadable path: create the file and grant read access to the service account (`LocalService` on Windows). |
+| `configuration error: --keys-fd and --keys-file are mutually exclusive` | Pass one key source only. |
+| `warn: group keys file permissions are too open` | The `--keys-file` file is group-writable or world-accessible: restrict it to `0600`/`0640` (the node keeps serving). |
 | `error: cannot bind the QUIC/UDP listener … — permission denied` | You bound a privileged port (< 1024, e.g. the 443 default) without root: use `--port 8443` (any port ≥ 1024), run as root, or grant the capability (`sudo setcap cap_net_bind_service=+ep <hsync-bootnode>`). The systemd unit already grants it. |
 | `error: cannot bind the QUIC/UDP listener … — address already in use` | Another process (or another node instance) is using that UDP port: stop it, or pick a free port with `--port`. |
 | `error: cannot bind the QUIC/UDP listener … — the address is not available` | `--host` is not a local interface address: use a local IP, or `0.0.0.0` to listen on all of them. |
@@ -437,6 +478,6 @@ Edit the executable paths inside each unit to the location of your venv.
 | Client gets `rate_limited` | A per-source limit was exceeded (per-IP ~10 req/s admission, 5/min failed tokens, 5/min queries per (IP, bucket), 20/min aggregate queries per IP, 10/min registers per (IP, bucket)); wait for `retry_after` seconds — this counts against the source. |
 | Client gets `overloaded` | The node is at its host-derived routing-table ceiling (capacity backpressure, not a client abuse signal); retry after `retry_after` seconds, or prefer another bootnode. It is not counted against the source. |
 | No UPnP mapping | UPnP is off by default; with `--upnp` a router without IGD or a refused mapping keeps the node running stateless and reports it once on the always-on channel (`warn: upnp no igd on lan port=…` or `warn: upnp mapping unavailable reason=…`); publish a public UDP endpoint in another way or leave UPnP disabled. |
-| `error: readiness file not writable` (exit code 4) | `--ready-file` points at a path the node cannot create (missing parent directory, no permission, or a stale file that `O_EXCL` refuses to overwrite): create/remove the path or point the flag elsewhere. |
+| `error: cannot write the readiness file …` (exit code 4) | `--ready-file` points at a path the node cannot create (missing parent directory, no permission, or a stale file that `O_EXCL` refuses to overwrite): create/remove the path or point the flag elsewhere. |
 | `warn: upnp mapping unavailable` / `error: session failed` in the logs | Always-on diagnostics, not peer data: the node degraded (no UPnP mapping) or one session failed unexpectedly and was isolated. Both are emitted without `--debug` and never contain a peer identity. |
 | Need to see what the node is doing | Operational warnings and errors are already on stderr (and in the service log). Start with `--debug` (or `HSYNC_BOOTNODE_DEBUG=1`) to add the full operation log, peer identity included. |

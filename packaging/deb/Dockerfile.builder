@@ -14,7 +14,9 @@
 # builds crash non-deterministically. ``--enable-shared`` (as built upstream)
 # is required by PyInstaller.
 #
-# debian:bookworm targets Debian 12 / Ubuntu 22.04+ (glibc 2.36).
+# debian:bookworm targets Debian 12 and Ubuntu 22.04+ (the base is glibc 2.36;
+# the bundled CPython and libgcc only require libc6 >= 2.35, which is the
+# package's measured floor — decision 37).
 #
 # Built and consumed locally by:
 #   compile.sh --target deb-all
@@ -43,9 +45,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     POETRY_NO_INTERACTION=1
 
 # PyInstaller tooling + .deb packaging + native-extension build dependencies.
-# The *-dev packages are needed because on armhf PyPI publishes no wheel for
-# ``cryptography``, which is then built from source (hence the Rust toolchain
-# below).
+# ``cryptography`` 50 publishes a manylinux_2_31_armv7l wheel (and manylinux2014
+# x86_64/aarch64), so no source build is expected; the *-dev packages and the
+# Rust toolchain below remain a fallback for a future pin without a wheel.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
@@ -59,11 +61,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         fakeroot \
     && rm -rf /var/lib/apt/lists/*
 
-# Rust toolchain — ``cryptography`` >= 35 uses pyo3 for its native modules and
-# PyPI publishes no wheel for armhf, so it is built from source there. rustup
-# is pinned to 1.29.1 and the toolchain to 1.84.0; rustup-init is fetched for
-# the target arch and its SHA256 verified, instead of piping the remote
-# https://sh.rustup.rs script into a shell.
+# Rust toolchain — used only if a pinned dependency falls back to a source
+# build (``cryptography`` 50 ships an armv7l wheel, so normally nothing is
+# compiled). rustup is pinned to 1.29.1 and the toolchain to 1.84.0; rustup-init
+# is fetched for the target arch and its SHA256 verified, instead of piping the
+# remote https://sh.rustup.rs script into a shell.
 ARG TARGETARCH
 ARG TARGETVARIANT
 ENV RUSTUP_HOME=/opt/rust/rustup \

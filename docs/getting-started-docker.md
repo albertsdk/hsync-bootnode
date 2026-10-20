@@ -51,6 +51,7 @@ you (and can pin an exact digest with `--image-digest`).
 A temporary `docker run` is useful only for a short smoke test:
 
 ```bash
+mkdir -p hsync-data
 docker run --rm -d --name hsync-bootnode-test \
   -p 443:8443/udp \
   --user "$(id -u):$(id -g)" \

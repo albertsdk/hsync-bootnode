@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 
 from hsync_bootnode.cli import (
     _load_keys,
+    _near_expiry_reason,
     _remove_ready_file,
     _resolve_identity,
     _write_ready_file,
@@ -217,6 +218,23 @@ def test_load_keys_file_caps_the_payload(tmp_path) -> None:
     assert KEYS_FD_MAX_BYTES > 0
 
 
+def test_load_keys_rejects_duplicate_buckets() -> None:
+    read_fd, write_fd = os.pipe()
+    os.write(write_fd, b"shared=abc123\nshared=def456\n")
+    os.close(write_fd)
+    try:
+        with pytest.raises(BootConfigError, match="duplicate group key for bucket 'shared'"):
+            _load_keys(read_fd)
+    finally:
+        os.close(read_fd)
+
+
+def test_near_expiry_reason_names_the_configured_identity() -> None:
+    reason = _near_expiry_reason(7, "/var/lib/hsync-bootnode/identity.pem")
+    assert "--identity" in reason
+    assert "/var/lib/hsync-bootnode/identity.pem" in reason
+
+
 def test_keys_file_and_fd_are_rejected_by_the_cli(tmp_path) -> None:
     path = tmp_path / "group-keys"
     path.write_text("shared=abc123\n", encoding="utf-8")
@@ -239,6 +257,15 @@ def test_missing_keys_file_fails_fast_via_the_cli(tmp_path) -> None:
     combined = result.output + getattr(result, "stderr", "")
     assert result.exit_code == 2
     assert "cannot open group keys file" in combined
+
+
+def test_duplicate_keys_file_fails_fast_via_the_cli(tmp_path) -> None:
+    path = tmp_path / "group-keys"
+    path.write_text("shared=abc123\nshared=def456\n", encoding="utf-8")
+    result = runner.invoke(app, ["run", "--keys-file", str(path)], env=_EPHEMERAL_ENV)
+    combined = result.output + getattr(result, "stderr", "")
+    assert result.exit_code == 2
+    assert "duplicate group key for bucket 'shared'" in combined
 
 
 def test_keys_options_are_documented_in_help() -> None:
@@ -294,13 +321,13 @@ def _combined(result) -> str:
 def _patch_run_no_side_effects(monkeypatch, start_servers) -> None:
     """Stub the listener start and the two process-global installers.
 
-    ``run`` reaches ``_install_uvloop``/``_install_sigterm_handler`` before the
+    ``run`` reaches ``_install_uvloop``/``_install_shutdown_handlers`` before the
     bind; stubbing them keeps the test process free of a global event-loop policy
-    swap and a SIGTERM handler.
+    swap and shutdown-signal handlers.
     """
     monkeypatch.setattr("hsync_bootnode.cli.start_servers", start_servers)
     monkeypatch.setattr("hsync_bootnode.cli._install_uvloop", lambda: None)
-    monkeypatch.setattr("hsync_bootnode.cli._install_sigterm_handler", lambda: None)
+    monkeypatch.setattr("hsync_bootnode.cli._install_shutdown_handlers", lambda: None)
 
 
 def test_bind_permission_denied_is_actionable(monkeypatch) -> None:

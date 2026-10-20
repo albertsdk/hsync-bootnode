@@ -56,6 +56,7 @@ __all__ = [
     "load_or_create_identity",
     "make_identity",
     "rotate_identity",
+    "rotation_hint",
     "start_server",
     "start_servers",
 ]
@@ -193,6 +194,31 @@ def load_or_create_identity(
     return identity
 
 
+def _san_names(certificate: x509.Certificate) -> list[str]:
+    """Return the DNS and IP SANs of ``certificate`` as strings.
+
+    Rotation preserves these names; other GeneralName types (URI, email, …) are
+    never produced by the bootnode, so they are intentionally ignored.
+    """
+    try:
+        san = certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    except x509.ExtensionNotFound:
+        return []
+    return [
+        *san.get_values_for_type(x509.DNSName),
+        *(str(address) for address in san.get_values_for_type(x509.IPAddress)),
+    ]
+
+
+def rotation_hint(path: str | Path) -> str:
+    """Return the command that rotates the identity at ``path``.
+
+    Used by the near-expiry warning (``cli.py``) and the key/cert mismatch error
+    so both name the file the process actually reads, not the default path.
+    """
+    return f'hsync-bootnode identity rotate --identity "{path}"'
+
+
 def rotate_identity(
     path: str | Path,
     *,
@@ -201,9 +227,10 @@ def rotate_identity(
 ) -> NodeIdentity:
     """Regenerate the persistent identity at ``path`` with a fresh key.
 
-    Preserves the certificate SANs (from the explicit ``host``/``public_hosts``
-    arguments); the old certificate is replaced atomically. The caller must
-    distribute the new fingerprint to clients (two-pin rotation window).
+    Keeps every DNS/IP SAN of the current certificate and adds the explicit
+    ``host``/``public_hosts``; the old certificate is replaced atomically. The
+    caller must distribute the new fingerprint to clients (two-pin rotation
+    window).
 
     Rotation is the recovery for a corrupted identity, so the current file is
     only checked *structurally* (it must be a PEM identity): a key/certificate
@@ -213,8 +240,10 @@ def rotate_identity(
     identity_path = Path(path)
     if not identity_path.exists():
         raise IdentityError(f"identity file {identity_path} does not exist; nothing to rotate")
-    _parse_identity_file(identity_path)  # structural guard only; see docstring
-    identity = _generate_identity(host, public_hosts)
+    old_certificate, _ = _parse_identity_file(identity_path)
+    # Keep every hostname the node was reachable under: a rotation that silently
+    # dropped a SAN would break hostname-validating clients even with a valid pin.
+    identity = _generate_identity(host, [*_san_names(old_certificate), *public_hosts])
     _atomic_write_identity(identity_path, _identity_pem(identity))
     return identity
 
@@ -296,7 +325,7 @@ def _load_identity_file(identity_path: Path) -> NodeIdentity:
     if not _key_matches_certificate(cert, key):
         raise IdentityError(
             f"identity file {identity_path} private key does not match its certificate "
-            "(run 'identity rotate' to regenerate a consistent pair)"
+            f"(run '{rotation_hint(identity_path)}' to regenerate a consistent pair)"
         )
     return NodeIdentity(certificate=cert, private_key=key)
 
@@ -341,23 +370,24 @@ def _sans_for(host: str, public_hosts: Sequence[str]) -> list[x509.GeneralName]:
 
     A bind address of ``0.0.0.0``/``::`` has no usable IP SAN, so it falls back to
     the fixed DNS name ``hsync-bootnode`` (the out-of-band pin is what actually
-    authenticates the node, not the SAN).
+    authenticates the node, not the SAN). Duplicates — including a preserved SAN
+    that matches the bind fallback — are collapsed to keep the certificate clean.
     """
+    names = [*public_hosts]
+    names.append(host if host not in ("0.0.0.0", "::") else "hsync-bootnode")
     sans: list[x509.GeneralName] = []
-    for name in public_hosts:
+    seen: set[tuple[bool, str]] = set()
+    for name in names:
         try:
-            sans.append(x509.IPAddress(ipaddress.ip_address(name)))
-        except ValueError:
-            sans.append(x509.DNSName(name))
-    if host not in ("0.0.0.0", "::"):
-        try:
-            sans.append(x509.IPAddress(ipaddress.ip_address(host)))
+            general: x509.GeneralName = x509.IPAddress(ipaddress.ip_address(name))
         except ValueError:
             # A DNS-name bind host (e.g. ``--host localhost``) has no IP SAN;
             # record it as a DNS SAN instead of failing identity generation.
-            sans.append(x509.DNSName(host))
-    else:
-        sans.append(x509.DNSName("hsync-bootnode"))
+            general = x509.DNSName(name)
+        key = (isinstance(general, x509.IPAddress), str(general.value))
+        if key not in seen:
+            seen.add(key)
+            sans.append(general)
     return sans
 
 

@@ -20,6 +20,7 @@ from hsync_bootnode.server import (
     load_or_create_identity,
     make_identity,
     rotate_identity,
+    rotation_hint,
 )
 
 
@@ -78,6 +79,37 @@ def test_rotate_changes_fingerprint(tmp_path):
     rotated = rotate_identity(path, host="127.0.0.1")
     assert str(rotated.fingerprint) != str(first.fingerprint)
     assert str(load_identity(path).fingerprint) == str(rotated.fingerprint)
+
+
+def test_rotate_preserves_existing_dns_and_ip_sans(tmp_path):
+    path = tmp_path / "identity.pem"
+    load_or_create_identity(path, host="127.0.0.1", public_hosts=["old.example", "198.51.100.9"])
+
+    rotated = rotate_identity(path, host="127.0.0.1", public_hosts=["new.example"])
+
+    san = rotated.certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    dns = set(san.get_values_for_type(x509.DNSName))
+    ips = {str(address) for address in san.get_values_for_type(x509.IPAddress)}
+    assert {"old.example", "new.example"} <= dns
+    assert "198.51.100.9" in ips
+    assert "127.0.0.1" in ips
+
+
+def test_rotate_does_not_duplicate_preserved_sans(tmp_path):
+    path = tmp_path / "identity.pem"
+    load_or_create_identity(path, host="0.0.0.0")
+
+    rotated = rotate_identity(path, host="0.0.0.0")
+
+    san = rotated.certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    values = [name.value for name in san]
+    assert values.count("hsync-bootnode") == 1
+
+
+def test_rotation_hint_names_the_identity_path():
+    assert rotation_hint("/tmp/my identity.pem") == (
+        'hsync-bootnode identity rotate --identity "/tmp/my identity.pem"'
+    )
 
 
 def test_rotate_requires_existing_file(tmp_path):
@@ -162,8 +194,9 @@ def test_load_identity_rejects_mismatched_key(tmp_path):
         + b"\n"
         + ssl_utils.serialize_private_key_unencrypted(other_key)
     )
-    with pytest.raises(IdentityError, match="does not match its certificate"):
+    with pytest.raises(IdentityError, match="does not match its certificate") as excinfo:
         load_identity(path)
+    assert f'--identity "{path}"' in str(excinfo.value)
 
 
 def test_load_or_create_recovers_from_a_stale_temp_file(tmp_path):

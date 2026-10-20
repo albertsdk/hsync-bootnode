@@ -24,7 +24,8 @@ fingerprint: at the prompt (the default `ask` policy) or, with
 and refuses any later change as a possible man-in-the-middle. The node keeps its
 identity stable by default (a persisted ECDSA P-256 key+cert), so a plain restart
 does **not** change the fingerprint; a mismatch means the operator rotated the
-identity (`hsync-bootnode identity rotate`), pointed the node at a different
+identity (`hsync-bootnode identity rotate --identity /var/lib/hsync-bootnode/identity.pem`),
+pointed the node at a different
 identity file, or ran it with `--ephemeral` (a fresh in-memory key each start).
 It can also indicate a real man-in-the-middle.
 
@@ -96,8 +97,8 @@ hsync-bootnode identity rotate --identity /var/lib/hsync-bootnode/identity.pem \
 
 Rotation prints the new fingerprint; during the change window clients can be
 given both fingerprints (the client accepts up to two pins), then moved to the
-new one. Repeat every `--public-host` the node was created with: rotation does
-not copy the old SANs. A node started with `--ephemeral` is the exception: it
+new one. Rotation keeps the existing DNS/IP SANs and adds any `--public-host`
+you pass. A node started with `--ephemeral` is the exception: it
 keeps the identity in memory, so *any* restart changes the fingerprint — do not
 pin such a node.
 

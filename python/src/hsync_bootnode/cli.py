@@ -39,6 +39,7 @@ from hsync_bootnode.server import (
     load_identity,
     load_or_create_identity,
     rotate_identity,
+    rotation_hint,
     start_servers,
 )
 from hsync_bootnode.upnp import UpnpManager
@@ -184,6 +185,11 @@ def _resolve_listeners(
         )
     single = port if port is not None else host_port
     return resolved_host, [single if single is not None else BOOT_DEFAULT_PORT]
+
+
+def _near_expiry_reason(days_left: int, identity_path: str) -> str:
+    """Operator-facing reason with the exact rotation command for this identity."""
+    return f"{days_left}d remaining; rotate with '{rotation_hint(identity_path)}'"
 
 
 @app.command()
@@ -342,7 +348,7 @@ def run(
     if no_rate_limit:
         warn_event("rate limiting disabled", reason="--no-rate-limit")
     _install_uvloop()
-    _install_sigterm_handler()
+    _install_shutdown_handlers()
 
     if node_identity is not None:
         identity_path_display = identity or str(default_identity_path())
@@ -376,7 +382,7 @@ def run(
             warn_event(
                 "identity certificate near expiry",
                 path=str(identity_path_display),
-                reason=f"{days_left}d remaining; rotate with 'hsync-bootnode identity rotate'",
+                reason=_near_expiry_reason(days_left, identity_path_display),
             )
     try:
         asyncio.run(
@@ -722,15 +728,24 @@ def _load_keys_file(path: str) -> dict[str, SecretStr]:
 
 
 def _parse_keys(raw: str) -> dict[str, SecretStr]:
-    """Parse 'bucket=<hex-key>' lines (comments and blank lines ignored)."""
+    """Parse 'bucket=<hex-key>' lines (comments and blank lines ignored).
+
+    A bucket may appear only once: a duplicate is a configuration error, never a
+    silent override of the earlier key.
+    """
     keys: dict[str, SecretStr] = {}
-    for raw_line in raw.splitlines():
+    for line_number, raw_line in enumerate(raw.splitlines(), start=1):
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
         bucket, _, key = line.partition("=")
-        if bucket and key:
-            keys[bucket.strip()] = SecretStr(key.strip())
+        bucket = bucket.strip()
+        key = key.strip()
+        if not bucket or not key:
+            continue
+        if bucket in keys:
+            raise BootConfigError(f"duplicate group key for bucket {bucket!r} (line {line_number})")
+        keys[bucket] = SecretStr(key)
     return keys
 
 
@@ -798,18 +813,21 @@ def _install_uvloop() -> None:
     uvloop.install()
 
 
-def _install_sigterm_handler() -> None:
-    """Make SIGTERM graceful (service Stop): run the same teardown as Ctrl+C.
+def _install_shutdown_handlers() -> None:
+    """Make SIGINT and SIGTERM run the same graceful teardown.
 
-    The default SIGTERM action would terminate the process abruptly, skipping
-    the ``finally`` in ``_async_main`` (transport close + ready-file removal).
-    Raising ``KeyboardInterrupt`` from the handler reuses the existing graceful
-    path (caught around ``asyncio.run``).
+    SIGINT is installed explicitly because a non-interactive parent (nohup, a
+    background job, some service managers) can start us with SIGINT ignored; the
+    default handler would then never run. SIGTERM's default action would skip the
+    ``finally`` in ``_async_main`` (transport close + ready-file removal).
+    Raising ``KeyboardInterrupt`` from either handler reuses the graceful path
+    caught around ``asyncio.run``.
     """
 
     def _handle(_signum: int, _frame: object) -> None:
         raise KeyboardInterrupt
 
+    signal.signal(signal.SIGINT, _handle)
     signal.signal(signal.SIGTERM, _handle)
 
 

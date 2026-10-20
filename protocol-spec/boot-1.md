@@ -54,8 +54,9 @@
   the node's only on-disk artifact — never peer data (the no-log invariant is
   unchanged).
 - **Rotation**: a client accepts up to two pins (old + new) during the rotation
-  window; the trust store records whichever matched. `identity rotate` prints the
-  new fingerprint.
+  window; the trust store records whichever matched. `identity rotate` keeps the
+  existing DNS/IP SANs, adds any `--public-host` names, and prints the new
+  fingerprint.
 - No wire change: `protocol_version` stays `boot/1` — trust is a transport-layer
   concern layered on the unchanged frame contract.
 

@@ -54,8 +54,9 @@ operator distributes to clients. `--identity PATH` is optional and defaults to
 the standard state path; a POSIX service that uses an explicit `--identity` must
 repeat that flag here. Give clients both the old and the new fingerprint
 (`--bootnode-fingerprint` is repeatable) during the rotation window; the node
-itself keeps only the new certificate. Rotation does **not** copy the old SANs,
-so repeat every `--public-host` the node was created with. Rotation is also the
+itself keeps only the new certificate. Rotation keeps every existing DNS/IP
+SAN, so hostname-validating clients keep working; pass `--public-host` only for
+new names. Rotation is also the
 recovery for a corrupted identity whose key no longer matches its certificate;
 a file that is not a valid PEM identity at all is refused (delete it and restart
 to regenerate).
@@ -75,7 +76,7 @@ Prints the version and the protocol, e.g.
 | Code | Meaning |
 |---|---|
 | 0 | Normal termination (Ctrl+C / SIGTERM). |
-| 2 | Configuration error: missing group key (a duplicate `bucket=` line is last-wins), `--private` without a key, `--keys-fd` together with `--keys-file`, out-of-range `--ttl`, etc. The node refuses to start. |
+| 2 | Configuration error: missing group key (a duplicate `bucket=` line is refused), `--private` without a key, `--keys-fd` together with `--keys-file`, out-of-range `--ttl`, etc. The node refuses to start. |
 | 3 | Listener bind failure: the port is privileged, already in use, or `--host` is not a local address. The stderr message explains how to fix it. |
 | 4 | Readiness-file failure: `--ready-file` points at a path the node cannot create (missing parent directory, no permission, or a stale file the `O_EXCL` seam refuses to overwrite). |
 
@@ -118,6 +119,9 @@ Line format (comments and blank lines are ignored):
 shared=9f1c...
 home=44ab...
 ```
+
+A bucket may appear only once: a duplicate line is a configuration error, never
+a silent last-wins override.
 
 Example with a systemd credential (fd 5):
 
@@ -470,6 +474,7 @@ Edit the executable paths inside each unit to the location of your venv.
 | `configuration error: private node without any group key …` | You started a private node (`--private` / `HSYNC_BOOTNODE_PRIVATE=1`) without provisioning a key: pass a keys source with at least one `bucket=<key>` line. |
 | `configuration error: cannot open group keys file …` | `--keys-file` points at a missing or unreadable path: create the file and grant read access to the service account (`LocalService` on Windows). |
 | `configuration error: --keys-fd and --keys-file are mutually exclusive` | Pass one key source only. |
+| `configuration error: duplicate group key for bucket …` | The keys source lists the same bucket twice: keep exactly one line per bucket. |
 | `warn: group keys file permissions are too open` | The `--keys-file` file is group-writable or world-accessible: restrict it to `0600`/`0640` (the node keeps serving). |
 | `error: cannot bind the QUIC/UDP listener … — permission denied` | You bound a privileged port (< 1024, e.g. the 443 default) without root: use `--port 8443` (any port ≥ 1024), run as root, or grant the capability (`sudo setcap cap_net_bind_service=+ep <hsync-bootnode>`). The systemd unit already grants it. |
 | `error: cannot bind the QUIC/UDP listener … — address already in use` | Another process (or another node instance) is using that UDP port: stop it, or pick a free port with `--port`. |

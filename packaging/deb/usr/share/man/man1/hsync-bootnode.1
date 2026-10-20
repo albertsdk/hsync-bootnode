@@ -40,7 +40,10 @@ Print the persisted identity fingerprint (or its certificate PEM with
 .BR \-\-pem ).
 .TP
 .B identity rotate
-Regenerate the persisted identity and print the new fingerprint.
+Regenerate the persisted identity and print the new fingerprint. Existing DNS/IP
+SANs are preserved; repeat
+.B \-\-public\-host
+only for new names.
 .SH OPTIONS
 .TP
 .BI run\ \fR--host\fP= HOST [\fI:PORT\fP]
@@ -95,6 +98,10 @@ Env form:
 .BI run\ \fR--public-host\fP= NAME
 Public hostname or IP to add to the certificate SAN; repeatable for multiple
 names.
+.TP
+.BI identity\ rotate\ \fR--public-host\fP= NAME
+Hostname or IP to add to the new certificate SAN when rotating; repeatable.
+Existing DNS/IP SANs are preserved automatically.
 .TP
 .BI run\ \fR--protected-bucket\fP= NAME
 Bucket requiring a valid
@@ -290,7 +297,7 @@ Run with an explicit identity path and a public SAN, then show the fingerprint:
 .br
 .B hsync-bootnode run --identity /var/lib/hsync-bootnode/identity.pem --public-host boot.example.com
 .br
-.B hsync-bootnode identity show
+.B hsync-bootnode identity show --identity /var/lib/hsync-bootnode/identity.pem
 .TP
 Run a throwaway node that writes no identity file:
 .br
@@ -298,7 +305,7 @@ Run a throwaway node that writes no identity file:
 .TP
 Rotate the identity after a suspected compromise:
 .br
-.B hsync-bootnode identity rotate
+.B hsync-bootnode identity rotate --identity /var/lib/hsync-bootnode/identity.pem
 .TP
 Unprivileged port (no root or capability needed):
 .br

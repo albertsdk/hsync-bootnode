@@ -4,7 +4,7 @@ Architecture: __ARCH__
 Maintainer: Alberto Basso <17047798+albertsdk@users.noreply.github.com>
 Section: net
 Priority: optional
-Homepage: https://github.com/albertosdk/hsync-bootnode
+Homepage: https://github.com/albertsdk/hsync-bootnode
 Description: HSYNC - P2P bootstrap node (no-log)
  hsync-bootnode is the Internet discovery node of the HSYNC sync network.
  .

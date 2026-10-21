@@ -22,6 +22,7 @@ import re
 import tempfile
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -395,6 +396,14 @@ class IdentityError(RuntimeError):
     """The persistent identity file could not be loaded or written safely."""
 
 
+@dataclass(slots=True)
+class _PeerState:
+    """Per-IP open-connection count and last-seen stamp (eviction input)."""
+
+    count: int
+    last_seen: float
+
+
 class ConnectionGuard:
     """Per-IP transport admission gate for one listener process (RAM only).
 
@@ -429,8 +438,8 @@ class ConnectionGuard:
         # before evict_stale() forgets it: capacity/rate refills the bucket to
         # exactly the first-use value, so forgetting is decision-neutral.
         self._quiet_horizon = handshake_burst / handshake_rate
-        # ip -> [open connection count, last seen]
-        self._active: dict[str, list[float]] = {}
+        # ip -> open connection count + last-seen stamp (see evict_stale).
+        self._active: dict[str, _PeerState] = {}
 
     def admit(self, peer_ip: str, *, now: float | None = None) -> bool:
         """Admit one new (connecting) connection from ``peer_ip``.
@@ -442,7 +451,7 @@ class ConnectionGuard:
         """
         now = time.monotonic() if now is None else now
         entry = self._active.get(peer_ip)
-        if entry is not None and entry[0] >= self._active_max:
+        if entry is not None and entry.count >= self._active_max:
             return False
         if self._global_max is not None and self._total_active >= self._global_max:
             self._note(peer_ip, now)
@@ -451,10 +460,10 @@ class ConnectionGuard:
             self._note(peer_ip, now)
             return False
         if entry is None:
-            self._active[peer_ip] = [1, now]
+            self._active[peer_ip] = _PeerState(count=1, last_seen=now)
         else:
-            entry[0] += 1
-            entry[1] = now
+            entry.count += 1
+            entry.last_seen = now
         self._total_active += 1
         return True
 
@@ -464,13 +473,13 @@ class ConnectionGuard:
         entry = self._active.get(peer_ip)
         if entry is None:
             return
-        entry[0] = max(0.0, entry[0] - 1.0)
-        entry[1] = time.monotonic() if now is None else now
+        entry.count = max(0, entry.count - 1)
+        entry.last_seen = time.monotonic() if now is None else now
 
     def open_count(self, peer_ip: str) -> int:
         """Active connections currently accounted for (``0`` when unknown)."""
         entry = self._active.get(peer_ip)
-        return int(entry[0]) if entry is not None else 0
+        return entry.count if entry is not None else 0
 
     def total_count(self) -> int:
         """Process-wide admitted-connection count (``global_max`` accounting)."""
@@ -487,7 +496,7 @@ class ConnectionGuard:
         stale = [
             ip
             for ip, entry in self._active.items()
-            if entry[0] <= 0 and now - entry[1] >= self._quiet_horizon
+            if entry.count <= 0 and now - entry.last_seen >= self._quiet_horizon
         ]
         for ip in stale:
             del self._active[ip]
@@ -497,7 +506,7 @@ class ConnectionGuard:
         """Stamp the last-seen time so evict_stale() can reap refused IPs too."""
         entry = self._active.get(peer_ip)
         if entry is not None:
-            entry[1] = now
+            entry.last_seen = now
 
 
 def build_quic_configuration(

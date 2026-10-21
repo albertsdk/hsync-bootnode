@@ -7,9 +7,8 @@ used by the boot server, handler and tests.
 
 from __future__ import annotations
 
-from hsync_common.ratelimit import RateLimitKey, TokenBucketLimiter
+from hsync_common.ratelimit import TokenBucketLimiter
 
 __all__ = [
-    "RateLimitKey",
     "TokenBucketLimiter",
 ]

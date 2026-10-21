@@ -604,6 +604,7 @@ async def _async_main(
     debug_log(f"listeners bound {host}:{bound_display} (retry+address-validation)")
 
     tasks: list[asyncio.Task] = []
+    upnp_managers: list[UpnpManager] = []
     # Only remove a readiness file THIS process created: with O_EXCL a pre-existing
     # path (another instance, a stale file) is left untouched on every exit path.
     ready_written = False
@@ -620,7 +621,9 @@ async def _async_main(
             # any of them (e.g. 53 when its egress firewall blocks UDP 443), so a
             # single mapping would leave the extra doors unreachable from the WAN.
             for port in bound_ports:
-                tasks.append(asyncio.create_task(UpnpManager(port).run()))
+                manager = UpnpManager(port)
+                upnp_managers.append(manager)
+                tasks.append(asyncio.create_task(manager.run()))
 
         await asyncio.Future()  # serve forever
     finally:
@@ -628,6 +631,11 @@ async def _async_main(
             server.close()
         for task in tasks:
             task.cancel()
+        # Stop the refresh loops before removing the mappings, so a cancelled
+        # cycle cannot re-add what close() just deleted (best-effort, bounded).
+        await asyncio.gather(*tasks, return_exceptions=True)
+        for manager in upnp_managers:
+            await manager.close()
         if ready_written and ready_file:
             _remove_ready_file(ready_file)
 

@@ -305,3 +305,64 @@ def test_ssdp_location_host_must_match_reply_source(monkeypatch: object) -> None
     result = _first_igd_location(sock, 2.0, "192.168.1.10")  # type: ignore[arg-type]
     assert result is None
     assert fetched == ["http://192.168.1.50:5000/rootDesc.xml"]
+
+
+def test_upnp_manager_requests_a_finite_lease(monkeypatch: object) -> None:
+    """The mapping carries a finite lease (crash-safety), not a permanent rule."""
+    import hsync_bootnode.upnp as upnp_mod
+
+    captured: dict[str, object] = {}
+
+    def fake_add(service, *, internal_port, external_port, lease_duration=0, **_kw):
+        captured["lease"] = lease_duration
+        captured["external_port"] = external_port
+
+    monkeypatch.setattr(upnp_mod, "discover_igd", lambda *a, **k: SERVICE)
+    monkeypatch.setattr(upnp_mod, "add_port_mapping", fake_add)
+    manager = upnp_mod.UpnpManager(443, refresh_interval=300.0)
+    manager._ensure_mapped()
+    assert captured["lease"] == 600  # two refresh windows
+    assert captured["external_port"] == 443
+
+
+@pytest.mark.asyncio
+async def test_upnp_manager_close_removes_the_mapping(monkeypatch: object) -> None:
+    import hsync_bootnode.upnp as upnp_mod
+
+    calls: list[tuple[int, str]] = []
+
+    def fake_delete(service, *, external_port, protocol="UDP", **_kw):
+        calls.append((external_port, protocol))
+
+    monkeypatch.setattr(upnp_mod, "delete_port_mapping", fake_delete)
+    manager = upnp_mod.UpnpManager(443)
+    manager._active = SERVICE
+    await manager.close()
+    assert calls == [(443, "UDP")]
+    assert manager._active is None
+
+
+@pytest.mark.asyncio
+async def test_upnp_manager_close_is_a_noop_when_unmapped() -> None:
+    manager = UpnpManager(443)
+    await manager.close()  # never mapped: nothing to delete, no error
+    assert manager._active is None
+
+
+@pytest.mark.asyncio
+async def test_upnp_manager_close_degrades_to_a_warning(monkeypatch: object, capsys) -> None:
+    """A failed unmap must never raise on the shutdown path."""
+    import hsync_bootnode.upnp as upnp_mod
+
+    def boom(service, *, external_port, protocol="UDP", **_kw):
+        raise UpnpError("DeletePortMapping failed: Connection refused")
+
+    monkeypatch.setattr(upnp_mod, "delete_port_mapping", boom)
+    manager = upnp_mod.UpnpManager(443)
+    manager._active = SERVICE
+    await manager.close()
+
+    err = capsys.readouterr().err
+    assert " warn: upnp unmap failed" in err
+    assert "reason=DeletePortMapping failed: Connection refused" in err
+    assert manager._active is None

@@ -345,7 +345,9 @@ can rely on.
   (no hostnames, no external hosts, no redirects) — the device discovery cannot
   be steered into fetching arbitrary internal/external URLs. On a node with no
   LAN (a public VPS) SSDP simply finds nothing and the node runs stateless, as
-  always; nothing about the mapping workflow changes on a LAN.
+  always; nothing about the mapping workflow changes on a LAN. The mapping
+  carries a finite lease, renewed before it expires, and is removed on graceful
+  shutdown — a stopped or crashed node leaves no permanent rule on the router.
 
 ### What it is not
 

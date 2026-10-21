@@ -29,6 +29,7 @@ from hsync_bootnode.protocol import (
     PROTOCOL_VERSION_BOOT,
     BootAck,
     BootError,
+    BootFrame,
     BootLeave,
     BootPeer,
     BootQuery,
@@ -235,35 +236,19 @@ class BootHandler:
 
         Malformed / unknown frames are silently dropped (no-log, no oracle).
         """
-        # Pre-parse gate: once an IP has exhausted its malformed-frame budget,
-        # every further frame from it is dropped BEFORE the parser runs, so a
-        # parse storm costs no CPU beyond the line read. A well-behaved IP never
-        # drains that budget (only invalid frames charge it), so its valid
-        # traffic is unaffected; only an IP that actually flooded invalid frames
-        # is gated wholesale (the documented anti-abuse trade-off).
-        if self._enforce_rate_limits and not self._bad_parse_ip.has_tokens(peer_ip):
-            if debug_enabled():
-                debug_event(
-                    "drop pre-parse over-budget", peer=f"{peer_ip}:{peer_port}", bytes=len(raw)
-                )
-            return None
-        try:
-            frame = BOOT_FRAME_ADAPTER.validate_json(raw)
-        except ValidationError:
-            # Charge the budget that gates the check above; the drop stays a
-            # silent no-op (no oracle) and invalid frames never drain the
-            # VALID-frame per-IP admission.
-            if self._enforce_rate_limits:
-                self._bad_parse_ip.allow(peer_ip)
-            if debug_enabled():
-                debug_event("drop invalid-frame", peer=f"{peer_ip}:{peer_port}", bytes=len(raw))
+        frame = self._parse_frame(raw, peer_ip=peer_ip, peer_port=peer_port)
+        if frame is None:
             return None
         # Admission is charged only for VALID frames (malformed/unknown frames
-        # stay silently dropped and are bounded by their own budget above).
-        if not self._limit_ok(self._ops_ip, peer_ip):
-            if debug_enabled():
-                debug_event("rate_limited ip-admission", peer=f"{peer_ip}:{peer_port}")
-            return self._rate_limited(self._ops_ip, peer_ip)
+        # stay silently dropped and are bounded by their own budget).
+        refused = self._charge_or_refuse(
+            self._ops_ip,
+            peer_ip,
+            event="rate_limited ip-admission",
+            peer=f"{peer_ip}:{peer_port}",
+        )
+        if refused is not None:
+            return refused
 
         # Prune expired records periodically (spec: every 15 s) so memory does
         # not grow unbounded under sustained load. Runs on the first handle()
@@ -278,14 +263,54 @@ class BootHandler:
                 bucket=getattr(frame, "bucket", None),
                 group=getattr(frame, "group", None),
             )
-        if isinstance(frame, BootRegister):
-            return self._register(frame, peer_ip, peer_port)
-        if isinstance(frame, BootRefresh):
-            return self._refresh(frame, peer_ip, peer_port)
-        if isinstance(frame, BootLeave):
-            self._leave(frame, peer_ip)
+        return self._dispatch(frame, peer_ip, peer_port)
+
+    def _parse_frame(
+        self,
+        raw: bytes | str,
+        *,
+        peer_ip: str,
+        peer_port: int,
+    ) -> BootFrame | None:
+        """Validate one raw frame, charging the malformed-frame budget on failure.
+
+        Pre-parse gate: once an IP has exhausted its malformed-frame budget every
+        further frame from it is dropped BEFORE the parser runs, so a parse storm
+        costs no CPU beyond the line read. A well-behaved IP never drains that
+        budget (only invalid frames charge it), so its valid traffic is
+        unaffected; only an IP that actually flooded invalid frames is gated
+        wholesale (the documented anti-abuse trade-off).
+        """
+        if self._enforce_rate_limits and not self._bad_parse_ip.has_tokens(peer_ip):
+            if debug_enabled():
+                debug_event(
+                    "drop pre-parse over-budget", peer=f"{peer_ip}:{peer_port}", bytes=len(raw)
+                )
             return None
-        return self._query(frame, peer_ip)
+        try:
+            return BOOT_FRAME_ADAPTER.validate_json(raw)
+        except ValidationError:
+            # Charge the budget that gates the check above; the drop stays a
+            # silent no-op (no oracle) and invalid frames never drain the
+            # VALID-frame per-IP admission.
+            if self._enforce_rate_limits:
+                self._bad_parse_ip.allow(peer_ip)
+            if debug_enabled():
+                debug_event("drop invalid-frame", peer=f"{peer_ip}:{peer_port}", bytes=len(raw))
+            return None
+
+    def _dispatch(self, frame: BootFrame, peer_ip: str, peer_port: int) -> bytes | None:
+        """Route a validated frame to its handler (``leave`` produces no reply)."""
+        match frame:
+            case BootRegister():
+                return self._register(frame, peer_ip, peer_port)
+            case BootRefresh():
+                return self._refresh(frame, peer_ip, peer_port)
+            case BootLeave():
+                self._leave(frame, peer_ip)
+                return None
+            case _:
+                return self._query(frame, peer_ip)
 
     def prune(self, now: float | None = None, *, max_remove: int | None = None) -> int:
         """Drop expired records (TTL sweep); returns number removed."""
@@ -462,49 +487,57 @@ class BootHandler:
         query when a token was checked. The spec has no response frame for
         ``leave``, so every refusal stays a silent drop.
         """
+        source_ip: str | None
         if self._private:
             if self._authorize(model.bucket, model.bucket_token, peer_ip) != "ok":
                 if debug_enabled():
                     debug_event("leave refused", cid=model.cid, bucket=model.bucket, peer=peer_ip)
                 return
-            self.routing.remove(model.cid, model.bucket)
-            if debug_enabled():
-                debug_event("leave removed", cid=model.cid, bucket=model.bucket, peer=peer_ip)
-            return
-        if peer_ip in self.routing.source_ips(model.cid, model.bucket):
-            self.routing.remove(model.cid, model.bucket, source_ip=peer_ip)
-            if debug_enabled():
-                debug_event("leave removed", cid=model.cid, bucket=model.bucket, peer=peer_ip)
-            return
-        if (
+            source_ip = None
+        elif peer_ip in self.routing.source_ips(model.cid, model.bucket):
+            # Open bucket: honour the departure only from the source network the
+            # peer registered from, so a foreign (cid, bucket) cannot evict it.
+            source_ip = peer_ip
+        elif (
             model.bucket in self._protected
             and self._authorize(model.bucket, model.bucket_token, peer_ip) == "ok"
         ):
-            self.routing.remove(model.cid, model.bucket)
+            source_ip = None
+        else:
             if debug_enabled():
-                debug_event("leave removed", cid=model.cid, bucket=model.bucket, peer=peer_ip)
+                debug_event(
+                    "leave ignored foreign-source",
+                    cid=model.cid,
+                    bucket=model.bucket,
+                    peer=peer_ip,
+                )
             return
+        self.routing.remove(model.cid, model.bucket, source_ip=source_ip)
         if debug_enabled():
-            debug_event(
-                "leave ignored foreign-source",
-                cid=model.cid,
-                bucket=model.bucket,
-                peer=peer_ip,
-            )
-        return
+            debug_event("leave removed", cid=model.cid, bucket=model.bucket, peer=peer_ip)
 
     def _query(self, model: BootQuery, peer_ip: str) -> bytes:
         pair_key = f"{peer_ip}|{model.bucket}"
-        if not self._limit_ok(self._query_pair, pair_key):
-            if debug_enabled():
-                debug_event("query rate_limited pair", bucket=model.bucket, peer=peer_ip)
-            return self._rate_limited(self._query_pair, pair_key)
-        if not self._limit_ok(self._query_ip, peer_ip):
-            # Aggregate per-IP cap across every bucket: one source cannot sweep
-            # the bucket namespace to enumerate the peer population.
-            if debug_enabled():
-                debug_event("query rate_limited ip", bucket=model.bucket, peer=peer_ip)
-            return self._rate_limited(self._query_ip, peer_ip)
+        refused = self._charge_or_refuse(
+            self._query_pair,
+            pair_key,
+            event="query rate_limited pair",
+            bucket=model.bucket,
+            peer=peer_ip,
+        )
+        if refused is not None:
+            return refused
+        # Aggregate per-IP cap across every bucket: one source cannot sweep
+        # the bucket namespace to enumerate the peer population.
+        refused = self._charge_or_refuse(
+            self._query_ip,
+            peer_ip,
+            event="query rate_limited ip",
+            bucket=model.bucket,
+            peer=peer_ip,
+        )
+        if refused is not None:
+            return refused
         refused = self._authorize_or_refuse(
             "query", model.bucket, model.bucket_token, peer_ip, peer_display=peer_ip
         )
@@ -599,27 +632,46 @@ class BootHandler:
         every other peer of the bucket.
         """
         pair_key = f"{peer_ip}|{bucket}"
-        if not self._limit_ok(limiter, pair_key):
-            if debug_enabled():
-                debug_event(
-                    f"{event} rate_limited pair",
-                    cid=cid,
-                    bucket=bucket,
-                    peer=f"{peer_ip}:{peer_port}",
-                )
-            return self._rate_limited(limiter, pair_key)
+        refused = self._charge_or_refuse(
+            limiter,
+            pair_key,
+            event=f"{event} rate_limited pair",
+            cid=cid,
+            bucket=bucket,
+            peer=f"{peer_ip}:{peer_port}",
+        )
+        if refused is not None:
+            return refused
         return self._authorize_or_refuse(
             event, bucket, token, peer_ip, peer_display=f"{peer_ip}:{peer_port}", cid=cid
         )
 
+    def _charge_or_refuse(
+        self,
+        limiter: TokenBucketLimiter,
+        key: str,
+        *,
+        event: str,
+        peer: str,
+        cid: str | None = None,
+        bucket: str | None = None,
+    ) -> bytes | None:
+        """Consume one token from ``limiter``; return the refusal bytes, or ``None``.
+
+        One place owns the shared "charge -> debug -> refuse" shape of the per-IP
+        and per-(IP, bucket) limits, so register, refresh, query and the admission
+        gate cannot drift.
+        """
+        if self._limit_ok(limiter, key):
+            return None
+        if debug_enabled():
+            debug_event(event, cid=cid, bucket=bucket, peer=peer)
+        return self._rate_limited(limiter, key)
+
     def _refusal(self, error: Literal["token_required", "rate_limited"], peer_ip: str) -> bytes:
-        return self._response(
-            peers=[],
-            error=error,
-            retry_after=self._bad_token_ip.retry_after(peer_ip)
-            if error == "rate_limited"
-            else None,
-        )
+        if error == "rate_limited":
+            return self._rate_limited(self._bad_token_ip, peer_ip)
+        return self._response(peers=[], error=error, retry_after=None)
 
     def _rate_limited(self, limiter: TokenBucketLimiter, key: str) -> bytes:
         return self._response(

@@ -158,11 +158,13 @@ def _evict_dedup(now: float) -> None:
     while _dedup_order:
         key = _dedup_order[0]
         entry = _dedup.get(key)
-        expired = entry is None or now - entry[0] >= _DEDUP_WINDOW_SECONDS
-        if not expired and len(_dedup_order) <= _DEDUP_MAX_KEYS:
-            return
+        if entry is not None and now - entry[0] < _DEDUP_WINDOW_SECONDS:
+            break
         _dedup.pop(key, None)
         _dedup_order.popleft()
+    while len(_dedup_order) > _DEDUP_MAX_KEYS:
+        key = _dedup_order.popleft()
+        _dedup.pop(key, None)
 
 
 def debug_log(message: str) -> None:

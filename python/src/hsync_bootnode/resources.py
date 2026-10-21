@@ -15,6 +15,7 @@ Consumers: ``hsync-bootnode.cli`` (sizes the handler and the connection guard),
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 
 __all__ = [
     "ResourceLimits",
@@ -67,6 +68,20 @@ _UNLIMITED_BYTES = 1 << 62
 
 def _clamp(value: int, low: int, high: int) -> int:
     return max(low, min(high, value))
+
+
+def _budget(
+    memory: int,
+    fraction: float,
+    item_bytes: int,
+    low: int,
+    high: int,
+    *,
+    cap: int | None = None,
+) -> int:
+    """A memory-derived item count clamped into ``[low, high]`` (optional ``cap``)."""
+    items = int(memory * fraction) // item_bytes
+    return _clamp(items if cap is None else min(items, cap), low, high)
 
 
 def _read_first_int(path: str) -> int | None:
@@ -172,6 +187,7 @@ def available_memory_bytes() -> int:
     return total_memory_bytes()
 
 
+@dataclass(slots=True, kw_only=True)
 class ResourceLimits:
     """Memory/CPU-derived ceilings shared by the handler and the transport.
 
@@ -179,61 +195,38 @@ class ResourceLimits:
     values so the caps are deterministic.
     """
 
-    __slots__ = (
-        "max_active_connections",
-        "max_active_connections_per_ip",
-        "max_limiter_keys",
-        "max_peer_records",
-        "max_records_per_group",
-    )
-
-    def __init__(
-        self,
-        *,
-        max_peer_records: int,
-        max_limiter_keys: int,
-        max_active_connections: int,
-        max_active_connections_per_ip: int,
-        max_records_per_group: int,
-    ) -> None:
-        self.max_peer_records = max_peer_records
-        self.max_limiter_keys = max_limiter_keys
-        self.max_active_connections = max_active_connections
-        self.max_active_connections_per_ip = max_active_connections_per_ip
-        self.max_records_per_group = max_records_per_group
+    max_peer_records: int
+    max_limiter_keys: int
+    max_active_connections: int
+    max_active_connections_per_ip: int
+    max_records_per_group: int
 
     @classmethod
     def detect(cls) -> ResourceLimits:
         """Derive the ceilings from the host's available memory and CPU count."""
         memory = available_memory_bytes()
         cpu = cpu_count()
-        records = _clamp(
-            int(memory * _RECORD_MEMORY_FRACTION) // _RECORD_BYTES,
-            _MIN_RECORDS,
-            _MAX_RECORDS,
+        records = _budget(
+            memory, _RECORD_MEMORY_FRACTION, _RECORD_BYTES, _MIN_RECORDS, _MAX_RECORDS
         )
-        limiter_keys = _clamp(
-            int(memory * _LIMITER_MEMORY_FRACTION) // _LIMITER_KEY_BYTES,
+        limiter_keys = _budget(
+            memory,
+            _LIMITER_MEMORY_FRACTION,
+            _LIMITER_KEY_BYTES,
             _MIN_LIMITER_KEYS,
             _MAX_LIMITER_KEYS,
         )
-        connections = _clamp(
-            min(
-                int(memory * _CONNECTION_MEMORY_FRACTION) // _CONNECTION_BYTES,
-                cpu * _CONNECTIONS_PER_CPU,
-            ),
+        connections = _budget(
+            memory,
+            _CONNECTION_MEMORY_FRACTION,
+            _CONNECTION_BYTES,
             _MIN_CONNECTIONS,
             _MAX_CONNECTIONS,
+            cap=cpu * _CONNECTIONS_PER_CPU,
         )
-        per_ip = _clamp(
-            connections // 8,
-            _MIN_CONNECTIONS_PER_IP,
-            _MAX_CONNECTIONS_PER_IP,
-        )
+        per_ip = _clamp(connections // 8, _MIN_CONNECTIONS_PER_IP, _MAX_CONNECTIONS_PER_IP)
         per_group = _clamp(
-            records // _GROUPS_PER_HOST,
-            _MIN_RECORDS_PER_GROUP,
-            _MAX_RECORDS_PER_GROUP,
+            records // _GROUPS_PER_HOST, _MIN_RECORDS_PER_GROUP, _MAX_RECORDS_PER_GROUP
         )
         return cls(
             max_peer_records=records,
@@ -242,13 +235,3 @@ class ResourceLimits:
             max_active_connections_per_ip=per_ip,
             max_records_per_group=per_group,
         )
-
-    def as_fields(self) -> dict[str, int]:
-        """The ceilings as a flat mapping (startup diagnostics)."""
-        return {
-            "max_peer_records": self.max_peer_records,
-            "max_limiter_keys": self.max_limiter_keys,
-            "max_active_connections": self.max_active_connections,
-            "max_active_connections_per_ip": self.max_active_connections_per_ip,
-            "max_records_per_group": self.max_records_per_group,
-        }

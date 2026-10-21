@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 from hsync_bootnode.resources import (
     ResourceLimits,
     available_memory_bytes,
@@ -42,7 +44,7 @@ def test_detect_clamps_a_tiny_host_to_a_usable_floor() -> None:
     assert limits.max_records_per_group >= 128
 
 
-def test_as_fields_exposes_the_ceilings() -> None:
+def test_ceilings_are_exposed_as_a_flat_mapping() -> None:
     limits = ResourceLimits(
         max_peer_records=1,
         max_limiter_keys=2,
@@ -50,7 +52,7 @@ def test_as_fields_exposes_the_ceilings() -> None:
         max_active_connections_per_ip=4,
         max_records_per_group=5,
     )
-    assert limits.as_fields() == {
+    assert dataclasses.asdict(limits) == {
         "max_peer_records": 1,
         "max_limiter_keys": 2,
         "max_active_connections": 3,

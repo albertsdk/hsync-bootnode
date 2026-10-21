@@ -126,13 +126,16 @@ def _bench_query(table_size: int, limit: int, count: int) -> BenchResult:
 
 def _bench_refresh(table_size: int, count: int) -> BenchResult:
     # One handler, no rate limits; refresh always targets the first populated CID.
+    # The refresh must come from the record's own registered source: the handler
+    # only honours a renewal from the source the peer registered from.
     handler = BootHandler(enforce_rate_limits=False)
     peers = _populate(handler, "shared", table_size)
     handler.prune()
-    refresh_raw = json.dumps(refresh_frame(peers[0][0], "shared")).encode()
+    cid, source = peers[0]
+    refresh_raw = json.dumps(refresh_frame(cid, "shared")).encode()
 
     def op() -> None:
-        reply = handler.handle(refresh_raw, peer_ip=_PEER_IP, peer_port=_PEER_PORT)
+        reply = handler.handle(refresh_raw, peer_ip=source, peer_port=_PEER_PORT)
         assert reply is not None and reply.startswith(_ACK_PREFIX), reply
 
     return measure(f"refresh(table={table_size})", op, count=count)
@@ -145,7 +148,9 @@ def _bench_leave(count: int) -> BenchResult:
     # departure only from the source the record was registered from.
     handler = BootHandler(enforce_rate_limits=False)
     peers = _populate(handler, "shared", count, start=2_000_000)
-    leave_raws = [(json.dumps(leave_frame(cid, "shared")).encode(), source) for cid, source in peers]
+    leave_raws = [
+        (json.dumps(leave_frame(cid, "shared")).encode(), source) for cid, source in peers
+    ]
     state = {"i": 0}
 
     def op() -> None:

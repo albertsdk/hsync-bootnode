@@ -824,7 +824,7 @@ def test_prune_removes_expired_records() -> None:
             proto="udp",
             cert_fp=FP,
             version="1.0.0",
-            endpoints=[],
+            endpoints=(),
             expires_at=1000.0,
         )
     )
@@ -854,7 +854,7 @@ def test_handle_prunes_periodically() -> None:
                 proto="udp",
                 cert_fp=FP,
                 version="1.0.0",
-                endpoints=[],
+                endpoints=(),
                 expires_at=expires_at,
             )
         )
@@ -954,6 +954,65 @@ def test_wire_serialization_is_compact_and_spec_ordered() -> None:
     assert ok == json.dumps(decoded_ok, separators=(",", ":")).encode()
 
 
+def test_response_bytes_match_the_pydantic_serializer() -> None:
+    """The hand-assembled response must stay byte-identical to the pydantic dump.
+
+    ``_response`` concatenates cached peer fragments around a server-controlled
+    envelope; this pins that envelope against ``BOOT_RESPONSE_ADAPTER`` so the
+    wire format cannot drift from the SSOT model.
+    """
+    from pydantic import TypeAdapter
+
+    from hsync_bootnode.protocol import (
+        BOOT_RESPONSE_ADAPTER,
+        BootPeer,
+        BootResponse,
+        Endpoint,
+    )
+
+    peers = [
+        BootPeer(
+            cid=CID,
+            endpoints=[Endpoint(proto="tcp", host="198.51.100.7", port=443)],
+            cert_fp=FP,
+            bucket="shared",
+            group="home",
+            version="1.0.0",
+            capacity=20,
+            connected=2,
+        )
+    ]
+    fragments = [TypeAdapter(BootPeer).dump_json(peer) for peer in peers]
+    h = make_handler()
+    expected = BOOT_RESPONSE_ADAPTER.dump_json(
+        BootResponse(protocol_version="boot/1", type="response", peers=peers, count=1, ttl=60)
+    )
+    assert h._response(peers=fragments, error=None, retry_after=None) == expected
+
+
+def test_peer_record_keeps_endpoints_compact_and_caches_wire_bytes() -> None:
+    """Records store primitive endpoints and cache the serialized wire fragment.
+
+    Memory invariant: no pydantic ``Endpoint``/``BootPeer`` instance is retained
+    per record (they cost ~3x the tuple); ``_to_peer`` returns the cached
+    ``bytes`` fragment unchanged on the second call (no per-query rebuild).
+    """
+    from hsync_bootnode.handler import BootHandler
+    from hsync_bootnode.protocol import BootQuery
+
+    h = make_handler()
+    send(h, register_frame(), peer_ip="198.51.100.7", peer_port=54321)
+    record = h.routing.get(CID, "shared", "home")
+    assert record is not None
+    assert record.endpoints == (("tcp", "198.51.100.7", 443),)
+
+    query = BootQuery(protocol_version="boot/1", type="query", bucket="shared", group="home")
+    first = BootHandler._to_peer(record, query)
+    assert isinstance(first, bytes)
+    assert record.wire is first
+    assert BootHandler._to_peer(record, query) is first
+
+
 # --- source-IP ownership (anti-hijack), per-IP isolation and bounded table ---
 
 
@@ -971,7 +1030,7 @@ def test_foreign_source_cannot_hijack_a_registration() -> None:
     record = h.routing.get(CID, "shared", "home")
     assert record is not None
     assert record.ip == "10.0.0.1"
-    assert record.endpoints[0].host == "10.0.0.1"
+    assert record.endpoints[0][1] == "10.0.0.1"
     # the victim still owns the record: its own refresh renews it and its leave
     # removes it (the attacker's writes changed nothing)
     refreshed = decoded(send(h, refresh_frame(), peer_ip="10.0.0.1", peer_port=1))

@@ -24,7 +24,7 @@ from hsync_bootnode.diagnostics import debug_enabled, debug_event, debug_log
 from hsync_bootnode.protocol import (
     BOOT_ACK_ADAPTER,
     BOOT_FRAME_ADAPTER,
-    BOOT_RESPONSE_ADAPTER,
+    BOOT_PEER_ADAPTER,
     BUCKET_TOKEN_LEN,
     PROTOCOL_VERSION_BOOT,
     BootAck,
@@ -35,7 +35,6 @@ from hsync_bootnode.protocol import (
     BootQuery,
     BootRefresh,
     BootRegister,
-    BootResponse,
     Endpoint,
     ObservedEndpoint,
 )
@@ -554,7 +553,7 @@ class BootHandler:
                 group=model.group,
                 peer=peer_ip,
                 peers=len(peers),
-                cids=[p.cid for p in peers],
+                cids=[record.cid for record in records],
             )
         return self._response(peers=peers, error=None, retry_after=None)
 
@@ -683,20 +682,35 @@ class BootHandler:
     def _response(
         self,
         *,
-        peers: list[BootPeer],
+        peers: list[bytes],
         error: BootError | None,
         retry_after: int | None,
     ) -> bytes:
-        return BOOT_RESPONSE_ADAPTER.dump_json(
-            BootResponse(
-                protocol_version=PROTOCOL_VERSION_BOOT,
-                type="response",
-                peers=peers,
-                count=len(peers),
-                ttl=int(self.ttl),
-                error=error,
-                retry_after=retry_after,
-            )
+        """Assemble the response envelope around pre-serialized peer fragments.
+
+        The envelope carries only server-controlled values (a fixed protocol
+        version/type, integers, and the ASCII ``BootError`` literal), so it needs
+        no JSON escaping; every peer fragment is still produced by the pydantic
+        adapter (``_to_peer``). Byte-for-byte identical to what
+        ``BOOT_RESPONSE_ADAPTER.dump_json(BootResponse(...))`` emits — pinned by
+        ``test_response_bytes_match_the_pydantic_serializer``.
+        """
+        error_field = b"null" if error is None else b'"' + error.encode("ascii") + b'"'
+        retry_field = b"null" if retry_after is None else str(retry_after).encode("ascii")
+        return (
+            b'{"protocol_version":"'
+            + PROTOCOL_VERSION_BOOT.encode("ascii")
+            + b'","type":"response","peers":['
+            + b",".join(peers)
+            + b'],"count":'
+            + str(len(peers)).encode("ascii")
+            + b',"ttl":'
+            + str(int(self.ttl)).encode("ascii")
+            + b',"error":'
+            + error_field
+            + b',"retry_after":'
+            + retry_field
+            + b"}"
         )
 
     def _ack(self, peer_ip: str, peer_port: int) -> bytes:
@@ -714,7 +728,7 @@ class BootHandler:
         )
 
     @staticmethod
-    def _to_peer(record: PeerRecord, model: BootQuery) -> BootPeer:
+    def _to_peer(record: PeerRecord, model: BootQuery) -> bytes:
         """Relay the peer's full advertised candidate list over the observed source.
 
         Every declared ``endpoints[]`` element is relayed verbatim and in order;
@@ -724,12 +738,18 @@ class BootHandler:
         fields (``capacity``, ``reachable`` and the election advertisement)
         cannot drift; the whole record is relayed verbatim and never
         interpreted.
+
+        Returns the pre-serialized JSON fragment (not the ``BootPeer`` model), so
+        the record caches bytes — see ``PeerRecord.wire``.
         """
         cached = record.wire
         if cached is not None:
             return cached
         if record.endpoints:
-            endpoints = list(record.endpoints)
+            endpoints = [
+                Endpoint(proto=proto, host=host, port=port)
+                for (proto, host, port) in record.endpoints
+            ]
         else:
             endpoints = [Endpoint(proto=record.proto, host=record.ip, port=record.port)]
         peer = BootPeer(
@@ -748,5 +768,6 @@ class BootHandler:
             startup_time=record.startup_time,
             sync_direction=record.sync_direction,
         )
-        record.wire = peer
-        return peer
+        fragment = BOOT_PEER_ADAPTER.dump_json(peer)
+        record.wire = fragment
+        return fragment

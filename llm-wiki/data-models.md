@@ -93,7 +93,7 @@ excluded from the union: they are never validated on the input path.
 
 | Structure | Location | Role |
 |---|---|---|
-| `PeerRecord` | `python/src/hsync_bootnode/routing.py::PeerRecord` | RAM-only routing entry keyed `(cid, bucket, group)`; carries `capacity` (advisory hint), `expires_at` (TTL) and a lazily-built materialized wire projection `wire` (`BootPeer | None`) |
+| `PeerRecord` | `python/src/hsync_bootnode/routing.py::PeerRecord` | RAM-only routing entry keyed `(cid, bucket, group)`; carries `capacity` (advisory hint), `expires_at` (TTL), the advertised endpoints as wire-agnostic `(proto, host, port)` tuples (`EndpointTuple`, `python/src/hsync_bootnode/routing.py::EndpointTuple`) and a lazily-built cached `wire` fragment (`bytes | None`, the serialized `BootPeer`) |
 | `RoutingTable` | `python/src/hsync_bootnode/routing.py::RoutingTable` | In-memory registry (`upsert`→`bool`/`remove`/`get`/`prune`/`sample`/`count`/`source_ips`); never persisted. `upsert` returns `False` above a host-derived `max_records` ceiling or a `max_records_per_group` ceiling (so one bucket cannot dominate its sample), so the handler can apply backpressure. Backed by three secondary indexes — `_by_group` (bucket+group → keys, O(1) `sample`), `_by_cid` (cid+bucket → keys, O(1) `remove`), `_pos` (key → list position for O(1) swap-remove). `prune` rebuilds the indexes in bulk when ≥ 50% of records expire, else removes incrementally. |
 | `TokenBucketLimiter` | `hsync_common/ratelimit.py` (re-exported at `python/src/hsync_bootnode/ratelimit.py`) | Shared in-memory token bucket SSOT (also used by `hsync-client`) for the per-IP/per-(IP, bucket) rate limits; `has_tokens` is a non-consuming peek used by the pre-parse malformed-frame gate; `max_keys` evicts the least-recently-used key on insert and `evict_stale` drops fully-refilled buckets, bounding key-state growth |
 | `ResourceLimits` | `python/src/hsync_bootnode/resources.py` | Host-derived ceilings (`max_peer_records`, `max_records_per_group`, `max_limiter_keys`, `max_active_connections`, `max_active_connections_per_ip`) from available RAM (the process's own cgroup limit, then `MemAvailable`, then sysconf) and CPU count; `detect()` is read-only/best-effort with a conservative fallback |
@@ -109,12 +109,16 @@ leave           ──► BootLeave                    ──► (no reply frame
 ```
 
 `BootPeer` is projected from a `PeerRecord` (handler `_to_peer`,
-`python/src/hsync_bootnode/handler.py::_to_peer`): the peer's advertised `endpoints[0]` is
-preferred, falling back to the observed source endpoint. The projection is
-materialized once on `PeerRecord.wire` and reused on later samples — valid for the
-record's lifetime because `register` always builds a fresh `PeerRecord` and
-`refresh` only mutates `connected`/`expires_at` (neither is part of `BootPeer`).
-`capacity` **is** part of `BootPeer`, so it must never be mutated in place after the
-projection is built; a changed value requires a fresh `register` (new `PeerRecord`).
+`python/src/hsync_bootnode/handler.py::_to_peer`): the peer's full advertised
+`endpoints[]` list is relayed, falling back to the observed source endpoint when
+the register carried none. The projection is serialized once with
+`BOOT_PEER_ADAPTER` and the resulting JSON fragment cached on `PeerRecord.wire`
+(`bytes`), not the `BootPeer` model — the fragment is embedded verbatim in the
+response envelope and reused on later samples. It is valid for the record's
+lifetime because `register` always builds a fresh `PeerRecord` and `refresh` only
+mutates `connected`/`expires_at` (`connected` **is** part of the projection, so a
+refresh that changes it resets `wire`; every other projected field is copied from
+`register` and requires a fresh `register`/new `PeerRecord` to change). The
+response envelope itself is assembled by the handler around the fragments.
 The committed fixtures in `fixtures/bootnode-*.json` validate every one of these
 models via the drift test in `python/tests/test_scaffold.py`.

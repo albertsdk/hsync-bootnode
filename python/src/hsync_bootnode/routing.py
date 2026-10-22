@@ -11,7 +11,7 @@ import secrets
 import time
 from dataclasses import dataclass, field
 
-from hsync_bootnode.protocol import BootPeer, BootRegister, BucketProto, Endpoint, SyncDirection
+from hsync_bootnode.protocol import BootRegister, BucketProto, SyncDirection
 
 __all__ = [
     "DEFAULT_SAMPLE_LIMIT",
@@ -19,6 +19,12 @@ __all__ = [
     "PeerRecord",
     "RoutingTable",
 ]
+
+# A peer's advertised candidate endpoint, kept wire-agnostic as a
+# ``(proto, host, port)`` tuple. The record is the long-lived object (up to the
+# host-derived ceiling); holding pydantic ``Endpoint`` models in it costs ~3x the
+# tuple for data only needed at serialization time.
+EndpointTuple = tuple[BucketProto, str, int]
 
 # Peer sampling is part of the matchmaker's exposure surface: with the
 # predictable MT19937 generator a heavy query loop could reconstruct state and
@@ -43,7 +49,7 @@ class PeerRecord:
     proto: BucketProto
     cert_fp: str
     version: str
-    endpoints: list[Endpoint]
+    endpoints: tuple[EndpointTuple, ...] = ()
     connected: int = 0
     reachable: bool = True
     capacity: int = 0
@@ -55,13 +61,16 @@ class PeerRecord:
     startup_time: float = 0.0
     sync_direction: SyncDirection = "bidirectional"
     expires_at: float = field(default_factory=lambda: time.monotonic() + DEFAULT_TTL)
-    # Materialized wire projection, lazily built by BootHandler._to_peer. Valid
+    # Materialized wire projection, lazily built by BootHandler._to_peer and kept
+    # as pre-serialized JSON bytes rather than the pydantic ``BootPeer`` model:
+    # the bytes are exactly what the response embeds, so caching them both halves
+    # the per-record footprint and removes the per-query model rebuild. Valid
     # until a field changes: register always creates a NEW PeerRecord, and a
     # refresh that changes ``connected`` invalidates this cache. Every other
-    # field IS part of BootPeer (the endpoints list, capacity, reachable, the
+    # field IS part of the projection (the endpoints, capacity, reachable, the
     # connected count and the election advertisement), so none of them may be
     # mutated in place without a fresh register (new PeerRecord) or a reset.
-    wire: BootPeer | None = field(default=None, repr=False, compare=False)
+    wire: bytes | None = field(default=None, repr=False, compare=False)
 
     def is_expired(self, now: float | None = None) -> bool:
         return (now if now is not None else time.monotonic()) >= self.expires_at
@@ -86,7 +95,7 @@ class PeerRecord:
             proto="udp",
             cert_fp=model.cert_fp,
             version=model.version,
-            endpoints=list(model.endpoints),
+            endpoints=tuple((e.proto, e.host, e.port) for e in model.endpoints),
             connected=model.connected or 0,
             reachable=bool(model.endpoints),
             capacity=model.capacity,

@@ -25,6 +25,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter
 __all__ = [
     "BOOT_ACK_ADAPTER",
     "BOOT_FRAME_ADAPTER",
+    "BOOT_PEER_ADAPTER",
     "BOOT_RESPONSE_ADAPTER",
     "BUCKET_TOKEN_LEN",
     "CAPACITY_MAX",
@@ -288,7 +289,10 @@ BOOT_FRAME_ADAPTER: TypeAdapter[BootFrame] = TypeAdapter(BootFrame)
 
 # Server→client serializers: ``dump_json`` emits ``bytes`` directly, so the
 # transport writes them verbatim instead of decoding to ``str`` and re-encoding.
+# ``BOOT_PEER_ADAPTER`` serializes one peer, so a record can cache its response
+# fragment (``PeerRecord.wire``) instead of the ``BootPeer`` model.
 BOOT_ACK_ADAPTER: TypeAdapter[BootAck] = TypeAdapter(BootAck)
+BOOT_PEER_ADAPTER: TypeAdapter[BootPeer] = TypeAdapter(BootPeer)
 BOOT_RESPONSE_ADAPTER: TypeAdapter[BootResponse] = TypeAdapter(BootResponse)
 
 

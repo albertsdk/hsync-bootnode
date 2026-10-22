@@ -1,6 +1,6 @@
 # Benchmarks — hsync-bootnode
 
-Five tiers, split by language-dependence:
+Six tiers, split by language-dependence:
 
 | Tier | Script | Transport | Language-neutral? |
 |---|---|---|---|
@@ -9,11 +9,12 @@ Five tiers, split by language-dependence:
 | L3 | `soak.py` | real QUIC/UDP loopback (sustained) | **Yes** — spawns the binary, wire-only |
 | L4 | `profile_handshake.py` | real QUIC/UDP loopback (diagnostic) | **No** — splits the `aioquic` client cost |
 | L5 | `cpu_saturation.py` | real QUIC/UDP loopback (diagnostic) | **No** — sweeps load, reads node CPU from `/proc` |
+| L6 | `memory.py` | in-process (A) + real QUIC/UDP loopback (B) | **Mixed** — A is Python-internal (`tracemalloc`); B spawns the binary, wire-only |
 
-L2/L3 launch the bootnode executable (`HSYNC_BOOTNODE_BIN`, default Python
+L2/L3/L6-B launch the bootnode executable (`HSYNC_BOOTNODE_BIN`, default Python
 build) and drive it only through the `boot/1` wire protocol, so the same
-benchmark runs unchanged against the future `rust/` port. L1 (handler)
-and the L4/L5 diagnostics are Python-internal; L5's CPU sampling needs Linux
+benchmark runs unchanged against the future `rust/` port. L1 (handler),
+L6-A and the L4/L5 diagnostics are Python-internal; L5's CPU sampling needs Linux
 `/proc` and reports `n/a` elsewhere.
 
 > **The `quic-handshake` metric measures the handshake, not the teardown.**
@@ -41,6 +42,10 @@ python/.venv/bin/python bench/profile_handshake.py --count 50 --cprofile 15
 
 # L5 — CPU-saturation sweep (Linux; node CPU% vs load vs p99)
 python/.venv/bin/python bench/cpu_saturation.py --peers 200 --levels 1,2,4,8,16,32
+
+# L6 — RAM footprint (in-process per-item, and opt-in node process RSS)
+python/.venv/bin/python bench/memory.py --records 20000 --limiter-keys 100000
+python/.venv/bin/python bench/memory.py --node --peers 20000 --endpoints 3
 
 # Against a different implementation
 HSYNC_BOOTNODE_BIN=/path/to/hsync-bootnode python/.venv/bin/python bench/bench_quic.py

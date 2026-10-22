@@ -27,13 +27,18 @@ __all__ = [
 _MIB = 1024 * 1024
 _GIB = 1024 * _MIB
 
-# Conservative estimate of one live peer entry: the record, its materialized
-# wire projection, the (cid, bucket, group) key and the three index entries.
-_RECORD_BYTES = 4 * 1024
+# Conservative estimate of one live peer entry: the record, its cached wire
+# fragment, the (cid, bucket, group) key and the three index entries. Measured
+# per record (tracemalloc, Python 3.14 / pydantic 2.14): ~1.8 KiB with 3
+# advertised endpoints and ~4.8 KiB at the 16-endpoint maximum, so the ceiling
+# must size on the worst case or a peer population of large endpoint lists would
+# overshoot the memory budget.
+_RECORD_BYTES = 6 * 1024
 # Conservative estimate of one QUIC connection: the aioquic connection object,
 # its fixed 128-stream table and the per-stream read buffers.
 _CONNECTION_BYTES = 128 * 1024
-# Conservative estimate of one rate-limiter key (two floats plus dict overhead).
+# Conservative estimate of one rate-limiter key (a (tokens, timestamp) tuple plus
+# its single dict entry; the limiter keeps one dict, not two).
 _LIMITER_KEY_BYTES = 256
 
 # Fraction of the available memory each subsystem may budget for.

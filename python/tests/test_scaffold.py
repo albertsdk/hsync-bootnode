@@ -279,7 +279,7 @@ def test_routing_table_upsert_prune_sample() -> None:
             proto="tcp",
             cert_fp="AA:BB",
             version="1.0.0",
-            endpoints=[],
+            endpoints=(),
             expires_at=2000.0,
         )
     )
@@ -293,7 +293,7 @@ def test_routing_table_upsert_prune_sample() -> None:
             proto="tcp",
             cert_fp="CC:DD",
             version="1.0.0",
-            endpoints=[],
+            endpoints=(),
             expires_at=3000.0,
         )
     )

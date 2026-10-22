@@ -5,7 +5,7 @@
 # `-f hsync-bootnode/Dockerfile`.
 
 ### Builder
-FROM python:3.13-alpine AS builder
+FROM python:3.14.9-alpine3.23 AS builder
 
 # Install build dependencies in a single layer
 RUN apk add --no-cache \
@@ -42,12 +42,12 @@ COPY hsync-common /project/hsync-common
 
 # Install dependencies (and the bootnode package, which provides the console
 # script) and clean the cache in a single layer
-RUN poetry env use python3.13 \
+RUN poetry env use python3.14 \
     && poetry install --only main --no-interaction \
     && rm -rf /tmp/poetry_cache
 
 ### Run Image
-FROM python:3.13-alpine
+FROM python:3.14.9-alpine3.23
 
 WORKDIR /project/hsync-bootnode/python
 

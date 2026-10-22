@@ -2,8 +2,8 @@
 #
 # HSYNC Bootnode — Linux builder image (amd64 / arm64 / armhf)
 #
-# Single-stage builder based on the official ``python:3.12-bookworm`` multi-arch
-# image (Debian 12, glibc 2.36, CPython 3.12 built ``--enable-shared``), plus
+# Single-stage builder based on the official ``python:3.14.9-bookworm`` multi-arch
+# image (Debian 12, glibc 2.36, CPython 3.14.9 built ``--enable-shared``), plus
 # Poetry, the Rust toolchain and ``dpkg-dev``. It is ready to:
 #   1. invoke PyInstaller on the project sources mounted at /repo
 #   2. assemble a .deb package with dpkg-deb
@@ -24,12 +24,12 @@
 # Never published to any registry.
 
 # Base image and target platform are parametrised so the same Dockerfile
-# produces a builder for every CPU family. ``python:3.12-bookworm`` is a
+# produces a builder for every CPU family. ``python:3.14.9-bookworm`` is a
 # multi-arch manifest, so ``--platform`` alone selects the architecture:
 #   linux/amd64 → amd64
 #   linux/arm64 → arm64
 #   linux/arm/v7 → armhf (armv7)
-ARG BASE_IMAGE=python:3.12-bookworm
+ARG BASE_IMAGE=python:3.14.9-bookworm
 ARG TARGET_PLATFORM=linux/amd64
 
 FROM --platform=${TARGET_PLATFORM} ${BASE_IMAGE}
@@ -101,7 +101,7 @@ RUN set -eux; \
 # 1.x releases ignore ``[project]`` and abort with "fields ... are required
 # in package mode" while also rejecting the newer lock-file format.
 RUN python3 -m pip install --no-cache-dir --prefer-binary \
-        "poetry==2.3.2"
+        "poetry==2.5.1"
 
 # Workdir is mounted by the caller (``-v "$PWD:/src"``).
 WORKDIR /src

@@ -50,7 +50,7 @@ jobs:
           path: hsync-common
           token: ${{ secrets.HSYNC_COMMON_PAT }}
       - uses: actions/setup-python@v7
-        with: { python-version: "3.13" }
+        with: { python-version: "3.14.9" }
       # Gate the markdown docs on valid relative links, including the cross-repo
       # pointers into the sibling hsync-common checkout (pure stdlib script).
       - name: Docs link-check
@@ -104,7 +104,7 @@ jobs:
           path: hsync-common
           token: ${{ secrets.HSYNC_COMMON_PAT }}
       - uses: actions/setup-python@v7
-        with: { python-version: "3.13" }
+        with: { python-version: "3.14.9" }
       - run: pipx install poetry
       - name: Determine version
         id: version

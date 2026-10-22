@@ -181,10 +181,11 @@ UDP :443
 - **Binary portability floor**: `native` and `deb` build on the host, so their
   executable embeds the build machine's CPython + glibc (incompatible with any
   machine carrying an older glibc); `deb-all`/`rpi` build inside
-  `python:3.12-bookworm` (glibc 2.36) and `rpm-all` inside `rockylinux:9`
-  (glibc 2.34), so those are the portable artifacts — measured on a produced
-  amd64 bundle: CPython 3.12, floor `libc6 (>= 2.35)` (`libpython3.12.so.1.0`,
-  `libgcc_s.so.1`), while the base image itself is glibc 2.36. `BASE_IMAGE` is a
+  `python:3.14.9-bookworm` (glibc 2.36) and `rpm-all` inside `rockylinux:9`
+  (glibc 2.34), so those are the portable artifacts — the produced amd64
+  bundle embeds CPython 3.14.9 (`libpython3.14.so.1.0`, `libgcc_s.so.1`); the
+  3.12 bundles measured a `libc6 (>= 2.35)` floor, so re-measure it with
+  `dpkg-shlibdeps` when rebuilding the 3.14.9 packages. `BASE_IMAGE` is a
   Dockerfile `ARG` only — no CLI flag selects an older base. The `.deb`'s
   `Depends: libc6` covers the launcher only, never the bundled Python.
   Operator-facing procedure: `docs/faq.md`.

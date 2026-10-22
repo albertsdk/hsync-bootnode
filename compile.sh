@@ -538,7 +538,7 @@ build_deb() {
 
 # Build .deb packages for all 3 Debian/Ubuntu architectures (amd64, arm64,
 # armhf) via Docker cross-builds — one build per arch (the builder base is the
-# multi-arch ``python:3.12-bookworm`` image (base glibc 2.36; the produced
+# multi-arch ``python:3.14.9-bookworm`` image (base glibc 2.36; the produced
 # package's measured floor is libc6 >= 2.35, so it runs on Ubuntu 22.04/24.04 LTS
 # and Debian 12+), selected via --platform):
 #   amd64 → linux/amd64
@@ -948,7 +948,7 @@ build_native() {
 # Build standalone executables for Raspberry Pi OS, one per supported
 # architecture: armhf (32-bit, armv7) and arm64 (64-bit, aarch64). PyInstaller
 # cannot cross-compile, so each binary is produced by running the selected
-# language's script inside an emulated python:3.12-bookworm container (Raspberry
+# language's script inside an emulated python:3.14.9-bookworm container (Raspberry
 # Pi OS Bookworm is Debian 12 / glibc 2.36; the produced binaries require
 # libc6 >= 2.35, so Bookworm runs them and Bullseye's 2.31 does not).
 #

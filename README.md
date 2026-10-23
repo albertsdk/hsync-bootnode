@@ -27,11 +27,9 @@ prerequisite — this is a **multi-language** repository: one protocol, several
 implementations sharing the same spec and fixtures (see the
 [repository layout](CONTRIBUTING.md#repository-layout)).
 
-> 👉 **Operational Advisory:** the bootnode is discovery-only — it never stores
-> or relays file data. If you need a closed network, provision protected buckets;
-> distribute the node's TLS fingerprint to clients (or let them confirm it once at
-> the prompt) so they can pin it. Keep validated backups of any state you care
-> about elsewhere.
+> 👉 **Operational Advisory:** the node's TLS identity is its only persistent
+> artifact, so distribute its fingerprint to clients (or let them confirm it once
+> at the prompt) and pin it — that is what makes a public node verifiably yours.
 
 ---
 
@@ -41,23 +39,7 @@ implementations sharing the same spec and fixtures (see the
 [![Rust 1.98+ (planned)](https://img.shields.io/badge/Rust-1.98+_(planned)-DEA584.svg)](rust/)
 [![Status: v1](https://img.shields.io/badge/Status-v1-yellow.svg)](docs/README.md)
 
-**Quick navigation:**
-- **New to HSYNC?** Start with [What you can do](#what-you-can-do-with-hsync-bootnode) and the [Getting Started guide](docs/getting-started.md)
-- **Deploying a node?** See the [Usage reference](docs/usage.md) and [Deploying as a service](docs/usage.md#deploying-as-a-service)
-- **Writing an implementation?** Read the [`boot/1` specification](protocol-spec/boot-1.md)
-- **Want to contribute?** See [Contributing](CONTRIBUTING.md)
-
 ---
-
-## What you can do with HSYNC Bootnode
-
-- **Extend p2p Mode across networks** — let devices that are not on the same
-  LAN discover each other, with no central server holding the files.
-- **Run a private, closed network** — start the node with `--private` and every
-  frame is authenticated against a group key: no accounts, nothing stored.
-- **Keep discovery stateless and no-log** — clients register and query
-  candidates; the routing table is RAM-only with a 60-second TTL, and file data
-  never passes through the node.
 
 ## What it is
 
@@ -92,7 +74,8 @@ network over the Internet** whose file data still flows only between peers. See
 **You need a bootnode when:**
 
 * your P2P group spans different networks — home ↔ office, two branches, a laptop on mobile data — and you don't want a central server holding the files;
-* you want a private, closed group: run the node with `--private` and every frame is authenticated against a group key, with no accounts to create and nothing stored.
+* you want a private, closed group: start the node with `--private`, so every
+  frame is authenticated against a group key — see [Private node](docs/usage.md#private-node-authenticated-bootstrap).
 
 **You don't need it when:**
 

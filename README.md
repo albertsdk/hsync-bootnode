@@ -41,6 +41,16 @@ implementations sharing the same spec and fixtures (see the
 
 ---
 
+## What you can do with HSYNC Bootnode
+
+- **Extend p2p Mode across networks** — let devices that are not on the same
+  LAN discover each other, with no central server holding the files.
+- **Run a private, closed network** — start the node with `--private` and every
+  frame is authenticated against a group key: no accounts, nothing stored.
+- **Keep discovery stateless and no-log** — clients register and query
+  candidates; the routing table is RAM-only with a 60-second TTL, and file data
+  never passes through the node.
+  
 ## What it is
 
 HSYNC syncs files peer-to-peer without a central server. On a single local

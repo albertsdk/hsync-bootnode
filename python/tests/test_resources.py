@@ -66,5 +66,5 @@ def test_available_memory_is_capped_by_the_process_cgroup_limit() -> None:
     from unittest.mock import patch
 
     cap = 64 * 1024 * 1024
-    with patch("hsync_bootnode.resources._process_cgroup_limit_bytes", return_value=cap):
+    with patch("hsync_common.runtime.get_memory_limit_bytes", return_value=cap):
         assert available_memory_bytes() <= cap

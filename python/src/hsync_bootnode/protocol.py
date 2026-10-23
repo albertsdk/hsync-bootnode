@@ -11,7 +11,6 @@ the frame kind from the payload shape.
 
 from __future__ import annotations
 
-import re
 from typing import Annotated, Literal
 
 # CID shape is the hsync-common SSOT (``hsync_common.models.event.CID_PATTERN``,
@@ -20,6 +19,7 @@ from typing import Annotated, Literal
 # value; ``test_cid_pattern_matches_boot1_spec`` pins the two together.
 from hsync_common.models.event import CID_PATTERN
 from hsync_common.path_validation import is_valid_bucket_name
+from hsync_common.protocol.boot_tokens import BUCKET_TOKEN_LEN, is_valid_bucket_token
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter
 
 __all__ = [
@@ -52,10 +52,9 @@ __all__ = [
 # bootstrap channel's wire shape; peers then hard-fail instead of drifting.
 PROTOCOL_VERSION_BOOT: Literal["boot/1"] = "boot/1"
 
-# hex(32 bytes) = 64 chars. Absent = open bucket.
-BUCKET_TOKEN_LEN = 64
-_BUCKET_TOKEN_RE = re.compile(rf"^[0-9a-f]{{{BUCKET_TOKEN_LEN}}}$")
-
+# hex(32 bytes) = 64 chars. Absent = open bucket. The token grammar and the
+# derivation live in the shared, protocol-neutral
+# ``hsync_common.protocol.boot_tokens`` (re-exported by ``tokens.py``).
 BucketProto = Literal["tcp", "udp"]
 
 # Advisory service-capacity hint domain (``0..32``; ``0`` = not a peer-download
@@ -114,7 +113,7 @@ def _validate_bucket_token(value: str) -> str:
     by the separate malformed-frame budget — instead of counting it as a
     failed-token attempt.
     """
-    if not _BUCKET_TOKEN_RE.fullmatch(value):
+    if not is_valid_bucket_token(value):
         raise ValueError("bucket_token must be 64 lowercase hex characters")
     return value
 
@@ -296,4 +295,4 @@ BOOT_PEER_ADAPTER: TypeAdapter[BootPeer] = TypeAdapter(BootPeer)
 BOOT_RESPONSE_ADAPTER: TypeAdapter[BootResponse] = TypeAdapter(BootResponse)
 
 
-assert _BUCKET_TOKEN_RE.fullmatch("a" * BUCKET_TOKEN_LEN)
+assert is_valid_bucket_token("a" * BUCKET_TOKEN_LEN)

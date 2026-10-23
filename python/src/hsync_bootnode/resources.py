@@ -17,6 +17,13 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+# Host-resource probing (cgroup v1/v2, MemAvailable) is the shared
+# ``hsync_common.runtime`` implementation; this module only derives the
+# bootnode-specific ceilings from it.
+from hsync_common.runtime import available_memory_bytes as _shared_available_memory_bytes
+from hsync_common.runtime import get_memory_limit_bytes as _get_memory_limit_bytes
+from hsync_common.runtime import total_memory_bytes as _shared_total_memory_bytes
+
 __all__ = [
     "ResourceLimits",
     "available_memory_bytes",
@@ -67,8 +74,6 @@ _MIN_RECORDS_PER_GROUP = 128
 _MAX_RECORDS_PER_GROUP = 100_000
 
 _FALLBACK_MEMORY_BYTES = 256 * _MIB
-# cgroup "no limit" sentinel: v2 spells it ``max``, v1 uses a value near 2**63.
-_UNLIMITED_BYTES = 1 << 62
 
 
 def _clamp(value: int, low: int, high: int) -> int:
@@ -89,106 +94,33 @@ def _budget(
     return _clamp(items if cap is None else min(items, cap), low, high)
 
 
-def _read_first_int(path: str) -> int | None:
-    """Return the first integer token of a procfs/sysfs file, or ``None``."""
-    try:
-        with open(path, encoding="ascii") as handle:
-            for line in handle:
-                token = line.strip().split()[0] if line.strip() else ""
-                if token.isdigit():
-                    return int(token)
-    except (OSError, ValueError):
-        return None
-    return None
-
-
-def _process_cgroup_limit_bytes() -> int | None:
-    """The limit of the process's OWN cgroup, resolved via ``/proc/self/cgroup``.
-
-    systemd services and containers with a non-namespaced cgroup view run in a
-    nested cgroup, so the mount root ``memory.max`` is often ``max`` while the
-    enforced limit lives under the service's slice; a root-only probe would miss
-    an operator's ``MemoryMax=`` and over-size the in-memory ceilings.
-    """
-    try:
-        with open("/proc/self/cgroup", encoding="ascii") as handle:
-            lines = handle.read().splitlines()
-    except OSError:
-        return None
-    for line in lines:
-        parts = line.split(":", 2)
-        if len(parts) != 3 or not parts[2]:
-            continue
-        controllers, path = parts[1], parts[2]
-        if controllers == "":  # cgroup v2 unified hierarchy
-            candidate = f"/sys/fs/cgroup{path}/memory.max"
-        elif "memory" in controllers.split(","):  # cgroup v1
-            candidate = f"/sys/fs/cgroup/memory{path}/memory.limit_in_bytes"
-        else:
-            continue
-        value = _read_first_int(candidate)
-        if value is not None and 0 < value < _UNLIMITED_BYTES:
-            return value
-    return None
-
-
-def _cgroup_memory_limit_bytes() -> int | None:
-    """The effective cgroup memory limit, or ``None`` when unlimited.
-
-    The process's own (possibly nested) cgroup is consulted first, then the
-    mount root; ``max`` (v2) and the v1 sentinel near ``2**63`` mean no limit.
-    """
-    value = _process_cgroup_limit_bytes()
-    if value is not None:
-        return value
-    for path in (
-        "/sys/fs/cgroup/memory.max",
-        "/sys/fs/cgroup/memory/memory.limit_in_bytes",
-    ):
-        value = _read_first_int(path)
-        if value is not None and 0 < value < _UNLIMITED_BYTES:
-            return value
-    return None
-
-
 def cpu_count() -> int:
     """Logical CPUs visible to the process (never below 1)."""
     return max(1, os.cpu_count() or 1)
 
 
 def total_memory_bytes() -> int:
-    """Physical memory the process may use, in bytes (best effort)."""
-    limit = _cgroup_memory_limit_bytes()
+    """Physical memory the process may use, in bytes (best effort).
+
+    The cgroup limit wins when one is enforced (a container may see the whole
+    host through ``sysconf``); the conservative fallback keeps a sandboxed
+    service unit that hides ``/proc`` usable instead of giving it zero budget.
+    """
+    limit = _get_memory_limit_bytes()
     if limit is not None:
         return limit
-    try:
-        pages = int(os.sysconf("SC_PHYS_PAGES"))
-        page_size = int(os.sysconf("SC_PAGE_SIZE"))
-        if pages > 0 and page_size > 0:
-            return pages * page_size
-    except (ValueError, OSError, AttributeError):
-        pass
-    return _FALLBACK_MEMORY_BYTES
+    return _shared_total_memory_bytes() or _FALLBACK_MEMORY_BYTES
 
 
 def available_memory_bytes() -> int:
     """Currently available memory, in bytes (best effort).
 
-    ``MemAvailable`` is preferred when readable; a cgroup limit caps the result
-    so a container cannot over-commit the host.
+    Delegates to the shared probe (``MemAvailable`` capped by the process's
+    cgroup limit) and degrades to the total when the statistics are unreadable.
     """
-    limit = _cgroup_memory_limit_bytes()
-    try:
-        with open("/proc/meminfo", encoding="ascii") as handle:
-            for line in handle:
-                if line.startswith("MemAvailable:"):
-                    available = int(line.split()[1]) * 1024
-                    if available > 0:
-                        return min(available, limit) if limit is not None else available
-    except (OSError, ValueError, IndexError):
-        pass
-    if limit is not None:
-        return limit
+    available = _shared_available_memory_bytes()
+    if available is not None:
+        return available
     return total_memory_bytes()
 
 

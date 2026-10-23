@@ -26,6 +26,7 @@ import typer
 from hsync_common import ssl_utils
 from hsync_common.constants import BOOT_DEFAULT_PORT, BOOT_PORT_SET
 from hsync_common.endpoint import parse_host_port, parse_port_list
+from hsync_common.state_paths import state_path
 from pydantic import SecretStr
 
 from hsync_bootnode import __version__
@@ -93,12 +94,8 @@ KEYS_FD_READ_TIMEOUT_SECONDS = 5.0
 
 
 def default_identity_path() -> Path:
-    """Resolve the persistent identity path: ``$HSYNC_BOOTNODE_IDENTITY`` or an XDG state dir."""
-    override = os.environ.get(_DEFAULT_IDENTITY_ENV)
-    if override:
-        return Path(override)
-    base = os.environ.get("XDG_STATE_HOME") or os.path.join(Path.home(), ".local", "state")
-    return Path(base) / "hsync" / "bootnode" / "identity.pem"
+    """Resolve the identity path: ``$HSYNC_BOOTNODE_IDENTITY`` or the state dir."""
+    return state_path("bootnode", "identity.pem", override_env=_DEFAULT_IDENTITY_ENV)
 
 
 def _resolve_identity(

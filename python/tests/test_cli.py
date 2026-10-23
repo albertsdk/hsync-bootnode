@@ -511,8 +511,16 @@ def test_debug_run_announces_the_peer_aware_stream(monkeypatch, tmp_path) -> Non
 def test_default_identity_path_uses_xdg_state(monkeypatch, tmp_path) -> None:
     """With no override the path is an XDG *state* path (stable across restarts)."""
     monkeypatch.delenv("HSYNC_BOOTNODE_IDENTITY", raising=False)
+    monkeypatch.delenv("HSYNC_STATE_DIR", raising=False)
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     assert default_identity_path() == tmp_path / "hsync" / "bootnode" / "identity.pem"
+
+
+def test_default_identity_path_follows_the_state_dir(monkeypatch, tmp_path) -> None:
+    """HSYNC_STATE_DIR relocates the identity together with the rest of the state."""
+    monkeypatch.delenv("HSYNC_BOOTNODE_IDENTITY", raising=False)
+    monkeypatch.setenv("HSYNC_STATE_DIR", str(tmp_path / "state"))
+    assert default_identity_path() == tmp_path / "state" / "bootnode" / "identity.pem"
 
 
 def test_default_identity_path_honours_the_env_override(monkeypatch, tmp_path) -> None:

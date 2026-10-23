@@ -40,7 +40,8 @@ cd python
 ```
 
 On first run the node creates a persistent identity at
-`$XDG_STATE_HOME/hsync/bootnode/identity.pem` (override with `--identity PATH`),
+`$HSYNC_STATE_DIR/bootnode/identity.pem` (`$XDG_STATE_HOME/hsync/bootnode/identity.pem`
+when `HSYNC_STATE_DIR` is unset; override with `--identity PATH`),
 so its fingerprint is stable across restarts and clients can pin it. Read it
 with `hsync-bootnode identity show` (add the same `--identity PATH` when you
 overrode it), and use `--ephemeral` for a throwaway node that keeps the identity

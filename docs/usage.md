@@ -23,7 +23,7 @@ hsync-bootnode --version
 | `--host` | `0.0.0.0` | Address to bind the QUIC/UDP listener to. Accepts an optional port (`HOST[:PORT]`, e.g. `0.0.0.0:443` or `[::1]:443`). |
 | `--port` | `443` | UDP port (1–65535). 443 is the QUIC/HTTP3 default; ports below 1024 need root or `CAP_NET_BIND_SERVICE` (the systemd unit grants it). Mutually exclusive with a port in `--host HOST:PORT`. |
 | `--ports` | *(none)* | Comma-separated UDP ports to listen on in **one process** (multi-port). The listeners share one in-memory routing table, so a peer registered via one port is visible to a query on another. The point is to offer several inbound doors because a **client's egress firewall** may block UDP 443 while allowing another UDP port. Recommended reachability set: `443,53` (`BOOT_PORT_SET`); 53 is the most permissive UDP port but is usually held by the local resolver — free it or omit it. Binding is **best-effort**: a port that cannot bind is skipped with a warning and the node keeps serving the rest (it fails only if none bind). Mutually exclusive with `--port` and a port in `--host HOST:PORT`. |
-| `--identity` | XDG state path | Path of the persistent TLS identity (key+cert). Created on first run and reused afterwards, so the certificate fingerprint is stable across restarts and can be pinned by clients. Default: `$HSYNC_BOOTNODE_IDENTITY` or `$XDG_STATE_HOME/hsync/bootnode/identity.pem` (`~/.local/state/…`). |
+| `--identity` | XDG state path | Path of the persistent TLS identity (key+cert). Created on first run and reused afterwards, so the certificate fingerprint is stable across restarts and can be pinned by clients. Default: `$HSYNC_BOOTNODE_IDENTITY`, else `$HSYNC_STATE_DIR/bootnode/identity.pem`, else `$XDG_STATE_HOME/hsync/bootnode/identity.pem` (`~/.local/state/…`). |
 | `--ephemeral` | *(disabled flag)* | Keep the TLS identity in memory and write no identity file (read-only filesystems, throwaway nodes); the fingerprint changes on every restart, so clients cannot pin it. Mutually exclusive with `--identity`. Environment variable form: `HSYNC_BOOTNODE_EPHEMERAL=1`. |
 | `--public-host` | *(none)* | Public hostname or IP to add to the certificate SAN (repeatable). |
 | `--protected-bucket` | *(none)* | Bucket that requires a valid `bucket_token`. Repeatable. Declaring a protected bucket without provisioning its key fails fast at startup (exit code 2). |
@@ -87,6 +87,7 @@ Prints the version and the protocol, e.g.
 | `HSYNC_BOOTNODE_KEYS_FD` | Same as `--keys-fd`; the env-var form is what service wrappers set. |
 | `HSYNC_BOOTNODE_KEYS_FILE` | Same as `--keys-file`; the portable source for service managers that cannot pass a descriptor (Windows/WinSW). |
 | `HSYNC_BOOTNODE_IDENTITY` | Same as `--identity`; overrides the default state path of the persistent TLS identity. |
+| `HSYNC_STATE_DIR` | Installation state directory; the default identity lives under its `bootnode/` subdirectory. |
 | `HSYNC_BOOTNODE_EPHEMERAL` | Same as `--ephemeral`; set to `1` to keep the identity in memory (no identity file). |
 | `HSYNC_BOOTNODE_PRIVATE` | Same as `--private`; set to `1` to require a valid `bucket_token` on every frame. |
 | `HSYNC_BOOTNODE_DEBUG` | Same as `--debug`; set to `1` for the full opt-in operation log (peer identity included; stderr only). |

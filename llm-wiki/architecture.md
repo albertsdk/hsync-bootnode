@@ -123,7 +123,8 @@ UDP :443
   Protected buckets are declared by the operator (`--protected-bucket`,
   repeatable) and fail fast at startup if declared without a key
   (`BootConfigError`, exit code 2). The client derives the same token from its p2p
-  shared key (`HSYNC_P2P_KEY` → `derive_bucket_token`), so one client key
+  shared key (raw `HSYNC_P2P_KEY`, or `HSYNC_P2P_PASSPHRASE` derived to it →
+  `derive_bucket_token`), so one client key
   authenticates to any bucket whose group key equals it; the user-facing model is
   `docs/usage.md` ("Privacy and anonymity model").
 - **Private node** (`--private` / `HSYNC_BOOTNODE_PRIVATE=1`): the protected-bucket check

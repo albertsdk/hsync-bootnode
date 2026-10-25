@@ -202,8 +202,9 @@ Notes:
 
 1. Mint one group key per bucket (for example `openssl rand -hex 32`). It must
    be at least 32 characters: the key is the bucket token's only entropy, so a
-   shorter value is a configuration error (exit code 2) on the node **and** in
-   the client's `HSYNC_P2P_KEY`.
+   shorter value is a configuration error (exit code 2) on the node. A client may
+   instead use `HSYNC_P2P_PASSPHRASE` (at least 12 characters), which it derives
+   to the same 64-hex key.
 2. Write one `bucket=<key>` line per bucket to
    `/etc/hsync-bootnode/group-keys` (0640, root-owned) and pass it to the node
    with `--keys-fd 5` (the packaged systemd/launchd units) or

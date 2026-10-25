@@ -57,8 +57,8 @@ Internal, agent-optimized knowledge base for the `hsync-bootnode` project
    uniform (`token_required`) and never reveal bucket existence or the
    provisioned set. `--private` widens the same policy to every bucket
    (including `leave`): see `decisions.md` #22/#51. The group key is the token's
-   only entropy, so both the node's key source and the client's `HSYNC_P2P_KEY`
-   enforce `MIN_GROUP_KEY_CHARS` (32 characters).
+   only entropy, so the node's key source enforces `MIN_GROUP_KEY_CHARS` (32
+   characters); a client may use `HSYNC_P2P_PASSPHRASE` (12+) derived to it.
 5. **Record ownership**: on an open bucket, `register`/`refresh`/`leave` are
    honoured only from the source IP the record belongs to (or with a valid token
    on a protected bucket); a foreign source cannot overwrite, keep alive or

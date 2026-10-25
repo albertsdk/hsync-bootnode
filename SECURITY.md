@@ -70,8 +70,9 @@ peer declares and never becomes an identity authority.
   a valid `bucket_token` then authenticates bucket membership and pins who may
   write.
 - The group key behind that token is the only entropy, so it must be at least 32
-  characters (the node and the client enforce the same floor) and be rotated
-  like any shared secret: rotate the key, restart the node, redistribute it.
+  characters on the node (a client may instead supply a 12+
+  `HSYNC_P2P_PASSPHRASE`, which it derives to that key) and be rotated like any
+  shared secret: rotate the key, restart the node, redistribute it.
 
 ## Hardening Recommendations
 

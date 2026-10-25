@@ -10,7 +10,9 @@ peer-related is ever written to disk.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import errno
+import ipaddress
 import os
 import select
 import signal
@@ -27,13 +29,15 @@ from hsync_common import ssl_utils
 from hsync_common.constants import BOOT_DEFAULT_PORT, BOOT_PORT_SET
 from hsync_common.endpoint import parse_host_port, parse_port_list
 from hsync_common.path_validation import is_valid_bucket_name
-from hsync_common.protocol.boot_tokens import validate_group_key
+from hsync_common.protocol.boot_tokens import MIN_GROUP_KEY_CHARS, validate_group_key
+from hsync_common.protocol.rest import REST_METRICS_PATH
 from hsync_common.state_paths import state_path
 from pydantic import SecretStr
 
 from hsync_bootnode import __version__
 from hsync_bootnode.diagnostics import configure_debug, debug_log, error_event, warn_event
 from hsync_bootnode.handler import REQUEST_PATH_PRUNE_BUDGET, BootConfigError, BootHandler
+from hsync_bootnode.metrics import MetricsEndpoint, MetricsServer
 from hsync_bootnode.resources import ResourceLimits
 from hsync_bootnode.server import (
     ConnectionGuard,
@@ -45,8 +49,11 @@ from hsync_bootnode.server import (
     rotation_hint,
     start_servers,
 )
+from hsync_bootnode.stats import NodeStats
 from hsync_bootnode.systemd import (
+    notify_available,
     notify_ready,
+    notify_status,
     notify_stopping,
     notify_watchdog,
     watchdog_interval,
@@ -83,6 +90,14 @@ _DEFAULT_PRIVATE_ENV = "HSYNC_BOOTNODE_PRIVATE"
 _DEFAULT_IDENTITY_ENV = "HSYNC_BOOTNODE_IDENTITY"
 # Opt out of persistence: keep the TLS identity in memory (no disk writes).
 _DEFAULT_EPHEMERAL_ENV = "HSYNC_BOOTNODE_EPHEMERAL"
+# Metrics endpoint (loopback HTTP, bearer token) and the periodic aggregate
+# sink. Both are opt-in: no listener and no file unless the operator asks.
+_DEFAULT_METRICS_HOST_ENV = "HSYNC_BOOTNODE_METRICS_HOST"
+_DEFAULT_METRICS_PORT_ENV = "HSYNC_BOOTNODE_METRICS_PORT"
+_DEFAULT_METRICS_TOKEN_FD_ENV = "HSYNC_BOOTNODE_METRICS_TOKEN_FD"
+_DEFAULT_METRICS_TOKEN_FILE_ENV = "HSYNC_BOOTNODE_METRICS_TOKEN_FILE"
+_DEFAULT_STATS_FILE_ENV = "HSYNC_BOOTNODE_STATS_FILE"
+_DEFAULT_STATS_INTERVAL_ENV = "HSYNC_BOOTNODE_STATS_INTERVAL"
 # Warn this many days before the persisted identity's certificate expires.
 _IDENTITY_EXPIRY_WARN_DAYS = 30
 # Shared help for the ``--identity`` option (declared identically by every
@@ -288,6 +303,61 @@ def run(
         envvar=_DEFAULT_READY_FILE_ENV,
         help="Write the process PID to this path once the listener is bound.",
     ),
+    metrics_host: str = typer.Option(
+        "127.0.0.1",
+        "--metrics-host",
+        envvar=_DEFAULT_METRICS_HOST_ENV,
+        help=(
+            "Loopback address for the /metrics endpoint (only 127.0.0.1, ::1 or "
+            "localhost; plain HTTP, never exposed). Env: HSYNC_BOOTNODE_METRICS_HOST."
+        ),
+    ),
+    metrics_port: int | None = typer.Option(
+        None,
+        "--metrics-port",
+        envvar=_DEFAULT_METRICS_PORT_ENV,
+        metavar="PORT",
+        help=(
+            "Serve aggregate Prometheus metrics on --metrics-host:PORT (loopback "
+            "TCP, Bearer token required). Off when omitted. Env: "
+            "HSYNC_BOOTNODE_METRICS_PORT."
+        ),
+    ),
+    metrics_token_fd: int | None = typer.Option(
+        None,
+        "--metrics-token-fd",
+        envvar=_DEFAULT_METRICS_TOKEN_FD_ENV,
+        help=(
+            "File descriptor holding the metrics bearer token (one line, at least "
+            "32 characters). Env: HSYNC_BOOTNODE_METRICS_TOKEN_FD."
+        ),
+    ),
+    metrics_token_file: str | None = typer.Option(
+        None,
+        "--metrics-token-file",
+        envvar=_DEFAULT_METRICS_TOKEN_FILE_ENV,
+        help=(
+            "File holding the metrics bearer token; portable alternative to "
+            "--metrics-token-fd. Env: HSYNC_BOOTNODE_METRICS_TOKEN_FILE."
+        ),
+    ),
+    stats_file: str | None = typer.Option(
+        None,
+        "--stats-file",
+        envvar=_DEFAULT_STATS_FILE_ENV,
+        help=(
+            "Write the aggregate counters to this file in Prometheus text format "
+            "(atomic replace; node_exporter textfile collector). Env: "
+            "HSYNC_BOOTNODE_STATS_FILE."
+        ),
+    ),
+    stats_interval: int = typer.Option(
+        15,
+        "--stats-interval",
+        envvar=_DEFAULT_STATS_INTERVAL_ENV,
+        metavar="SECONDS",
+        help="Seconds between two STATUS=/stats-file publications (default 15).",
+    ),
     no_rate_limit: bool = typer.Option(
         False,
         "--no-rate-limit",
@@ -326,12 +396,19 @@ def run(
     """Run the bootstrap node: one or more QUIC/UDP listeners (boot/1)."""
     resolved_host, resolved_ports = _resolve_listeners(host, port, ports)
     limits = ResourceLimits.detect()
+    # One aggregate counter object per process: the handler, the connection guard
+    # and every sink (STATUS=, stats file, /metrics) share it.
+    stats = NodeStats()
     configure_debug(debug)
     if debug:
         # Transparency (RFC 6973 §6.2): the operator opted into a stream that
         # may contain peer identity — say so once, on the always-on channel.
         warn_event("peer data logging enabled", reason="--debug")
     try:
+        if metrics_port is not None and not 1 <= metrics_port <= 65535:
+            raise BootConfigError("--metrics-port must be between 1 and 65535")
+        if not 1 <= stats_interval <= 3600:
+            raise BootConfigError("--stats-interval must be between 1 and 3600")
         keys = _load_keys(keys_fd, keys_file)
         handler = BootHandler(
             protected_buckets=protected_bucket,
@@ -340,10 +417,19 @@ def run(
             ttl=float(ttl),
             enforce_rate_limits=not no_rate_limit,
             limits=limits,
+            stats=stats,
         )
         node_identity = _resolve_identity(
             identity, ephemeral, host=resolved_host, public_hosts=public_host
         )
+        metrics_endpoint = _resolve_metrics(
+            host=metrics_host,
+            port=metrics_port,
+            token_fd=metrics_token_fd,
+            token_file=metrics_token_file,
+        )
+        if stats_file is not None:
+            _check_stats_target(stats_file)
     except (BootConfigError, IdentityError) as exc:
         _config_error(exc)
 
@@ -376,7 +462,9 @@ def run(
         f"<= {limits.max_active_connections} connections (host-derived)\n"
         f"  debug     : {'on (full operation log incl. peer identity, stderr only)' if debug else 'off (in-memory only)'}\n"
         f"  rate limit: {'disabled' if no_rate_limit else 'enabled'}\n"
-        f"  upnp      : {'enabled (zero-touch)' if upnp else 'disabled'}"
+        f"  upnp      : {'enabled (zero-touch)' if upnp else 'disabled'}\n"
+        f"  metrics   : {_metrics_display(metrics_endpoint)}\n"
+        f"  stats     : {stats_file or '(off)'} every {stats_interval}s"
     )
     typer.echo(banner)
 
@@ -399,12 +487,19 @@ def run(
                 identity=node_identity,
                 enforce_rate_limits=not no_rate_limit,
                 limits=limits,
+                stats=stats,
+                metrics=metrics_endpoint,
+                stats_file=stats_file,
+                stats_interval=float(stats_interval),
             )
         )
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass  # graceful shutdown: transport closed in _async_main's finally
     except ListenerBindError as exc:
         typer.echo(_bind_error_message(exc), err=True)
+        raise typer.Exit(code=3) from exc
+    except MetricsBindError as exc:
+        typer.echo(_metrics_bind_error_message(exc), err=True)
         raise typer.Exit(code=3) from exc
     except ReadyFileError as exc:
         error_event("readiness file not writable", path=exc.path, reason=exc.reason)
@@ -495,6 +590,16 @@ class ReadyFileError(Exception):
         super().__init__(f"cannot write the readiness file {path}: {self.reason}")
 
 
+class MetricsBindError(Exception):
+    """The metrics listener could not bind (port in use, address unavailable)."""
+
+    def __init__(self, host: str, port: int, errno_value: int | None) -> None:
+        self.host = host
+        self.port = port
+        self.errno_value = errno_value
+        super().__init__(f"cannot bind {host}:{port}")
+
+
 def _errno_from(exc: BaseException) -> int | None:
     """Return the OS errno behind a bind failure, from ``exc`` or its cause.
 
@@ -566,6 +671,21 @@ def _ready_file_error_message(exc: ReadyFileError) -> str:
     )
 
 
+def _metrics_bind_error_message(exc: MetricsBindError) -> str:
+    """Actionable stderr message for a failed metrics bind (exit code 3)."""
+    target = f"{exc.host}:{exc.port}"
+    if exc.errno_value == errno.EADDRINUSE:
+        return (
+            f"error: cannot bind the metrics listener on {target} — address already in use.\n"
+            "       Pick another port (--metrics-port) or stop the process holding it."
+        )
+    reason = os.strerror(exc.errno_value) if exc.errno_value is not None else "bind failed"
+    return (
+        f"error: cannot bind the metrics listener on {target}: {reason}.\n"
+        "       The endpoint only listens on a loopback address (--metrics-host)."
+    )
+
+
 async def _async_main(
     host: str,
     ports: list[int],
@@ -576,7 +696,14 @@ async def _async_main(
     identity: NodeIdentity | None = None,
     enforce_rate_limits: bool = True,
     limits: ResourceLimits | None = None,
+    stats: NodeStats | None = None,
+    metrics: MetricsEndpoint | None = None,
+    stats_file: str | None = None,
+    stats_interval: float = 15.0,
 ) -> None:
+    # The handler owns the aggregate counters; the guard and the exposition share
+    # that instance so every sink reports the same numbers.
+    stats = stats if stats is not None else handler.stats
     # The connection guard is the transport-level twin of the frame rate
     # limits: per-IP handshake budget, per-IP cap and a process-wide cap on
     # open connections, all sized from the host resources. Disabled together
@@ -586,6 +713,7 @@ async def _async_main(
         ConnectionGuard(
             active_max=guard_limits.max_active_connections_per_ip,
             global_max=guard_limits.max_active_connections,
+            stats=stats,
         )
         if enforce_rate_limits
         else None
@@ -617,10 +745,18 @@ async def _async_main(
 
     tasks: list[asyncio.Task] = []
     upnp_managers: list[UpnpManager] = []
+    metrics_server: MetricsServer | None = None
     # Only remove a readiness file THIS process created: with O_EXCL a pre-existing
     # path (another instance, a stale file) is left untouched on every exit path.
     ready_written = False
     try:
+        if metrics is not None:
+            # Bound before READY: a service manager must never see the unit active
+            # while the endpoint the operator asked for is unreachable.
+            try:
+                metrics_server = await MetricsServer.start(endpoint=metrics, stats=stats)
+            except OSError as exc:
+                raise MetricsBindError(metrics.host, metrics.port, _errno_from(exc)) from exc
         if ready_file:
             _write_ready_file(ready_file)
             ready_written = True
@@ -629,9 +765,11 @@ async def _async_main(
         # Readiness for the service manager: the same condition as the ready
         # file (every requested listener bound), so a Type=notify start waits
         # for the socket the clients actually use.
-        notify_ready()
+        notify_ready(stats.status_text())
 
         tasks.append(asyncio.create_task(_prune_loop(handler, connection_guard)))
+        if stats_file is not None or notify_available():
+            tasks.append(asyncio.create_task(_stats_loop(stats, stats_file, stats_interval)))
         watchdog = watchdog_interval()
         if watchdog is not None:
             tasks.append(asyncio.create_task(_watchdog_loop(watchdog)))
@@ -652,6 +790,8 @@ async def _async_main(
         notify_stopping()
         for server in servers:
             server.close()
+        if metrics_server is not None:
+            await metrics_server.aclose()
         for task in tasks:
             task.cancel()
         # Stop the refresh loops before removing the mappings, so a cancelled
@@ -722,6 +862,48 @@ async def _watchdog_loop(interval: float) -> None:
         notify_watchdog()
 
 
+def _write_stats_file(path: str, body: str) -> None:
+    """Replace the stats file atomically so a scraper never reads a partial file.
+
+    ``O_NOFOLLOW`` on the temporary name keeps a symlink planted in the directory
+    from redirecting the write, and ``os.replace`` leaves the reader with either
+    the previous snapshot or the new one.
+    """
+    temporary = f"{path}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(temporary, flags, 0o644)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(body)
+        os.replace(temporary, path)
+    except OSError:
+        with contextlib.suppress(OSError):
+            os.unlink(temporary)
+        raise
+
+
+async def _stats_loop(stats: NodeStats, stats_file: str | None, interval: float) -> None:
+    """Publish the aggregates on a fixed cadence: ``STATUS=`` and the text file.
+
+    Started only when a sink exists, so a node without a service manager and
+    without ``--stats-file`` never wakes up for nothing.
+    """
+    while True:
+        await asyncio.sleep(interval)
+        notify_status(stats.status_text())
+        if stats_file is None:
+            continue
+        try:
+            _write_stats_file(stats_file, stats.render_prometheus())
+        except OSError as exc:
+            stats.stats_write_failed()
+            warn_event(
+                "stats file not writable",
+                path=stats_file,
+                reason=exc.strerror or "write failed",
+            )
+
+
 def _load_keys(keys_fd: int | None, keys_file: str | None = None) -> dict[str, SecretStr]:
     """Load 'bucket=<hex-key>' lines from a descriptor or an operator file.
 
@@ -738,30 +920,38 @@ def _load_keys(keys_fd: int | None, keys_file: str | None = None) -> dict[str, S
         return _load_keys_file(keys_file)
     if keys_fd is None or keys_fd < 0:
         return {}
-    if keys_fd in (1, 2):
-        # The docs say fd 1/2 are excluded: enforce it. An operator passing
-        # stdout/stderr is a mistake, never a key source.
-        raise BootConfigError(
-            f"refusing to read group keys from fd {keys_fd} (stdout/stderr); "
-            "pass the descriptor of the actual keys file (e.g. --keys-fd 5)"
-        )
+    _reject_std_secret_fd(keys_fd, what="group keys", example="--keys-fd 5")
     return _parse_keys(_read_fd(keys_fd))
 
 
-def _load_keys_file(path: str) -> dict[str, SecretStr]:
-    """Read an operator-managed keys file once (see :func:`_load_keys`)."""
+def _reject_std_secret_fd(fd: int, *, what: str, example: str) -> None:
+    """Refuse stdout/stderr as a secret source (a misrouted descriptor)."""
+    if fd in (1, 2):
+        raise BootConfigError(
+            f"refusing to read {what} from fd {fd} (stdout/stderr); "
+            f"pass the descriptor of the actual secret file (e.g. {example})"
+        )
+
+
+def _read_secret_file(path: str, *, what: str) -> str:
+    """Read an operator-managed secret file once (symlink and non-files refused).
+
+    ``what`` names the secret in the messages ("group keys", "the metrics
+    token"); the transport policy is shared and the strength rules stay with the
+    caller, so both secrets are read with the same guarantees.
+    """
     target = Path(path)
     if target.is_symlink():
-        raise BootConfigError(f"refusing to read group keys from symlink {path}")
+        raise BootConfigError(f"refusing to read {what} from symlink {path}")
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
         fd = os.open(target, flags)
     except OSError as exc:
-        raise BootConfigError(f"cannot open group keys file {path}: {exc.strerror}") from exc
+        raise BootConfigError(f"cannot open {what} file {path}: {exc.strerror}") from exc
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode):
-            raise BootConfigError(f"group keys source {path} is not a regular file")
+            raise BootConfigError(f"{what} source {path} is not a regular file")
         mode = stat.S_IMODE(info.st_mode)
         if mode & 0o037:
             # Group-write/execute or any world access is a real secret-handling
@@ -769,14 +959,105 @@ def _load_keys_file(path: str) -> dict[str, SecretStr]:
             # file is the operator's (not peer data): warn on the always-on
             # channel and keep serving instead of refusing a working deployment.
             warn_event(
-                "group keys file permissions are too open",
+                f"{what} file permissions are too open",
                 path=str(path),
                 reason=f"mode {oct(mode)}; restrict it to 0600 or 0640",
             )
-        raw = _read_fd(fd, source=f"file {path}")
+        return _read_fd(fd, source=f"file {path}")
     finally:
         os.close(fd)
-    return _parse_keys(raw)
+
+
+def _load_keys_file(path: str) -> dict[str, SecretStr]:
+    """Read an operator-managed keys file once (see :func:`_load_keys`)."""
+    return _parse_keys(_read_secret_file(path, what="group keys"))
+
+
+def _is_loopback_host(host: str) -> bool:
+    """True for a loopback literal or ``localhost``; nothing else is accepted."""
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return False
+
+
+def _read_token(token_fd: int | None, token_file: str | None) -> str:
+    """Read the single-line metrics bearer token from its descriptor or file."""
+    if token_fd is not None and token_file is not None:
+        raise BootConfigError("--metrics-token-fd and --metrics-token-file are mutually exclusive")
+    if token_file is not None:
+        raw = _read_secret_file(token_file, what="the metrics token")
+        source = f"file {token_file}"
+    elif token_fd is not None:
+        _reject_std_secret_fd(token_fd, what="the metrics token", example="--metrics-token-fd 6")
+        raw = _read_fd(token_fd, source="--metrics-token-fd")
+        source = "--metrics-token-fd"
+    else:
+        raise BootConfigError(
+            "the metrics endpoint requires a bearer token: pass --metrics-token-fd "
+            "(a systemd credential) or --metrics-token-file"
+        )
+    lines = [line.strip() for line in raw.splitlines() if line.strip()]
+    if len(lines) != 1:
+        raise BootConfigError(f"{source} must hold exactly one line: the bearer token")
+    token = lines[0]
+    if len(token) < MIN_GROUP_KEY_CHARS:
+        # The token is the endpoint's only authorization, so it keeps the same
+        # strength floor as a group key: it is the only entropy behind it.
+        raise BootConfigError(
+            f"the metrics token must be at least {MIN_GROUP_KEY_CHARS} characters "
+            f"(got {len(token)}); mint one with: openssl rand -hex 32"
+        )
+    return token
+
+
+def _resolve_metrics(
+    *,
+    host: str,
+    port: int | None,
+    token_fd: int | None,
+    token_file: str | None,
+) -> MetricsEndpoint | None:
+    """Resolve the /metrics listener, or ``None`` when it is disabled.
+
+    Rigid by design: the endpoint serves plain HTTP, so it only listens on a
+    loopback address, and it always requires a bearer token. Loopback is not an
+    authorization boundary (any local user, a proxy or an SSH tunnel can reach
+    it), so an unauthenticated endpoint is a configuration error, never a mode.
+    """
+    if port is None:
+        if token_fd is not None or token_file is not None:
+            raise BootConfigError(
+                "--metrics-token-fd / --metrics-token-file require --metrics-port"
+            )
+        return None
+    if not _is_loopback_host(host):
+        raise BootConfigError(
+            f"--metrics-host {host} is not a loopback address: /metrics serves plain "
+            "HTTP and only listens on 127.0.0.1 or ::1 (front it with a proxy or an "
+            "SSH tunnel instead)"
+        )
+    return MetricsEndpoint(host=host, port=port, token=SecretStr(_read_token(token_fd, token_file)))
+
+
+def _metrics_display(endpoint: MetricsEndpoint | None) -> str:
+    """One banner line for the metrics endpoint (never the token)."""
+    if endpoint is None:
+        return "off"
+    host = f"[{endpoint.host}]" if ":" in endpoint.host else endpoint.host
+    return f"http://{host}:{endpoint.port}{REST_METRICS_PATH} (loopback, Bearer token)"
+
+
+def _check_stats_target(path: str) -> None:
+    """Fail fast on a stats-file path whose directory cannot exist."""
+    parent = os.path.dirname(path) or "."
+    if not os.path.isdir(parent):
+        raise BootConfigError(
+            f"--stats-file {path}: directory {parent} does not exist (create it, or "
+            "point the flag at a writable directory)"
+        )
 
 
 def _parse_keys(raw: str) -> dict[str, SecretStr]:

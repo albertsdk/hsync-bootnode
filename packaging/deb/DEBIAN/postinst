@@ -32,6 +32,18 @@ if [ ! -e "${KEYS_FILE}" ]; then
     chmod 0600 "${KEYS_FILE}"
 fi
 
+# -- Metrics bearer token ------------------------------------------------------
+# Same contract as the group keys: the credential source must exist for the
+# unit's LoadCredential= to succeed. An EMPTY file keeps the opt-in /metrics
+# endpoint off; write a token (at least 32 characters, e.g. `openssl rand -hex 32`)
+# to enable it. It is a secret: root-only, never shipped.
+METRICS_TOKEN_FILE="${KEYS_DIR}/metrics-token"
+if [ ! -e "${METRICS_TOKEN_FILE}" ]; then
+    : > "${METRICS_TOKEN_FILE}"
+    chown root:root "${METRICS_TOKEN_FILE}" 2>/dev/null || true
+    chmod 0600 "${METRICS_TOKEN_FILE}"
+fi
+
 # -- systemd ------------------------------------------------------------------
 # daemon-reload picks up the replaced unit; the start is the upgrade path only
 # (an enabled unit was stopped by prerm). is-enabled is false on a fresh install,

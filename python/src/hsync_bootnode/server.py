@@ -41,6 +41,7 @@ from hsync_common import ssl_utils
 from hsync_bootnode.diagnostics import debug_enabled, debug_event, error_event, warn_event
 from hsync_bootnode.handler import BootHandler
 from hsync_bootnode.ratelimit import TokenBucketLimiter
+from hsync_bootnode.stats import NodeStats
 
 __all__ = [
     "BOOT_ALPN",
@@ -454,7 +455,11 @@ class ConnectionGuard:
         handshake_burst: int = HANDSHAKE_BURST_PER_IP,
         active_max: int = CONNECTION_ACTIVE_MAX_PER_IP,
         global_max: int | None = None,
+        stats: NodeStats | None = None,
     ) -> None:
+        # Peer-free operational counters (RAM only); the transport is where a
+        # connection actually opens and closes, so the level is observed here.
+        self.stats = stats if stats is not None else NodeStats()
         self._handshakes = TokenBucketLimiter(
             capacity=handshake_burst, refill=handshake_rate, window=1.0
         )
@@ -492,11 +497,13 @@ class ConnectionGuard:
             entry.count += 1
             entry.last_seen = now
         self._total_active += 1
+        self.stats.connections_changed(self._total_active, opened=True)
         return True
 
     def release(self, peer_ip: str, *, now: float | None = None) -> None:
         """Mark one connection from ``peer_ip`` as closed."""
         self._total_active = max(0, self._total_active - 1)
+        self.stats.connections_changed(self._total_active)
         entry = self._active.get(peer_ip)
         if entry is None:
             return

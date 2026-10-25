@@ -96,6 +96,20 @@ def free_udp_port(family: int = socket.AF_INET) -> int:
         sock.close()
 
 
+def free_tcp_port(family: int = socket.AF_INET) -> int:
+    """A free loopback TCP port (not reserved — the caller binds it).
+
+    Used by the metrics tests: the endpoint listens on loopback TCP, so a UDP port
+    helper would hand out a number another process may already hold.
+    """
+    sock = socket.socket(family, socket.SOCK_STREAM)
+    try:
+        sock.bind(("::1", 0) if family == socket.AF_INET6 else ("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+    finally:
+        sock.close()
+
+
 def client_config() -> QuicConfiguration:
     """QUIC client configuration for ``boot/1``.
 

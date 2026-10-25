@@ -1,4 +1,4 @@
-.TH HSYNC-BOOTNODE 1 "2026-10-26" "hsync-bootnode 1.0.8" "User Commands"
+.TH HSYNC-BOOTNODE 1 "2026-10-25" "hsync-bootnode 1.0.8" "User Commands"
 .SH NAME
 hsync-bootnode \- HSYNC P2P bootstrap node (no-log, zero-knowledge)
 .SH SYNOPSIS
@@ -172,6 +172,41 @@ existing stale file) fails fast with exit code 4 and an actionable message. Env
 form:
 .BR HSYNC_BOOTNODE_READY_FILE .
 .TP
+.BI run\ \fR--metrics-host\fP= HOST
+Loopback address for the metrics endpoint (default 127.0.0.1). Only a loopback
+literal (127\-..., ::1) or localhost is accepted: the endpoint serves plain HTTP
+and is never bound to a public interface. Env form:
+.BR HSYNC_BOOTNODE_METRICS_HOST .
+.TP
+.BI run\ \fR--metrics-port\fP= PORT
+Serve the aggregate Prometheus metrics on the loopback HOST:PORT (1\-65535).
+Requires a bearer token (\-\-metrics\-token\-fd or \-\-metrics\-token\-file);
+no endpoint is opened without both. Env form:
+.BR HSYNC_BOOTNODE_METRICS_PORT .
+.TP
+.BI run\ \fR--metrics-token-fd\fP= FD
+Descriptor holding the metrics bearer token: one line, at least 32 characters. It
+is the endpoint's only authorization and is never passed on the command line nor
+echoed. Env form:
+.BR HSYNC_BOOTNODE_METRICS_TOKEN_FD .
+.TP
+.BI run\ \fR--metrics-token-file\fP= PATH
+File holding the metrics bearer token; portable alternative to
+\-\-metrics\-token\-fd (the two are mutually exclusive). Env form:
+.BR HSYNC_BOOTNODE_METRICS_TOKEN_FILE .
+.TP
+.BI run\ \fR--stats-file\fP= PATH
+Write the aggregate counters to PATH in Prometheus text format, replacing it
+atomically every \-\-stats\-interval seconds (node_exporter textfile
+collector). Env form:
+.BR HSYNC_BOOTNODE_STATS_FILE .
+.TP
+.BI run\ \fR--stats-interval\fP= SECONDS
+Seconds between two publications of the aggregates (default 15, 1\-3600). Env
+form:
+.BR HSYNC_BOOTNODE_STATS_INTERVAL .
+
+.TP
 .B run\ \fR--no-rate-limit\fP
 Disable rate limiting entirely (benchmark/test seam; never in production \[em] it
 removes the anti\-abuse limits the spec requires). Command\-line only: there is
@@ -218,6 +253,30 @@ to require a valid
 on every frame (private node); same as
 .BR "run \-\-private" .
 .TP
+.B HSYNC_BOOTNODE_METRICS_HOST
+Loopback address for the metrics endpoint; same as
+.BR "run \-\-metrics\-host" .
+.TP
+.B HSYNC_BOOTNODE_METRICS_PORT
+Port of the loopback metrics endpoint; same as
+.BR "run \-\-metrics\-port" .
+.TP
+.B HSYNC_BOOTNODE_METRICS_TOKEN_FD
+Descriptor holding the metrics bearer token; same as
+.BR "run \-\-metrics\-token\-fd" .
+.TP
+.B HSYNC_BOOTNODE_METRICS_TOKEN_FILE
+File holding the metrics bearer token; same as
+.BR "run \-\-metrics\-token\-file" .
+.TP
+.B HSYNC_BOOTNODE_STATS_FILE
+Prometheus text file for the aggregates; same as
+.BR "run \-\-stats\-file" .
+.TP
+.B HSYNC_BOOTNODE_STATS_INTERVAL
+Seconds between two aggregate publications; same as
+.BR "run \-\-stats\-interval" .
+.TP
 .B HSYNC_VERSION
 Overrides the version used by
 .BR compile.sh (1)
@@ -249,6 +308,16 @@ DynamicUser sandbox a writable
 .IR /var/lib/hsync-bootnode
 for the identity file, whose default location is
 .IR $XDG_STATE_HOME/hsync/bootnode/identity.pem .
+.TP
+.I /etc/hsync-bootnode/metrics-token
+Metrics bearer token (root\-only, 0600), exposed to the service as a systemd
+credential. An empty file keeps the opt\-in endpoint disabled; the token must be
+at least 32 characters.
+.TP
+.I /var/lib/hsync-bootnode/stats.prom
+Example target for
+.BR "run \-\-stats\-file" :
+inside the unit's StateDirectory, so the sandboxed process may replace it.
 .TP
 .I /usr/lib/systemd/system/hsync-bootnode.service
 Hardened systemd unit (DynamicUser, ProtectSystem=strict, SystemCallFilter,
@@ -334,6 +403,36 @@ Readiness\-file failure: the path given to
 .B run\ \fR--ready-file\fP
 cannot be created (missing parent directory, no permission, or a stale file the
 exclusive\-create seam refuses to overwrite).
+.SH METRICS
+The node exposes aggregate counters only \- never a CID, bucket, IP or port \- so
+the no\-log invariant holds. Three sinks report the same numbers: the service
+manager's
+.B STATUS=
+line, an optional Prometheus text file and an optional loopback endpoint.
+.PP
+The endpoint answers
+.B GET /metrics
+(and HEAD) on the configured loopback port, requires
+.B Authorization: Bearer
+and returns
+.IR "text/plain; version=1.0.0; charset=utf-8" .
+A missing or wrong token gets a uniform 401, any other path 404, any other method
+405, a burst 429 and a concurrent request above the cap 503. The response carries
+no peer identity and its cardinality is fixed.
+.PP
+The reported populations differ:
+.B hsync_bootnode_peers_current
+and
+.B hsync_bootnode_peers_peak
+count the clients registered right now and the highest level reached, while
+.B hsync_bootnode_quic_connections_current
+and its
+.I _peak
+sibling count open QUIC connections \- handshake concurrency, not clients, because a
+client opens one connection per exchange and lets it idle out after 30 seconds.
+.B hsync_bootnode_build_info
+identifies the running build. Peaks are observed when the event happens, never
+sampled, and never decrease; a restart resets them.
 .SH SIGNALS
 .TP
 .B SIGINT, SIGTERM

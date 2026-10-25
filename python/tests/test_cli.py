@@ -14,11 +14,13 @@ import pytest
 from typer.testing import CliRunner
 
 from hsync_bootnode.cli import (
+    _check_stats_target,
     _install_shutdown_handlers,
     _load_keys,
     _near_expiry_reason,
     _remove_ready_file,
     _resolve_identity,
+    _resolve_metrics,
     _watchdog_loop,
     _write_ready_file,
     app,
@@ -46,6 +48,18 @@ _KEY_HOME = "1a3c5e7f9b0d2f4a6c8e0b2d4f6a8c0e"
 def _plain(text: str) -> str:
     """Return *text* without ANSI styling (for help/substring assertions)."""
     return _ANSI_RE.sub("", text)
+
+
+def _run_help() -> str:
+    """Render ``run --help`` at a fixed width, plain (no ANSI).
+
+    Rich folds a long word (an ``HSYNC_*`` name) when the description column gets
+    narrow, so a substring assertion must not depend on the terminal the suite
+    happens to run in.
+    """
+    result = runner.invoke(app, ["run", "--help"], env={"COLUMNS": "120"})
+    assert result.exit_code == 0
+    return _plain(result.output)
 
 
 def test_version_flag() -> None:
@@ -289,9 +303,7 @@ def test_duplicate_keys_file_fails_fast_via_the_cli(tmp_path) -> None:
 
 
 def test_keys_options_are_documented_in_help() -> None:
-    result = runner.invoke(app, ["run", "--help"])
-    assert result.exit_code == 0
-    output = _plain(result.output)
+    output = _run_help()
     assert "--keys-fd" in output
     assert "--keys-file" in output
     assert "HSYNC_BOOTNODE_KEYS_FILE" in output
@@ -571,9 +583,7 @@ def test_resolve_identity_defaults_to_the_state_path(monkeypatch, tmp_path) -> N
 
 
 def test_identity_options_are_documented_in_help() -> None:
-    result = runner.invoke(app, ["run", "--help"])
-    assert result.exit_code == 0
-    output = _plain(result.output)
+    output = _run_help()
     assert "--identity" in output
     assert "--ephemeral" in output
     assert "HSYNC_BOOTNODE_EPHEMERAL" in output
@@ -623,6 +633,7 @@ _REQUIRED_UNIT_DIRECTIVES = (
     "MemoryMax=512M",
     "TasksMax=256",
     "LimitNOFILE=8192",
+    "LoadCredential=metrics-token:/etc/hsync-bootnode/metrics-token",
 )
 
 
@@ -724,3 +735,113 @@ def test_the_environment_cannot_enable_the_no_rate_limit_seam(monkeypatch) -> No
     # TEST-NET-1 is never a local address, so the bind fails after the banner.
     result = runner.invoke(app, ["run", "--host", "192.0.2.1", "--port", "9"])
     assert "rate limit: enabled" in _plain(_combined(result))
+
+
+def _metrics_token_file(tmp_path: Path, token: str = "t" * 64) -> Path:
+    path = tmp_path / "metrics-token"
+    path.write_text(token + "\n", encoding="utf-8")
+    return path
+
+
+def test_the_metrics_endpoint_is_disabled_without_a_port() -> None:
+    assert _resolve_metrics(host="127.0.0.1", port=None, token_fd=None, token_file=None) is None
+
+
+def test_a_metrics_token_without_a_port_is_a_configuration_error() -> None:
+    with pytest.raises(BootConfigError, match="require --metrics-port"):
+        _resolve_metrics(host="127.0.0.1", port=None, token_fd=5, token_file=None)
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "10.0.0.5", "::", "example.com", "192.0.2.1"])
+def test_the_metrics_endpoint_only_listens_on_loopback(host: str, tmp_path: Path) -> None:
+    token_file = _metrics_token_file(tmp_path)
+    with pytest.raises(BootConfigError, match="not a loopback address"):
+        _resolve_metrics(host=host, port=9101, token_fd=None, token_file=str(token_file))
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "127.8.9.10", "::1", "[::1]", "localhost"])
+def test_every_loopback_form_is_accepted(host: str, tmp_path: Path) -> None:
+    token_file = _metrics_token_file(tmp_path)
+    endpoint = _resolve_metrics(host=host, port=9101, token_fd=None, token_file=str(token_file))
+    assert endpoint is not None
+    assert (endpoint.host, endpoint.port) == (host, 9101)
+    assert endpoint.token.get_secret_value() == "t" * 64
+
+
+def test_a_metrics_token_below_the_strength_floor_is_refused(tmp_path: Path) -> None:
+    token_file = _metrics_token_file(tmp_path, token="tooshort")
+    with pytest.raises(BootConfigError, match="at least 32 characters"):
+        _resolve_metrics(host="127.0.0.1", port=9101, token_fd=None, token_file=str(token_file))
+
+
+def test_a_metrics_token_must_be_exactly_one_line(tmp_path: Path) -> None:
+    token_file = tmp_path / "two-lines"
+    token_file.write_text("a" * 64 + "\n" + "b" * 64 + "\n", encoding="utf-8")
+    with pytest.raises(BootConfigError, match="exactly one line"):
+        _resolve_metrics(host="127.0.0.1", port=9101, token_fd=None, token_file=str(token_file))
+
+
+def test_the_metrics_token_can_arrive_on_a_descriptor() -> None:
+    read_fd, write_fd = os.pipe()
+    os.write(write_fd, ("c" * 64 + "\n").encode())
+    os.close(write_fd)
+    try:
+        endpoint = _resolve_metrics(host="127.0.0.1", port=9101, token_fd=read_fd, token_file=None)
+    finally:
+        os.close(read_fd)
+    assert endpoint is not None
+    assert endpoint.token.get_secret_value() == "c" * 64
+
+
+def test_the_two_metrics_token_sources_are_mutually_exclusive(tmp_path: Path) -> None:
+    token_file = _metrics_token_file(tmp_path)
+    read_fd, write_fd = os.pipe()
+    os.close(write_fd)
+    try:
+        with pytest.raises(BootConfigError, match="mutually exclusive"):
+            _resolve_metrics(
+                host="127.0.0.1", port=9101, token_fd=read_fd, token_file=str(token_file)
+            )
+    finally:
+        os.close(read_fd)
+
+
+def test_a_metrics_endpoint_without_a_token_is_refused() -> None:
+    with pytest.raises(BootConfigError, match="requires a bearer token"):
+        _resolve_metrics(host="127.0.0.1", port=9101, token_fd=None, token_file=None)
+
+
+def test_the_stats_file_directory_must_exist(tmp_path: Path) -> None:
+    with pytest.raises(BootConfigError, match="does not exist"):
+        _check_stats_target(str(tmp_path / "missing" / "stats.prom"))
+    _check_stats_target(str(tmp_path / "stats.prom"))
+
+
+def test_the_metrics_flags_are_documented_in_help() -> None:
+    output = _run_help()
+    for flag in (
+        "--metrics-host",
+        "--metrics-port",
+        "--metrics-token-fd",
+        "--metrics-token-file",
+        "--stats-file",
+        "--stats-interval",
+    ):
+        assert flag in output
+
+
+def test_a_metrics_port_without_a_token_fails_fast() -> None:
+    """Configuration is checked before any listener is bound."""
+    result = runner.invoke(
+        app,
+        ["run", "--host", "192.0.2.1", "--port", "9", "--ephemeral", "--metrics-port", "9101"],
+    )
+    assert result.exit_code == 2
+    assert "requires a bearer token" in _combined(result)
+
+
+@pytest.mark.parametrize("args", [["--metrics-port", "0"], ["--stats-interval", "0"]])
+def test_out_of_range_operational_values_fail_fast(args: list[str]) -> None:
+    result = runner.invoke(app, ["run", "--host", "192.0.2.1", "--port", "9", "--ephemeral", *args])
+    assert result.exit_code == 2
+    assert "must be between" in _combined(result)

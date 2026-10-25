@@ -67,14 +67,15 @@ key for a private node). The client side is covered by the
 
 ### 4. Operate it
 
-Supervision, readiness and watchdog, log bounds, identity backup and rotation,
-upgrades and the external reachability probe: [operations.md](operations.md).
+Supervision, readiness and watchdog, log bounds, aggregate metrics, identity
+backup and rotation, upgrades and the external reachability probe:
+[operations.md](operations.md).
 
 ### 5. Reference & internals
 
 | Document | Content |
 |---|---|
-| [usage.md](usage.md) | CLI reference, protected buckets and private nodes, keys provisioning, privacy/security model, signals and the OS service units |
-| [operations.md](operations.md) | Operating how-to: systemd lifecycle, watchdog, log bounds, identity backup/rotation, upgrades, reachability probe |
+| [usage.md](usage.md) | CLI reference, protected buckets and private nodes, keys provisioning, privacy/security model, signals, metrics and the OS service units |
+| [operations.md](operations.md) | Operating how-to: systemd lifecycle, watchdog, log bounds, aggregate metrics, identity backup/rotation, upgrades, reachability probe |
 | [faq.md](faq.md) | Operational FAQ: certificate pin/TOFU mismatches, stable identity, client-side recovery, signals |
 | `protocol-spec/boot-1.md` | Wire protocol specification |

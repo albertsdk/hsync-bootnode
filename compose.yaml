@@ -21,6 +21,13 @@ services:
       # Optional protected-bucket group keys, mounted read-only; the entrypoint
       # opens HSYNC_BOOTNODE_KEYS_FILE as fd 3 (see .env).
       - ${HSYNC_BOOTNODE_KEYS_PATH:-/dev/null}:/keys:ro
+    # Aggregate metrics are opt-in and loopback-only. To scrape the running node
+    # add the flags to `command` and publish the port on the host's loopback:
+    #   command: ["run", "--host", "0.0.0.0", "--port", "8443",
+    #             "--metrics-port", "8444", "--metrics-token-file", "/keys/metrics-token"]
+    #   ports: ["127.0.0.1:9101:8444/tcp"]
+    # The token file never joins the public port mapping: see docs/operations.md,
+    # "Measure the node".
     # Readiness is the node's own seam: the PID file exists only while a listener
     # is bound (the entrypoint deletes a stale one before exec). With the seam
     # unconfigured there is nothing to assert, so the check passes.

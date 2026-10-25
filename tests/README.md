@@ -128,6 +128,7 @@ HSYNC_BB_BOOTNODE=1 HSYNC_BOOTNODE_BIN=/path/to/hsync-bootnode \
 | `test_bb_bootnode_negative.py` | malformed/unknown/oversized/forbidden frames, partial-frame-then-disconnect, leave, limit out-of-range, malformed token, exact frame-size boundary, wrong field types, endpoints bounds, invalid bucket name, group length, cid length, non-object JSON, leave unknown cid |
 | `test_bb_bootnode_ttl.py` | TTL expiry convergence, refresh keeps peer alive |
 | `test_bb_bootnode_security.py` | **opt-in** (`HSYNC_BB_SECURITY=1`): adversarial probes — authz bypass, source spoofing, parser abuse, DoS, wrong ALPN, timing side channel, secret handling, log forging, amplification |
+| `test_bb_bootnode_metrics.py` | loopback `/metrics`: uniform `401` without/with a wrong token, `200` with it, registered peers move the level and the peak, concurrent connections raise the connection peak, the periodic Prometheus text file, and an exposition that never carries peer identity |
 | `test_bb_bootnode_stress.py` | **opt-in** (`HSYNC_BB_STRESS=1`): sustained mixed load, full-bucket discovery, rate-limit burst + recovery, garbage storm, TTL sweep under query load, register/leave churn RSS-bound (no leak) |
 
 Per-IP rate-limit isolation between *distinct* source IPs is not exercised here

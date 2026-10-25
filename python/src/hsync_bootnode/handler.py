@@ -43,6 +43,7 @@ from hsync_bootnode.protocol import (
 from hsync_bootnode.ratelimit import TokenBucketLimiter
 from hsync_bootnode.resources import ResourceLimits
 from hsync_bootnode.routing import DEFAULT_TTL, PeerRecord, RoutingTable
+from hsync_bootnode.stats import NodeStats
 from hsync_bootnode.tokens import (
     constant_time_equals,
     derive_bucket_token,
@@ -128,8 +129,12 @@ class BootHandler:
         routing: RoutingTable | None = None,
         enforce_rate_limits: bool = True,
         limits: ResourceLimits | None = None,
+        stats: NodeStats | None = None,
     ) -> None:
         self.ttl = ttl
+        # Peer-free operational counters (RAM only). The level is updated where a
+        # record changes, so the peak is event-exact instead of sampled.
+        self.stats = stats if stats is not None else NodeStats()
         # Memory ceilings are host-derived unless a caller (tests, embedding)
         # supplies them explicitly; they bound the routing table and the
         # rate-limiter key population.
@@ -339,6 +344,7 @@ class BootHandler:
             # redundantly re-sweep right after this one.
             self._last_prune = time.monotonic()
         if removed:
+            self.stats.peers_changed(self.routing.count(), expired=removed)
             debug_log(f"prune removed {removed} expired record(s)")
         return removed
 
@@ -394,6 +400,7 @@ class BootHandler:
                 return self._response(
                     peers=[], error="overloaded", retry_after=max(1, int(self.ttl))
                 )
+        self.stats.peers_changed(self.routing.count(), written=True)
         if debug_enabled():
             debug_event(
                 "register ack",
@@ -522,6 +529,7 @@ class BootHandler:
                 )
             return
         self.routing.remove(model.cid, model.bucket, source_ip=source_ip)
+        self.stats.peers_changed(self.routing.count())
         if debug_enabled():
             debug_event("leave removed", cid=model.cid, bucket=model.bucket, peer=peer_ip)
 

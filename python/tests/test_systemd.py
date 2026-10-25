@@ -18,7 +18,9 @@ from pathlib import Path
 import pytest
 
 from hsync_bootnode.systemd import (
+    notify_available,
     notify_ready,
+    notify_status,
     notify_stopping,
     notify_watchdog,
     watchdog_interval,
@@ -103,3 +105,33 @@ def test_watchdog_interval_requires_a_positive_number(monkeypatch, raw: str | No
     else:
         monkeypatch.setenv("WATCHDOG_USEC", raw)
     assert watchdog_interval() is None
+
+
+def test_status_is_delivered_as_a_single_line(notify_socket: socket.socket) -> None:
+    assert notify_status("conn=1/2\npeers=3/4") is True
+    assert _recv(notify_socket) == "STATUS=conn=1/2 peers=3/4"
+
+
+def test_ready_carries_the_first_status_when_given(notify_socket: socket.socket) -> None:
+    assert notify_ready("conn=0/0 peers=0/0") is True
+    assert _recv(notify_socket) == "READY=1\nSTATUS=conn=0/0 peers=0/0"
+
+
+def test_ready_without_a_status_is_the_plain_assignment(notify_socket: socket.socket) -> None:
+    assert notify_ready() is True
+    assert _recv(notify_socket) == "READY=1"
+
+
+def test_a_long_status_is_bounded(notify_socket: socket.socket) -> None:
+    notify_status("x" * 500)
+    payload = _recv(notify_socket)
+    assert payload.startswith("STATUS=")
+    assert len(payload) <= len("STATUS=") + 200
+    assert "\n" not in payload
+
+
+def test_notify_available_tracks_the_socket(monkeypatch) -> None:
+    monkeypatch.delenv("NOTIFY_SOCKET", raising=False)
+    assert notify_available() is False
+    monkeypatch.setenv("NOTIFY_SOCKET", "/run/systemd/notify")
+    assert notify_available() is True

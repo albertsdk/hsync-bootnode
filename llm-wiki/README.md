@@ -27,7 +27,9 @@ Internal, agent-optimized knowledge base for the `hsync-bootnode` project
 ## Hard invariants (read before touching any module)
 
 1. **No-log**: the process NEVER writes peer data (IPs, CIDs, timestamps) to
-   disk. The TLS identity is a persistent ECDSA P-256 key+cert kept **by default**
+   disk. Only peer-free aggregates may be published (connection/peer levels and
+   peaks on `STATUS=`, an optional Prometheus text file and the loopback
+   `/metrics` endpoint — decisions 71/72). The TLS identity is a persistent ECDSA P-256 key+cert kept **by default**
    (`run --identity PATH` overrides the XDG state path; `run --ephemeral` keeps
    it in memory instead) — the operator's own key+cert (ADR-0034/ADR-0037), never
    peer data, and the node's only on-disk artifact. Enforced by

@@ -338,7 +338,7 @@ async def test_sighup_does_not_stop_the_node(bootnode_factory, bucket, rng) -> N
 
 @pytest.mark.asyncio
 async def test_sd_notify_reports_ready_watchdog_and_stopping(bootnode_factory, tmp_path) -> None:
-    """The service-manager contract: READY on bind, WATCHDOG while serving, STOPPING on stop."""
+    """The service-manager contract: READY (+STATUS) on bind, WATCHDOG, STOPPING on stop."""
     if not hasattr(socket, "AF_UNIX"):
         pytest.skip("AF_UNIX unavailable on this platform")
 
@@ -352,9 +352,12 @@ async def test_sd_notify_reports_ready_watchdog_and_stopping(bootnode_factory, t
         handle = bootnode_factory(
             env_extra={"NOTIFY_SOCKET": str(notify_path), "WATCHDOG_USEC": "200000"}
         )
-        # Then: readiness and the watchdog feed reach the manager
-        seen = _collect_notifications(notify, {"READY=1", "WATCHDOG=1"})
-        assert {"READY=1", "WATCHDOG=1"} <= seen, seen
+        # Then: readiness (carrying the first STATUS) and the watchdog reach the manager
+        seen = _collect_notifications(notify, {"WATCHDOG=1"})
+        assert "WATCHDOG=1" in seen, seen
+        ready = [payload for payload in seen if payload.startswith("READY=1")]
+        assert ready, seen
+        assert "STATUS=conn=" in ready[0], ready[0]
 
         # When: the service manager stops the node
         handle.proc.terminate()

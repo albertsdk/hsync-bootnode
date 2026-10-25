@@ -12,6 +12,7 @@ from __future__ import annotations
 import builtins
 import json
 import os
+import time
 from typing import Any
 
 import pytest
@@ -19,6 +20,7 @@ from pydantic import SecretStr
 
 from hsync_bootnode.handler import BootHandler
 from hsync_bootnode.server import build_quic_configuration, load_or_create_identity, make_identity
+from hsync_bootnode.stats import NodeStats
 from hsync_bootnode.tokens import derive_bucket_token
 
 CID = "A1b2C3d4E5f6G7h8I9j0K"
@@ -153,3 +155,17 @@ def test_persistence_requires_a_write(read_only_fs: pytest.MonkeyPatch, tmp_path
     """
     with pytest.raises(_WriteAttempted):
         load_or_create_identity(tmp_path / "state" / "identity.pem", host="127.0.0.1")
+
+
+def test_the_aggregate_counters_never_write(read_only_fs: pytest.MonkeyPatch) -> None:
+    """Observing, expiring and rendering the aggregates is pure: no open()."""
+    stats = NodeStats()
+    handler = BootHandler(ttl=60.0, stats=stats)
+    _exchange(
+        handler,
+        _frame(type="register", cid=CID, bucket="shared", cert_fp=FP, version="1.0.0"),
+    )
+    handler.prune(time.monotonic())
+    body = stats.render_prometheus()
+    assert "hsync_bootnode_peers_current 1" in body
+    assert stats.status_text() == "conn=0/0 peers=1/1"

@@ -4,13 +4,15 @@ How-to for a node installed from the Debian/Ubuntu package and supervised by the
 packaged systemd unit (installation: [getting started](getting-started-deb.md);
 CLI, environment variables and units: [usage.md](usage.md)).
 
-A bootnode is a long-running network daemon. Three things keep it useful, and
+A bootnode is a long-running network daemon. Four things keep it useful, and
 only the first is about the process itself:
 
 1. a supervisor that owns its lifecycle — never a foreground shell;
 2. a bounded log, with the peer-aware debug channel kept out of it;
 3. a probe from **outside** the host: a running process is not a reachable
-   service.
+   service;
+4. the aggregate counters, to see the population and its peak
+   ([Measure the node](#measure-the-node)).
 
 ## Start it and keep it running
 
@@ -97,6 +99,71 @@ sudo systemctl enable --now hsync-bootnode-probe.timer
 
 A failed probe is a failed unit: point `OnFailure=` at your alerting unit, or let
 the monitoring system run the same command directly.
+
+## Measure the node
+
+Three sinks report the same aggregates — the metric reference is in
+[usage.md](usage.md#metrics): the systemd `STATUS=` line (always on), a
+Prometheus text file and a loopback `/metrics` endpoint. Enable the last two
+once, in a drop-in.
+
+Mint the endpoint's bearer token (its only authorization, at least 32
+characters):
+
+```bash
+sudo sh -c 'openssl rand -hex 32 > /etc/hsync-bootnode/metrics-token'
+sudo chmod 0600 /etc/hsync-bootnode/metrics-token
+```
+
+```bash
+sudo systemctl edit hsync-bootnode.service
+```
+
+```ini
+[Service]
+Environment=HSYNC_BOOTNODE_STATS_FILE=/var/lib/hsync-bootnode/stats.prom
+ExecStart=
+ExecStart=/bin/sh -c 'exec /usr/bin/hsync-bootnode run --host 0.0.0.0 --port 443 --identity /var/lib/hsync-bootnode/identity.pem --keys-fd 5 5<"${CREDENTIALS_DIRECTORY}/group-keys" --metrics-port 9101 --metrics-token-fd 6 6<"${CREDENTIALS_DIRECTORY}/metrics-token"'
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart hsync-bootnode.service
+systemctl show -p StatusText hsync-bootnode.service
+```
+
+`StatusText` carries the live summary (`conn=3/57 peers=1203/1240`), so the
+simplest monitoring needs no extra component.
+
+To scrape the endpoint from Prometheus on another host, keep the token in a
+file there and let the scrape read it:
+
+```yaml
+scrape_configs:
+  - job_name: hsync-bootnode
+    static_configs:
+      - targets: ["NODE_HOST:9101"]
+    authorization:
+      credentials_file: /etc/prometheus/hsync-bootnode-token
+```
+
+Reach it through an SSH tunnel or a proxy when the node is remote, and never
+publish the port: the endpoint speaks plain HTTP and the token travels in
+clear on the wire.
+
+If you collect with node_exporter instead, skip the `/metrics` flags and point
+its textfile collector at the directory you enabled above
+(`--collector.textfile.directory=/var/lib/hsync-bootnode`).
+
+Useful queries:
+
+```text
+hsync_bootnode_peers_current                     # clients online now
+hsync_bootnode_peers_peak                        # since the last restart
+max_over_time(hsync_bootnode_peers_current[7d])   # a week-long peak
+rate(hsync_bootnode_quic_connections_total[5m])   # handshakes per second
+rate(hsync_bootnode_peers_expired_total[5m])      # churn
+```
 
 ## Bound the log
 

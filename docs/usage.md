@@ -34,7 +34,13 @@ hsync-bootnode --version
 | `--ttl` | `60` | Record TTL in seconds (1–3600). Peers refresh every 30 s by default, so 60 s leaves one refresh of headroom. It must stay **above** the clients' refresh interval (`HSYNC_BOOTNODE_REFRESH_INTERVAL`, 30 s by default): a shorter TTL expires live records between two refreshes. Lower it only when the clients refresh more often (tests). |
 | `--debug` | *(disabled flag)* | Emit the full operation log to stderr (opt-in): connections, frames, decisions, record changes and TTL sweeps, **including the peer identity** (CID, bucket, IP, port). Every line is timestamped and self-identifying (`2026-09-30T10:30:45.123Z - hsync-bootnode[1234] debug: …`). Stderr only — never written to disk; without it no peer data leaves memory. Environment variable form: `HSYNC_BOOTNODE_DEBUG=1`. |
 | `--ready-file` | *(none)* | Write the process PID to this path once the listener is bound (readiness seam, contains no peer data). Environment variable form: `HSYNC_BOOTNODE_READY_FILE`. An unwritable path fails fast with exit code 4. |
-| `--no-rate-limit` | *(disabled flag)* | Disable rate limiting entirely (benchmark/test seam). **CLI-only**: there is deliberately no environment-variable form, so a stale `.env` or unit setting cannot silently unthrottle a node. Never enable in production — it removes the anti-abuse limits the spec requires. |
+| `--metrics-host` | `127.0.0.1` | Loopback address for the `/metrics` endpoint. Only `127.0.0.1`, `::1` (any loopback literal) or `localhost` is accepted: the endpoint serves plain HTTP and is never bound to a public interface. Environment variable form: `HSYNC_BOOTNODE_METRICS_HOST`. |
+| `--metrics-port` | *(disabled)* | Serve aggregate metrics on `--metrics-host:PORT` (loopback TCP). Requires a bearer token; see [Metrics](#metrics). Environment variable form: `HSYNC_BOOTNODE_METRICS_PORT`. |
+| `--metrics-token-fd` | *(none)* | File descriptor carrying the metrics bearer token (one line, at least 32 characters). The preferred form on POSIX service managers. Environment variable form: `HSYNC_BOOTNODE_METRICS_TOKEN_FD`. |
+| `--metrics-token-file` | *(none)* | File carrying the metrics bearer token; portable alternative to `--metrics-token-fd` (the two are mutually exclusive). Environment variable form: `HSYNC_BOOTNODE_METRICS_TOKEN_FILE`. |
+| `--stats-file` | *(none)* | Write the aggregate counters to this path in Prometheus text format, replacing it atomically every `--stats-interval` seconds (node_exporter textfile collector). Environment variable form: `HSYNC_BOOTNODE_STATS_FILE`. |
+| `--stats-interval` | `15` | Seconds between two publications (`STATUS=` on the service manager and the `--stats-file`). 1–3600. Environment variable form: `HSYNC_BOOTNODE_STATS_INTERVAL`. |
+| `--no-rate-limit` | *(disabled flag)* | Disable rate limiting entirely (benchmark/test seam). **CLI-only**: there is deliberately no environment-variable form, so a stale `.env` or unit setting cannot silently unthrottle a node. Never enable in production — it removes the anti-abuse limits the spec requires. The transport guard is not created in this mode, so the `hsync_bootnode_quic_connections_*` gauges stay at 0 (the peer gauges are unaffected). |
 
 ### `identity show`
 
@@ -96,6 +102,12 @@ Prints the version and the protocol, e.g.
 | `HSYNC_BOOTNODE_PRIVATE` | Same as `--private`; set to `1` to require a valid `bucket_token` on every frame. |
 | `HSYNC_BOOTNODE_DEBUG` | Same as `--debug`; set to `1` for the full opt-in operation log (peer identity included; stderr only). |
 | `HSYNC_BOOTNODE_READY_FILE` | Same as `--ready-file`; the readiness PID path used by tests/orchestrators. |
+| `HSYNC_BOOTNODE_METRICS_HOST` | Same as `--metrics-host`. |
+| `HSYNC_BOOTNODE_METRICS_PORT` | Same as `--metrics-port`. |
+| `HSYNC_BOOTNODE_METRICS_TOKEN_FD` | Same as `--metrics-token-fd`. |
+| `HSYNC_BOOTNODE_METRICS_TOKEN_FILE` | Same as `--metrics-token-file`. |
+| `HSYNC_BOOTNODE_STATS_FILE` | Same as `--stats-file`. |
+| `HSYNC_BOOTNODE_STATS_INTERVAL` | Same as `--stats-interval`. |
 
 ## Group keys (`--keys-fd` / `--keys-file`)
 
@@ -496,6 +508,61 @@ its state to the service manager:
 Outside systemd (a container without systemd, launchd, Windows, a foreground
 run) the notifications are inert no-ops and `--ready-file` stays the readiness
 seam for whatever orchestrates the node.
+
+## Metrics
+
+The node can publish **aggregate** counters — never peer data — on three sinks
+that all report the same numbers: the service manager's `STATUS=` line, an
+optional Prometheus text file, and an optional loopback HTTP endpoint.
+
+| Sink | Enable with | Contract |
+|---|---|---|
+| `systemctl status` | always, under systemd | shows `STATUS=conn=3/57 peers=1203/1240` |
+| Prometheus text file | `--stats-file PATH` | replaced atomically every `--stats-interval` seconds; scrape it with node_exporter's textfile collector |
+| HTTP `/metrics` | `--metrics-port PORT` + a bearer token | loopback only, `GET`/`HEAD` on `/metrics`, `Authorization: Bearer TOKEN` |
+
+The endpoint mirrors the sync server's authenticated `/metrics`: the same path
+(`REST_METRICS_PATH`, `/metrics`), the same Prometheus content type and
+`Authorization: Bearer`, with uniform `401` refusals. The token must be at least
+32 characters and is never echoed or logged; a request without it is refused even
+on loopback, because loopback is not an authorization boundary (every local user,
+a proxy or an SSH tunnel can reach it).
+
+### What the numbers mean
+
+Two populations are reported, and they are **not** the same number.
+
+| Metric | Type | Meaning |
+|---|---|---|
+| `hsync_bootnode_peers_current` | gauge | **Clients registered right now** (TTL-bounded) |
+| `hsync_bootnode_peers_peak` | gauge | Highest registered population since the process started |
+| `hsync_bootnode_peers_peak_timestamp_seconds` | gauge | When that peak was reached |
+| `hsync_bootnode_peers_updates_total` | counter | Accepted `register`/`refresh` writes |
+| `hsync_bootnode_peers_expired_total` | counter | Records dropped by the TTL sweep |
+| `hsync_bootnode_quic_connections_current` | gauge | QUIC connections open right now |
+| `hsync_bootnode_quic_connections_peak` | gauge | Highest open-connection level since start |
+| `hsync_bootnode_quic_connections_peak_timestamp_seconds` | gauge | When that peak was reached |
+| `hsync_bootnode_quic_connections_total` | counter | Connections admitted since start |
+| `hsync_bootnode_metrics_requests_total{outcome}` | counter | Requests answered by `/metrics` (`ok`, `unauthorized`, `not_found`, `method_not_allowed`, `rate_limited`, `unavailable`) |
+| `hsync_bootnode_stats_write_errors_total` | counter | Failed stats-file writes |
+| `hsync_bootnode_build_info{version,protocol}` | gauge | Always `1`; identifies the running build |
+| `hsync_bootnode_start_time_seconds` | gauge | Unix time the process started |
+
+`peers` is the count of clients online. `quic_connections` measures handshake
+concurrency instead, because a client opens **one connection per exchange**
+(`register`/`refresh`/`query`) and lets it idle out after 30 s: reporting the
+connections as "clients connected" would be wrong by an order of magnitude.
+
+Both peaks are **event-exact** (observed when a connection is admitted or a record
+changes, never sampled) and never decrease. They cover the lifetime of the
+process, so a restart resets them; use the monitoring system for history. A peak
+can be inflated by churn (short-lived registrations): that is intended, it is what
+capacity planning needs.
+
+The counters are integers in RAM, nothing is persisted, and no label ever carries
+a CID, IP, port or bucket: these are the only numbers the node exposes and they
+keep the no-log invariant. `peers_current` counts records that are not yet swept,
+so it can include entries up to one prune interval (15 s) past their TTL.
 
 ## Deploying as a service
 

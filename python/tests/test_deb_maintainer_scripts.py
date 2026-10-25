@@ -62,3 +62,12 @@ def test_postinst_restarts_only_an_enabled_service() -> None:
     guard = re.search(rf"if systemctl is-enabled --quiet {re.escape(SERVICE)}", script)
     assert guard is not None, "postinst must guard the start on the enablement state"
     assert f"systemctl start {SERVICE}" in script[guard.end() :]
+
+
+def test_postinst_provisions_the_metrics_token_as_a_secret() -> None:
+    """The unit's LoadCredential= needs the source, and an empty file means "off"."""
+    script = _script(POSTINST)
+    assert 'METRICS_TOKEN_FILE="${KEYS_DIR}/metrics-token"' in script
+    assert 'chmod 0600 "${METRICS_TOKEN_FILE}"' in script
+    # It is provisioned empty: writing a token is the operator's opt-in.
+    assert ': > "${METRICS_TOKEN_FILE}"' in script

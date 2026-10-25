@@ -53,9 +53,11 @@ STUN register) is advertised with `reachable=false` and a single-element
 `endpoints` list carrying its observed UDP source. `refresh` never changes it; a
 change requires a new `register`.
 
-`BootPeer.endpoints` relays the peer's **full advertised candidate list** verbatim
-and in order (decision #40); only a register that carried no endpoint at all falls
-back to the observed source. The requester tries the candidates, preferring a
+`BootPeer.endpoints` relays the first `MAX_RELAY_ENDPOINTS` (four) advertised
+candidates, in order (decision #40); only a register that carried no endpoint at
+all falls back to the observed source. Each relayed `host` is guaranteed dialable
+by `hsync_common.endpoint.is_valid_endpoint_host`, and the whole response stays
+within `MAX_RESPONSE_BYTES`. The requester tries the candidates, preferring a
 host/LAN one reachable from its own network, so two peers behind the same NAT —
 where the public endpoint has no hairpin route — still connect over the local path.
 The relayed list is advisory and unauthenticated, like the other peer fields.
@@ -94,9 +96,9 @@ excluded from the union: they are never validated on the input path.
 | Structure | Location | Role |
 |---|---|---|
 | `PeerRecord` | `python/src/hsync_bootnode/routing.py::PeerRecord` | RAM-only routing entry keyed `(cid, bucket, group)`; carries `capacity` (advisory hint), `expires_at` (TTL), the advertised endpoints as wire-agnostic `(proto, host, port)` tuples (`EndpointTuple`, `python/src/hsync_bootnode/routing.py::EndpointTuple`) and a lazily-built cached `wire` fragment (`bytes | None`, the serialized `BootPeer`) |
-| `RoutingTable` | `python/src/hsync_bootnode/routing.py::RoutingTable` | In-memory registry (`upsert`→`bool`/`remove`/`get`/`prune`/`sample`/`count`/`source_ips`); never persisted. `upsert` returns `False` above a host-derived `max_records` ceiling or a `max_records_per_group` ceiling (so one bucket cannot dominate its sample), so the handler can apply backpressure. Backed by three secondary indexes — `_by_group` (bucket+group → keys, O(1) `sample`), `_by_cid` (cid+bucket → keys, O(1) `remove`), `_pos` (key → list position for O(1) swap-remove). `prune` rebuilds the indexes in bulk when ≥ 50% of records expire, else removes incrementally. |
+| `RoutingTable` | `python/src/hsync_bootnode/routing.py::RoutingTable` | In-memory registry (`upsert`→`bool`/`remove`/`get`/`prune`/`sample`/`count`/`source_ips`); never persisted, single-thread (no lock: one event loop). `upsert` returns `False` above a host-derived `max_records` ceiling, a `max_records_per_bucket` ceiling (the one a registrant cannot rotate around, since `group` is free-form) or a `max_records_per_group` ceiling (so one sample cannot be saturated), so the handler can apply backpressure. `get` returns only an **active** record, so a TTL lapse frees the key and never revives through `refresh`. Backed by three secondary indexes — `_by_group` (bucket+group → keys, O(1) `sample`), `_by_cid` (cid+bucket → keys, O(1) `remove`), `_pos` (key → list position for O(1) swap-remove) — plus the `_per_bucket` counter. `prune` rebuilds the indexes in bulk when ≥ 50% of records expire, else removes incrementally. |
 | `TokenBucketLimiter` | `hsync_common/ratelimit.py` (re-exported at `python/src/hsync_bootnode/ratelimit.py`) | Shared in-memory token bucket SSOT (also used by `hsync-client`) for the per-IP/per-(IP, bucket) rate limits; `has_tokens` is a non-consuming peek used by the pre-parse malformed-frame gate; `max_keys` evicts the least-recently-used key on insert and `evict_stale` drops fully-refilled buckets, bounding key-state growth |
-| `ResourceLimits` | `python/src/hsync_bootnode/resources.py` | Host-derived ceilings (`max_peer_records`, `max_records_per_group`, `max_limiter_keys`, `max_active_connections`, `max_active_connections_per_ip`) from available RAM (the process's own cgroup limit, then `MemAvailable`, then sysconf) and CPU count; `detect()` is read-only/best-effort with a conservative fallback |
+| `ResourceLimits` | `python/src/hsync_bootnode/resources.py` | Host-derived ceilings (`max_peer_records`, `max_records_per_bucket`, `max_records_per_group`, `max_limiter_keys`, `max_active_connections`, `max_active_connections_per_ip`) from available RAM (the process's own cgroup limit, then `MemAvailable`, then sysconf) and CPU count; `detect()` is read-only/best-effort with a conservative fallback |
 | `ConnectionGuard` | `python/src/hsync_bootnode/server.py` | Per-IP handshake budget + per-IP and process-wide open-connection caps, sized by `ResourceLimits`; checked before any handshake work, released on `ConnectionTerminated` |
 | `NodeIdentity` | `python/src/hsync_bootnode/server.py` | Self-signed TLS identity (cert + ECDSA P-256 key). Persisted (`0600`/`0700`) by default via `load_or_create_identity`/`rotate_identity`, or built in memory by `make_identity` (`--ephemeral`). `expires_at` is the certificate `NotAfter`; `fingerprint` is the leaf-DER SHA-256 (`sha256:<hex>`), the trust anchor for client pinning (ADR-0034/ADR-0037) |
 
@@ -109,12 +111,13 @@ leave           ──► BootLeave                    ──► (no reply frame
 ```
 
 `BootPeer` is projected from a `PeerRecord` (handler `_to_peer`,
-`python/src/hsync_bootnode/handler.py::_to_peer`): the peer's full advertised
-`endpoints[]` list is relayed, falling back to the observed source endpoint when
-the register carried none. The projection is serialized once with
-`BOOT_PEER_ADAPTER` and the resulting JSON fragment cached on `PeerRecord.wire`
-(`bytes`), not the `BootPeer` model — the fragment is embedded verbatim in the
-response envelope and reused on later samples. It is valid for the record's
+`python/src/hsync_bootnode/handler.py::_to_peer`): the peer's first
+`MAX_RELAY_ENDPOINTS` (four) endpoints are relayed, falling back to the observed
+source endpoint when the register carried none; `_query` then stops adding peers
+once the `MAX_RESPONSE_BYTES` budget is spent. The projection is serialized once
+with `BOOT_PEER_ADAPTER` and the resulting JSON fragment cached on
+`PeerRecord.wire` (`bytes`), not the `BootPeer` model — the fragment is embedded
+verbatim in the response envelope and reused on later samples. It is valid for the record's
 lifetime because `register` always builds a fresh `PeerRecord` and `refresh` only
 mutates `connected`/`expires_at` (`connected` **is** part of the projection, so a
 refresh that changes it resets `wire`; every other projected field is copied from

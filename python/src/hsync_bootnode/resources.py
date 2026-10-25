@@ -42,7 +42,9 @@ _GIB = 1024 * _MIB
 # overshoot the memory budget.
 _RECORD_BYTES = 6 * 1024
 # Conservative estimate of one QUIC connection: the aioquic connection object,
-# its fixed 128-stream table and the per-stream read buffers.
+# its stream table and the sessions it may run (server.MAX_SESSIONS_PER_CONNECTION,
+# each with its own 4 KiB+ read buffer). aioquic's fixed 128-stream table is why
+# this stays well above the session budget.
 _CONNECTION_BYTES = 128 * 1024
 # Conservative estimate of one rate-limiter key (a (tokens, timestamp) tuple plus
 # its single dict entry; the limiter keeps one dict, not two).
@@ -72,6 +74,12 @@ _CONNECTIONS_PER_CPU = 256
 _GROUPS_PER_HOST = 256
 _MIN_RECORDS_PER_GROUP = 128
 _MAX_RECORDS_PER_GROUP = 100_000
+# A bucket's share of the table. ``group`` is chosen by the registrant, so the
+# per-(bucket, group) cap alone can be rotated around; one bucket may hold at
+# most 1/_BUCKETS_PER_HOST of the whole ceiling.
+_BUCKETS_PER_HOST = 8
+_MIN_RECORDS_PER_BUCKET = 512
+_MAX_RECORDS_PER_BUCKET = 500_000
 
 _FALLBACK_MEMORY_BYTES = 256 * _MIB
 
@@ -128,6 +136,10 @@ def available_memory_bytes() -> int:
 class ResourceLimits:
     """Memory/CPU-derived ceilings shared by the handler and the transport.
 
+    ``max_records_per_bucket`` is the anti-monopoly ceiling a registrant cannot
+    rotate around (``group`` is free-form), ``max_records_per_group`` the
+    per-sample ceiling; both sit under the global ``max_peer_records``.
+
     Instantiate with :meth:`detect` in production; the tests construct explicit
     values so the caps are deterministic.
     """
@@ -137,6 +149,7 @@ class ResourceLimits:
     max_active_connections: int
     max_active_connections_per_ip: int
     max_records_per_group: int
+    max_records_per_bucket: int
 
     @classmethod
     def detect(cls) -> ResourceLimits:
@@ -165,10 +178,14 @@ class ResourceLimits:
         per_group = _clamp(
             records // _GROUPS_PER_HOST, _MIN_RECORDS_PER_GROUP, _MAX_RECORDS_PER_GROUP
         )
+        per_bucket = _clamp(
+            records // _BUCKETS_PER_HOST, _MIN_RECORDS_PER_BUCKET, _MAX_RECORDS_PER_BUCKET
+        )
         return cls(
             max_peer_records=records,
             max_limiter_keys=limiter_keys,
             max_active_connections=connections,
             max_active_connections_per_ip=per_ip,
             max_records_per_group=per_group,
+            max_records_per_bucket=per_bucket,
         )

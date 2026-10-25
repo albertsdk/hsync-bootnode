@@ -35,7 +35,7 @@ from aioquic.quic.configuration import QuicConfiguration
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BOOT_ALPN = "hsync-boot/1"
 _CID_ALPHABET = string.ascii_letters + string.digits
-_FP = "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
+_FP = "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
 
 # Single-frame byte bound on the wire (spec: oversized frames are refused and the
 # session dropped). Mirrors ``hsync_bootnode.server.MAX_FRAME_BYTES``; duplicated

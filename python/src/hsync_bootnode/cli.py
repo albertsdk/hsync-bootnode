@@ -26,12 +26,14 @@ import typer
 from hsync_common import ssl_utils
 from hsync_common.constants import BOOT_DEFAULT_PORT, BOOT_PORT_SET
 from hsync_common.endpoint import parse_host_port, parse_port_list
+from hsync_common.path_validation import is_valid_bucket_name
+from hsync_common.protocol.boot_tokens import validate_group_key
 from hsync_common.state_paths import state_path
 from pydantic import SecretStr
 
 from hsync_bootnode import __version__
 from hsync_bootnode.diagnostics import configure_debug, debug_log, error_event, warn_event
-from hsync_bootnode.handler import BootConfigError, BootHandler
+from hsync_bootnode.handler import REQUEST_PATH_PRUNE_BUDGET, BootConfigError, BootHandler
 from hsync_bootnode.resources import ResourceLimits
 from hsync_bootnode.server import (
     ConnectionGuard,
@@ -68,8 +70,6 @@ _DEFAULT_KEYS_FILE_ENV = "HSYNC_BOOTNODE_KEYS_FILE"
 _DEFAULT_DEBUG_ENV = "HSYNC_BOOTNODE_DEBUG"
 # Readiness seam: PID written here once the listener is bound (no peer data).
 _DEFAULT_READY_FILE_ENV = "HSYNC_BOOTNODE_READY_FILE"
-# Benchmark/test seam: disables rate limiting — never in production.
-_DEFAULT_NO_RATE_LIMIT_ENV = "HSYNC_BOOTNODE_NO_RATE_LIMIT"
 # Node-wide private mode: require a valid bucket_token on every frame.
 _DEFAULT_PRIVATE_ENV = "HSYNC_BOOTNODE_PRIVATE"
 # Persistent TLS identity path; the default XDG state path keeps the
@@ -285,7 +285,6 @@ def run(
     no_rate_limit: bool = typer.Option(
         False,
         "--no-rate-limit",
-        envvar=_DEFAULT_NO_RATE_LIMIT_ENV,
         help="Disable rate limiting (benchmark/test seam; never in production).",
     ),
     identity: str | None = typer.Option(
@@ -321,6 +320,11 @@ def run(
     """Run the bootstrap node: one or more QUIC/UDP listeners (boot/1)."""
     resolved_host, resolved_ports = _resolve_listeners(host, port, ports)
     limits = ResourceLimits.detect()
+    configure_debug(debug)
+    if debug:
+        # Transparency (RFC 6973 §6.2): the operator opted into a stream that
+        # may contain peer identity — say so once, on the always-on channel.
+        warn_event("peer data logging enabled", reason="--debug")
     try:
         keys = _load_keys(keys_fd, keys_file)
         handler = BootHandler(
@@ -337,11 +341,6 @@ def run(
     except (BootConfigError, IdentityError) as exc:
         _config_error(exc)
 
-    configure_debug(debug)
-    if debug:
-        # Transparency (RFC 6973 §6.2): the operator opted into a stream that
-        # may contain peer identity — say so once, on the always-on channel.
-        warn_event("peer data logging enabled", reason="--debug")
     if no_rate_limit:
         warn_event("rate limiting disabled", reason="--no-rate-limit")
     _install_uvloop()
@@ -366,7 +365,9 @@ def run(
         f"  mode      : {'private (every frame needs a bucket_token)' if private else 'open'}\n"
         f"  group keys loaded: {len(keys)}\n"
         f"  ttl       : {ttl}s\n"
-        f"  limits    : <= {limits.max_peer_records} peers, <= {limits.max_active_connections} connections (host-derived)\n"
+        f"  limits    : <= {limits.max_peer_records} peers "
+        f"(<= {limits.max_records_per_bucket}/bucket), "
+        f"<= {limits.max_active_connections} connections (host-derived)\n"
         f"  debug     : {'on (full operation log incl. peer identity, stderr only)' if debug else 'off (in-memory only)'}\n"
         f"  rate limit: {'disabled' if no_rate_limit else 'enabled'}\n"
         f"  upnp      : {'enabled (zero-touch)' if upnp else 'disabled'}"
@@ -668,6 +669,15 @@ async def _prune_loop(
     """Spec: prune the TTL routing table every 15 s."""
     while True:
         await asyncio.sleep(handler.prune_interval)
+        # Chunked: one unbudgeted sweep over a large stale backlog would block the
+        # event loop for its whole duration, so the background sweep yields
+        # between bounded batches instead (the request path is bounded too). An
+        # explicit ``now`` keeps each chunk record-only; the limiter-state sweep
+        # runs once per tick (``prune()`` is the only path that evicts it), never
+        # once per chunk.
+        now = time.monotonic()
+        while handler.prune(now, max_remove=REQUEST_PATH_PRUNE_BUDGET) >= REQUEST_PATH_PRUNE_BUDGET:
+            await asyncio.sleep(0)
         handler.prune()
         if connection_guard is not None:
             # Same cadence as the routing sweep: forget closed-and-quiet IPs so
@@ -735,8 +745,11 @@ def _load_keys_file(path: str) -> dict[str, SecretStr]:
 def _parse_keys(raw: str) -> dict[str, SecretStr]:
     """Parse 'bucket=<hex-key>' lines (comments and blank lines ignored).
 
-    A bucket may appear only once: a duplicate is a configuration error, never a
-    silent override of the earlier key.
+    Both halves are validated with their SSOT: the bucket name must be a
+    canonical HSYNC bucket (otherwise the key could never authorize a wire
+    frame) and the key must meet :func:`validate_group_key`'s strength floor
+    (it is the bucket token's only entropy). A bucket may appear only once, and a
+    malformed line is a configuration error rather than a silent skip.
     """
     keys: dict[str, SecretStr] = {}
     for line_number, raw_line in enumerate(raw.splitlines(), start=1):
@@ -747,7 +760,18 @@ def _parse_keys(raw: str) -> dict[str, SecretStr]:
         bucket = bucket.strip()
         key = key.strip()
         if not bucket or not key:
-            continue
+            raise BootConfigError(
+                f"malformed group key line {line_number}: expected 'bucket=<hex-key>'"
+            )
+        if not is_valid_bucket_name(bucket):
+            raise BootConfigError(
+                f"invalid bucket name {bucket!r} on line {line_number} "
+                "(a canonical HSYNC bucket name is required)"
+            )
+        try:
+            validate_group_key(key)
+        except ValueError as exc:
+            raise BootConfigError(f"{exc} (line {line_number})") from exc
         if bucket in keys:
             raise BootConfigError(f"duplicate group key for bucket {bucket!r} (line {line_number})")
         keys[bucket] = SecretStr(key)
@@ -784,7 +808,12 @@ def _read_fd(fd: int, *, source: str | None = None) -> str:
                 "the descriptor must present whole, short lines and EOF"
             )
         chunks.append(chunk)
-    return b"".join(chunks).decode("utf-8", errors="replace")
+    try:
+        return b"".join(chunks).decode("utf-8")
+    except UnicodeDecodeError as exc:
+        # A mangled key byte would silently derive a different token, so a
+        # non-UTF-8 source is a configuration error instead of substituted text.
+        raise BootConfigError(f"group keys on {where} are not valid UTF-8") from exc
 
 
 def _fd_readable_before(fd: int, deadline: float) -> bool:

@@ -41,24 +41,36 @@ Internal, agent-optimized knowledge base for the `hsync-bootnode` project
 3. **Rigid schema**: every `boot/1` frame model uses pydantic
    `extra="forbid"` — unknown/targeted fields make the frame invalid and it is
    silently dropped. The field domains are enforced too: `bucket_token` must be
-   64 lowercase hex characters (`BucketToken`, `protocol.py`) and `connected`
-   is bounded to `0..2^53` (`CONNECTED_MAX`), so a value that cannot exist in
-   the key-derivation domain or a wire-bignumber is an invalid frame, not an
-   unbounded storage/accounting event (decision #46).
+   64 lowercase hex characters (`BucketToken`, `protocol.py`), `connected`
+   is bounded to `0..2^53` (`CONNECTED_MAX`), `endpoints[].host` must be a
+   dialable host (`EndpointHost` → `hsync_common.endpoint.is_valid_endpoint_host`)
+   and `cert_fp` must normalize to a full SHA-256 digest (`CertificateFingerprint`
+   → `hsync_common.protocol.pairing.parse_fingerprint`), so a value that cannot
+   exist in the key-derivation domain, a wire-bignumber, an undialable target or
+   an uncomparable pin is an invalid frame, not an unbounded
+   storage/accounting/relay event (decision #46).
 4. **Protected buckets**: tokens are derived
    `HMAC-SHA256(key, "boot/1" || bucket)[:32]` hex, compared in constant time
    (`hmac.compare_digest`) whether or not the bucket has a key; refusals are
    uniform (`token_required`) and never reveal bucket existence or the
    provisioned set. `--private` widens the same policy to every bucket
-   (including `leave`): see `decisions.md` #22/#51.
+   (including `leave`): see `decisions.md` #22/#51. The group key is the token's
+   only entropy, so both the node's key source and the client's `HSYNC_P2P_KEY`
+   enforce `MIN_GROUP_KEY_CHARS` (32 characters).
 5. **Record ownership**: on an open bucket, `register`/`refresh`/`leave` are
    honoured only from the source IP the record belongs to (or with a valid token
    on a protected bucket); a foreign source cannot overwrite, keep alive or
-   evict another peer's record (decision #45).
+   evict another peer's record (decision #45). Ownership follows liveness:
+   `RoutingTable.get` returns only active records, so a TTL lapse frees the key
+   and a `refresh` never revives an expired record.
 6. **Bounded state**: the routing table, the rate-limiter key maps and the
    connection guard are capped from the host's RAM/CPU (`ResourceLimits`,
    `resources.py`), so adversarial churn is answered with backpressure, never
-   unbounded growth (decisions #43/#49/#50).
+   unbounded growth (decisions #43/#49/#50). The table is capped globally, per
+   bucket and per `(bucket, group)`, a `response` relays at most
+   `MAX_RELAY_ENDPOINTS` endpoints per peer within `MAX_RESPONSE_BYTES`, and a
+   connection runs at most `MAX_SESSIONS_PER_CONNECTION` sessions, so what a
+   registrant controls can never size what the node allocates or emits.
 7. **Zero backward compatibility**: breaking the wire contract means bumping
    the mandatory `protocol_version` (`boot/1`) and updating spec, fixtures,
    implementation and tests atomically.

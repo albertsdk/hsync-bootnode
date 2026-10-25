@@ -51,6 +51,28 @@ days and to keep you informed of remediation progress.
   `--identity PATH` overrides the path and `--ephemeral` keeps the identity in
   memory instead.
 
+## Trust model (what the node can and cannot vouch for)
+
+The bootnode is an **unauthenticated matchmaker**, by design: it relays what a
+peer declares and never becomes an identity authority.
+
+- On an **open** bucket any source may claim a `(cid, bucket, group)` that is
+  free or past its TTL, and may advertise any dialable endpoint, `cert_fp` and
+  election advertisement. Ownership is bound to the observed source IP only
+  while the record is alive (`register`/`refresh`/`leave` from another source are
+  dropped), so a live registration cannot be hijacked, kept alive or evicted by
+  a third party.
+- Peer **identity is therefore established on the data plane**, which pins the
+  peer certificate (TOFU, `sha256:<hex>` fingerprint) before any file is
+  exchanged. A relayed `cert_fp` is a claim, not a proof.
+- Where the identity of the peers in a bucket matters, run the bucket
+  **protected** (`--protected-bucket`) or the node **private** (`--private`):
+  a valid `bucket_token` then authenticates bucket membership and pins who may
+  write.
+- The group key behind that token is the only entropy, so it must be at least 32
+  characters (the node and the client enforce the same floor) and be rotated
+  like any shared secret: rotate the key, restart the node, redistribute it.
+
 ## Hardening Recommendations
 
 - Run the node on UDP/443 via the packaged service unit and keep dependencies

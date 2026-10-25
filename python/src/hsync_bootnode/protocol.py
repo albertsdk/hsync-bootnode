@@ -17,9 +17,11 @@ from typing import Annotated, Literal
 # ``^[A-Za-z0-9]{21}$``), re-exported here so ``from hsync_bootnode.protocol
 # import CID_PATTERN`` keeps working. The ``boot/1`` spec documents the same
 # value; ``test_cid_pattern_matches_boot1_spec`` pins the two together.
+from hsync_common.endpoint import is_valid_endpoint_host
 from hsync_common.models.event import CID_PATTERN
 from hsync_common.path_validation import is_valid_bucket_name
 from hsync_common.protocol.boot_tokens import BUCKET_TOKEN_LEN, is_valid_bucket_token
+from hsync_common.protocol.pairing import parse_fingerprint
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter
 
 __all__ = [
@@ -30,6 +32,8 @@ __all__ = [
     "BUCKET_TOKEN_LEN",
     "CAPACITY_MAX",
     "CID_PATTERN",
+    "MAX_RELAY_ENDPOINTS",
+    "MAX_RESPONSE_BYTES",
     "PROTOCOL_VERSION_BOOT",
     "STARTUP_TIME_MAX",
     "BootAck",
@@ -84,6 +88,15 @@ CONNECTED_MAX = 2**53
 # exactly-representable integer range of a JSON number). ``0.0`` = unknown.
 STARTUP_TIME_MAX = float(2**53)
 
+# A ``response`` relays at most this many endpoints per peer, and the relayed
+# peer fragments of one response stay within this byte budget. Both bound what an
+# unauthenticated registrant can make the node emit: a 16-endpoint, 50-peer
+# maximum would turn an 81-byte query into a ~260 KiB reply, i.e. a
+# self-amplifying reflection surface (and a frame far above the 8 KiB ingress
+# bound).
+MAX_RELAY_ENDPOINTS = 4
+MAX_RESPONSE_BYTES = 32 * 1024
+
 
 def _validate_bucket_name(value: str) -> str:
     """Reject any value that is not a canonical HSYNC bucket name.
@@ -122,13 +135,51 @@ def _validate_bucket_token(value: str) -> str:
 BucketToken = Annotated[str, AfterValidator(_validate_bucket_token)]
 
 
+def _validate_endpoint_host(value: str) -> str:
+    """Reject anything that is not a host a remote peer can dial.
+
+    An ``endpoints[]`` host is relayed to third parties and dialed by them, so
+    the grammar is the shared dialable-host predicate (IP literal or LDH
+    hostname): a value a resolver cannot turn into an address (control
+    characters, path separators, empty/over-long labels, IPv4-shaped
+    non-addresses) makes the frame invalid instead of poisoning the relay.
+    """
+    if not is_valid_endpoint_host(value):
+        raise ValueError("endpoint host must be an IP literal or a valid DNS name")
+    return value
+
+
+# Canonical endpoint-host field type, applied to every advertised ``host``.
+EndpointHost = Annotated[str, AfterValidator(_validate_endpoint_host)]
+
+
+def _validate_cert_fp(value: str) -> str:
+    """Reject anything that is not a SHA-256 certificate fingerprint.
+
+    ``cert_fp`` is the pin the data plane compares, so it must normalize to a
+    full SHA-256 digest (``sha256:<hex>``, bare hex, or separator-grouped hex —
+    the shared :func:`hsync_common.protocol.pairing.parse_fingerprint` grammar).
+    A short or malformed value would be unusable for pinning downstream, so it
+    makes the frame invalid here.
+    """
+    if parse_fingerprint(value) is None:
+        raise ValueError(
+            "cert_fp must be a SHA-256 certificate fingerprint (sha256:<hex> or bare hex)"
+        )
+    return value
+
+
+# Canonical certificate-fingerprint field type for ``cert_fp``.
+CertificateFingerprint = Annotated[str, AfterValidator(_validate_cert_fp)]
+
+
 class Endpoint(BaseModel):
     """An advertised listen endpoint (register's ``endpoints[]``)."""
 
     model_config = ConfigDict(extra="forbid")
 
     proto: BucketProto
-    host: str = Field(min_length=1, max_length=255)
+    host: EndpointHost
     port: int = Field(ge=1, le=65535)
 
 
@@ -173,7 +224,7 @@ class BootRegister(_BootFrame):
     bucket: BucketName
     group: str | None = Field(default=None, max_length=128)
     bucket_token: BucketToken | None = None
-    cert_fp: str = Field(min_length=1, max_length=256)
+    cert_fp: CertificateFingerprint = Field(max_length=256)
     version: str = Field(min_length=1, max_length=64)
     capacity: int = Field(default=0, ge=0, le=CAPACITY_MAX)
     endpoints: list[Endpoint] = Field(default_factory=list, max_length=16)
@@ -236,6 +287,10 @@ class BootAck(_BootFrame):
 class BootPeer(BaseModel):
     """A single advertised peer in a BootResponse.
 
+    ``endpoints`` is capped at :data:`MAX_RELAY_ENDPOINTS` entries (in the
+    peer's advertised order) so one response stays bounded, and each ``host``
+    is guaranteed dialable by the shared grammar.
+
     ``capacity`` is the peer's advisory service-capacity hint as relayed from
     its ``register`` (``0`` = not a seeder). It is not authenticated and not
     authoritative: the requester must treat the authenticated ``serve_slots``
@@ -252,7 +307,7 @@ class BootPeer(BaseModel):
 
     cid: str = Field(pattern=CID_PATTERN)
     endpoints: list[Endpoint] = Field(min_length=1, max_length=16)
-    cert_fp: str = Field(min_length=1, max_length=256)
+    cert_fp: CertificateFingerprint = Field(max_length=256)
     bucket: BucketName
     group: str | None = None
     version: str = Field(min_length=1, max_length=64)

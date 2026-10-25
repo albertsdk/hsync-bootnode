@@ -34,7 +34,7 @@ hsync-bootnode --version
 | `--ttl` | `60` | Record TTL in seconds (1–3600). Peers refresh every 30 s by default, so 60 s leaves one refresh of headroom. It must stay **above** the clients' refresh interval (`HSYNC_BOOTNODE_REFRESH_INTERVAL`, 30 s by default): a shorter TTL expires live records between two refreshes. Lower it only when the clients refresh more often (tests). |
 | `--debug` | *(disabled flag)* | Emit the full operation log to stderr (opt-in): connections, frames, decisions, record changes and TTL sweeps, **including the peer identity** (CID, bucket, IP, port). Every line is timestamped and self-identifying (`2026-09-30T10:30:45.123Z - hsync-bootnode[1234] debug: …`). Stderr only — never written to disk; without it no peer data leaves memory. Environment variable form: `HSYNC_BOOTNODE_DEBUG=1`. |
 | `--ready-file` | *(none)* | Write the process PID to this path once the listener is bound (readiness seam, contains no peer data). Environment variable form: `HSYNC_BOOTNODE_READY_FILE`. An unwritable path fails fast with exit code 4. |
-| `--no-rate-limit` | *(disabled flag)* | Disable rate limiting entirely (benchmark/test seam). Environment variable form: `HSYNC_BOOTNODE_NO_RATE_LIMIT=1`. Never enable in production — it removes the anti-abuse limits the spec requires. |
+| `--no-rate-limit` | *(disabled flag)* | Disable rate limiting entirely (benchmark/test seam). **CLI-only**: there is deliberately no environment-variable form, so a stale `.env` or unit setting cannot silently unthrottle a node. Never enable in production — it removes the anti-abuse limits the spec requires. |
 
 ### `identity show`
 
@@ -92,7 +92,6 @@ Prints the version and the protocol, e.g.
 | `HSYNC_BOOTNODE_PRIVATE` | Same as `--private`; set to `1` to require a valid `bucket_token` on every frame. |
 | `HSYNC_BOOTNODE_DEBUG` | Same as `--debug`; set to `1` for the full opt-in operation log (peer identity included; stderr only). |
 | `HSYNC_BOOTNODE_READY_FILE` | Same as `--ready-file`; the readiness PID path used by tests/orchestrators. |
-| `HSYNC_BOOTNODE_NO_RATE_LIMIT` | Same as `--no-rate-limit`; benchmark/test seam, never in production. |
 
 ## Group keys (`--keys-fd` / `--keys-file`)
 
@@ -185,7 +184,10 @@ Notes:
 
 ### Provisioning and key rotation
 
-1. Mint one 64-hex group key per bucket (for example `openssl rand -hex 32`).
+1. Mint one group key per bucket (for example `openssl rand -hex 32`). It must
+   be at least 32 characters: the key is the bucket token's only entropy, so a
+   shorter value is a configuration error (exit code 2) on the node **and** in
+   the client's `HSYNC_P2P_KEY`.
 2. Write one `bucket=<key>` line per bucket to
    `/etc/hsync-bootnode/group-keys` (0640, root-owned) and pass it to the node
    with `--keys-fd 5` (the packaged systemd/launchd units) or
@@ -217,9 +219,14 @@ Trade-offs (by design, not defects):
 ## Endpoint candidates (`endpoints`)
 
 `register` carries the peer's data-plane endpoint candidates. The node stores
-them and relays the **full list, verbatim and in order**, on every peer of a
-`query` response (a peer that advertised none is relayed as a single-element
-list with its observed source endpoint).
+them and relays the **first four, in order**, on every peer of a `query` response
+(a peer that advertised none is relayed as a single-element list with its
+observed source endpoint), and the whole response stays within a 32 KiB budget.
+
+Each advertised `host` must be dialable — an IPv4/IPv6 literal or a DNS name; a
+value outside that grammar (control characters, path separators, empty or
+over-long labels) makes the frame invalid, so a registrant cannot hand other
+peers an undialable or internal-looking target.
 
 The list is **advisory only** and the node never interprets or orders by it. A
 requester tries the candidates, preferring one reachable from its own network
@@ -334,10 +341,13 @@ can rely on.
   frames cannot turn frame validation into a CPU-exhaustion channel. Rate-limit
   refusals are always answered (`rate_limited` + `retry_after`); the silent
   malformed-frame budget answers nothing (there is no oracle to hand out). The
-  routing table and the limiter tables have host-derived ceilings, globally and
-  per bucket/group, so a registration flood is answered with `overloaded`
-  backpressure (`retry_after` advisory) instead of exhausting RAM or saturating
-  a single bucket's sample. Every
+  routing table and the limiter tables have host-derived ceilings, globally, per
+  bucket and per bucket/group, so a registration flood is answered with
+  `overloaded` backpressure (`retry_after` advisory) instead of exhausting RAM or
+  saturating a single bucket's sample; the per-bucket ceiling is the one a
+  registrant cannot rotate around, because `group` is chosen by the peer. A
+  `query` response is bounded too (at most four endpoints per peer, 32 KiB per
+  frame), so a registrant cannot turn a small query into a large reply. Every
   `boot/1` frame rejects unknown fields, and the deployed units are
   sandboxed (systemd `DynamicUser`, syscall filter).
 - **UPnP is opt-in and hardened**: off by default (`--upnp` enables it). SSDP

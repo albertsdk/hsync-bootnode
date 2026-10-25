@@ -22,7 +22,7 @@ from hsync_bootnode.server import build_quic_configuration, load_or_create_ident
 from hsync_bootnode.tokens import derive_bucket_token
 
 CID = "A1b2C3d4E5f6G7h8I9j0K"
-FP = "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
+FP = "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
 
 _REAL_OPEN = builtins.open
 _REAL_OS_OPEN = os.open

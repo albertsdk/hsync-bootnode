@@ -8,6 +8,8 @@ permissions, with a 20-year validity; the loader accepts nothing else.
 """
 
 import ipaddress
+import os
+import stat
 
 import pytest
 from cryptography import x509
@@ -275,3 +277,23 @@ def test_load_identity_rejects_a_malformed_pem(tmp_path):
     )
     with pytest.raises(IdentityError, match="not a valid PEM identity"):
         load_identity(path)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_an_existing_identity_directory_is_never_re_permissioned(tmp_path):
+    """--identity may point into a directory we do not own: leave its mode alone."""
+    shared = tmp_path / "shared"
+    shared.mkdir(mode=0o755)
+    os.chmod(shared, 0o755)
+    load_or_create_identity(shared / "identity.pem", host="127.0.0.1")
+    assert stat.S_IMODE(shared.stat().st_mode) == 0o755
+    # The key itself is still owner-only.
+    assert stat.S_IMODE((shared / "identity.pem").stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_a_created_identity_directory_is_owner_only(tmp_path):
+    path = tmp_path / "fresh" / "state" / "identity.pem"
+    load_or_create_identity(path, host="127.0.0.1")
+    assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600

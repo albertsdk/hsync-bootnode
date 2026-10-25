@@ -34,6 +34,10 @@ _EPHEMERAL_ENV = {"HSYNC_BOOTNODE_EPHEMERAL": "1"}
 # substring assertions so the help checks do not depend on color detection.
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
+# Group keys must meet the shared strength floor (MIN_GROUP_KEY_CHARS).
+_KEY_SHARED = "9f2c4b6a8d0e1f3a5c7b9d1e3f5a7c9b"
+_KEY_HOME = "1a3c5e7f9b0d2f4a6c8e0b2d4f6a8c0e"
+
 
 def _plain(text: str) -> str:
     """Return *text* without ANSI styling (for help/substring assertions)."""
@@ -57,15 +61,18 @@ def test_protected_bucket_without_key_fails_fast() -> None:
 
 def test_load_keys_from_fd() -> None:
     read_fd, write_fd = os.pipe()
-    os.write(write_fd, b"shared=abc123\n# operator comment\nhome=def456\n")
+    os.write(
+        write_fd,
+        b"shared=9f2c4b6a8d0e1f3a5c7b9d1e3f5a7c9b\n# operator comment\nhome=1a3c5e7f9b0d2f4a6c8e0b2d4f6a8c0e\n",
+    )
     os.close(write_fd)
     try:
         keys = _load_keys(read_fd)
     finally:
         os.close(read_fd)
     assert set(keys) == {"shared", "home"}
-    assert keys["shared"].get_secret_value() == "abc123"
-    assert keys["home"].get_secret_value() == "def456"
+    assert keys["shared"].get_secret_value() == _KEY_SHARED
+    assert keys["home"].get_secret_value() == _KEY_HOME
 
 
 def test_load_keys_ignores_blank_and_comments() -> None:
@@ -103,7 +110,7 @@ def test_load_keys_caps_the_fd_payload(tmp_path) -> None:
     from hsync_bootnode.cli import KEYS_FD_MAX_BYTES
 
     with tempfile.NamedTemporaryFile(dir=tmp_path, suffix=".keys", delete=False) as handle:
-        handle.write(b"shared=abc123\n" * 100_000)  # well past the cap
+        handle.write(b"shared=9f2c4b6a8d0e1f3a5c7b9d1e3f5a7c9b\n" * 100_000)  # well past the cap
         path = handle.name
     fd = os.open(path, os.O_RDONLY)
     try:
@@ -138,11 +145,14 @@ def test_load_keys_times_out_on_a_stuck_open_fd(monkeypatch) -> None:
 def test_load_keys_from_file(tmp_path) -> None:
     """An operator file is a first-class key source (Windows has no fd seam)."""
     path = tmp_path / "group-keys"
-    path.write_text("shared=abc123\n# operator comment\nhome=def456\n", encoding="utf-8")
+    path.write_text(
+        "shared=9f2c4b6a8d0e1f3a5c7b9d1e3f5a7c9b\n# operator comment\nhome=1a3c5e7f9b0d2f4a6c8e0b2d4f6a8c0e\n",
+        encoding="utf-8",
+    )
     keys = _load_keys(None, str(path))
     assert set(keys) == {"shared", "home"}
-    assert keys["shared"].get_secret_value() == "abc123"
-    assert keys["home"].get_secret_value() == "def456"
+    assert keys["shared"].get_secret_value() == _KEY_SHARED
+    assert keys["home"].get_secret_value() == _KEY_HOME
 
 
 def test_load_keys_empty_file_means_open_mode(tmp_path) -> None:
@@ -158,7 +168,7 @@ def test_load_keys_missing_file_fails_fast(tmp_path) -> None:
 
 def test_load_keys_fd_and_file_are_mutually_exclusive(tmp_path) -> None:
     path = tmp_path / "group-keys"
-    path.write_text("shared=abc123\n", encoding="utf-8")
+    path.write_text("shared=9f2c4b6a8d0e1f3a5c7b9d1e3f5a7c9b\n", encoding="utf-8")
     read_fd, write_fd = os.pipe()
     os.close(write_fd)
     try:
@@ -171,7 +181,7 @@ def test_load_keys_fd_and_file_are_mutually_exclusive(tmp_path) -> None:
 @pytest.mark.skipif(os.name == "nt", reason="creating a symlink needs a privilege on Windows")
 def test_load_keys_refuses_a_symlink(tmp_path) -> None:
     real = tmp_path / "real"
-    real.write_text("shared=abc123\n", encoding="utf-8")
+    real.write_text("shared=9f2c4b6a8d0e1f3a5c7b9d1e3f5a7c9b\n", encoding="utf-8")
     link = tmp_path / "link"
     link.symlink_to(real)
     with pytest.raises(BootConfigError, match="symlink"):
@@ -181,7 +191,7 @@ def test_load_keys_refuses_a_symlink(tmp_path) -> None:
 @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
 def test_load_keys_warns_on_loose_permissions(tmp_path, monkeypatch) -> None:
     path = tmp_path / "group-keys"
-    path.write_text("shared=abc123\n", encoding="utf-8")
+    path.write_text("shared=9f2c4b6a8d0e1f3a5c7b9d1e3f5a7c9b\n", encoding="utf-8")
     path.chmod(0o644)
     events: list[tuple[str, dict]] = []
     monkeypatch.setattr(
@@ -197,7 +207,7 @@ def test_load_keys_warns_on_loose_permissions(tmp_path, monkeypatch) -> None:
 def test_load_keys_accepts_a_group_readable_file(tmp_path, monkeypatch) -> None:
     """0640 is the documented service-account mode: group read is allowed."""
     path = tmp_path / "group-keys"
-    path.write_text("shared=abc123\n", encoding="utf-8")
+    path.write_text("shared=9f2c4b6a8d0e1f3a5c7b9d1e3f5a7c9b\n", encoding="utf-8")
     path.chmod(0o640)
     events: list[tuple[str, dict]] = []
     monkeypatch.setattr(
@@ -212,7 +222,7 @@ def test_load_keys_file_caps_the_payload(tmp_path) -> None:
     from hsync_bootnode.cli import KEYS_FD_MAX_BYTES
 
     path = tmp_path / "group-keys"
-    path.write_bytes(b"shared=abc123\n" * 100_000)
+    path.write_bytes(b"shared=9f2c4b6a8d0e1f3a5c7b9d1e3f5a7c9b\n" * 100_000)
     with pytest.raises(BootConfigError, match="exceeded"):
         _load_keys(None, str(path))
     assert KEYS_FD_MAX_BYTES > 0
@@ -220,7 +230,10 @@ def test_load_keys_file_caps_the_payload(tmp_path) -> None:
 
 def test_load_keys_rejects_duplicate_buckets() -> None:
     read_fd, write_fd = os.pipe()
-    os.write(write_fd, b"shared=abc123\nshared=def456\n")
+    os.write(
+        write_fd,
+        b"shared=9f2c4b6a8d0e1f3a5c7b9d1e3f5a7c9b\nshared=1a3c5e7f9b0d2f4a6c8e0b2d4f6a8c0e\n",
+    )
     os.close(write_fd)
     try:
         with pytest.raises(BootConfigError, match="duplicate group key for bucket 'shared'"):
@@ -237,7 +250,7 @@ def test_near_expiry_reason_names_the_configured_identity() -> None:
 
 def test_keys_file_and_fd_are_rejected_by_the_cli(tmp_path) -> None:
     path = tmp_path / "group-keys"
-    path.write_text("shared=abc123\n", encoding="utf-8")
+    path.write_text("shared=9f2c4b6a8d0e1f3a5c7b9d1e3f5a7c9b\n", encoding="utf-8")
     result = runner.invoke(
         app,
         ["run", "--keys-fd", "5", "--keys-file", str(path)],
@@ -261,7 +274,10 @@ def test_missing_keys_file_fails_fast_via_the_cli(tmp_path) -> None:
 
 def test_duplicate_keys_file_fails_fast_via_the_cli(tmp_path) -> None:
     path = tmp_path / "group-keys"
-    path.write_text("shared=abc123\nshared=def456\n", encoding="utf-8")
+    path.write_text(
+        "shared=9f2c4b6a8d0e1f3a5c7b9d1e3f5a7c9b\nshared=1a3c5e7f9b0d2f4a6c8e0b2d4f6a8c0e\n",
+        encoding="utf-8",
+    )
     result = runner.invoke(app, ["run", "--keys-file", str(path)], env=_EPHEMERAL_ENV)
     combined = result.output + getattr(result, "stderr", "")
     assert result.exit_code == 2
@@ -585,3 +601,54 @@ def test_packaged_unit_matches_the_source_unit() -> None:
         "StateDirectory=hsync-bootnode" in packaged
     )
     assert (_IDENTITY_FLAG in source) == (_IDENTITY_FLAG in packaged)
+
+
+def _combined(result) -> str:
+    """stdout + stderr of a CliRunner result (fail-fast errors go to stderr)."""
+    return (result.output or "") + (getattr(result, "stderr", "") or "")
+
+
+def test_group_key_below_the_strength_floor_fails_fast() -> None:
+    """The group key is the token's only entropy: a short key is a config error."""
+    read_fd, write_fd = os.pipe()
+    os.write(write_fd, b"shared=tooshort\n")
+    os.close(write_fd)
+    try:
+        with pytest.raises(BootConfigError, match="at least 32 characters"):
+            _load_keys(read_fd)
+    finally:
+        os.close(read_fd)
+
+
+def test_group_key_line_with_a_non_canonical_bucket_fails_fast(tmp_path) -> None:
+    path = tmp_path / "group-keys"
+    path.write_text(f"not a bucket={_KEY_SHARED}\n", encoding="utf-8")
+    with pytest.raises(BootConfigError, match="invalid bucket name"):
+        _load_keys(None, str(path))
+
+
+def test_group_key_line_must_be_a_key_value_pair(tmp_path) -> None:
+    path = tmp_path / "group-keys"
+    path.write_text("shared\n", encoding="utf-8")
+    with pytest.raises(BootConfigError, match="malformed group key line"):
+        _load_keys(None, str(path))
+
+
+def test_keys_payload_must_be_utf8() -> None:
+    """A mangled key byte must fail the load, never become a different token."""
+    read_fd, write_fd = os.pipe()
+    os.write(write_fd, b"shared=\xff\xfe\n")
+    os.close(write_fd)
+    try:
+        with pytest.raises(BootConfigError, match="not valid UTF-8"):
+            _load_keys(read_fd)
+    finally:
+        os.close(read_fd)
+
+
+def test_the_environment_cannot_enable_the_no_rate_limit_seam(monkeypatch) -> None:
+    """--no-rate-limit is CLI-only: a stale env var cannot disable the limits."""
+    monkeypatch.setenv("HSYNC_BOOTNODE_NO_RATE_LIMIT", "1")
+    # TEST-NET-1 is never a local address, so the bind fails after the banner.
+    result = runner.invoke(app, ["run", "--host", "192.0.2.1", "--port", "9"])
+    assert "rate limit: enabled" in _plain(_combined(result))

@@ -51,6 +51,7 @@ def test_ceilings_are_exposed_as_a_flat_mapping() -> None:
         max_active_connections=3,
         max_active_connections_per_ip=4,
         max_records_per_group=5,
+        max_records_per_bucket=6,
     )
     assert dataclasses.asdict(limits) == {
         "max_peer_records": 1,
@@ -58,6 +59,7 @@ def test_ceilings_are_exposed_as_a_flat_mapping() -> None:
         "max_active_connections": 3,
         "max_active_connections_per_ip": 4,
         "max_records_per_group": 5,
+        "max_records_per_bucket": 6,
     }
 
 

@@ -80,7 +80,7 @@ PEER_PORT = 51000
 
 # Probe constants shared with the CI burst test (tests/test_fuzz_harness.py).
 PROBE_CID = "A1b2C3d4E5f6G7h8I9j0K"
-PROBE_FP = "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
+PROBE_FP = "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
 
 _KEY_SHARED = b"kshared"
 _KEY_PRIVATE = b"kpriv"

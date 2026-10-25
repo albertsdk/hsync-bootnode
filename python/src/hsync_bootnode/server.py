@@ -19,6 +19,7 @@ import asyncio
 import ipaddress
 import os
 import re
+import stat
 import tempfile
 import time
 from collections.abc import Callable, Sequence
@@ -48,6 +49,7 @@ __all__ = [
     "HANDSHAKE_BURST_PER_IP",
     "HANDSHAKE_RATE_PER_SECOND",
     "MAX_FRAME_BYTES",
+    "MAX_SESSIONS_PER_CONNECTION",
     "BootQuicProtocol",
     "ConnectionGuard",
     "IdentityError",
@@ -66,7 +68,8 @@ __all__ = [
 BOOT_ALPN = "hsync-boot/1"
 # Spec: idle connections are dropped after 30 s.
 BOOT_IDLE_TIMEOUT = 30.0
-# One boot/1 frame must not exceed 8 KiB (register carries at most 16 endpoints).
+# Ingress bound for one boot/1 frame (a register carries at most 16 endpoints).
+# What the node *emits* is bounded separately by protocol.MAX_RESPONSE_BYTES.
 MAX_FRAME_BYTES = 8192
 # QUIC flow-control bounds: a request frame is at most MAX_FRAME_BYTES and the
 # client only pipelines a few per stream, so small receive windows bound the
@@ -82,6 +85,13 @@ MAX_DATA_BYTES = 16 * MAX_FRAME_BYTES
 HANDSHAKE_RATE_PER_SECOND = 30
 HANDSHAKE_BURST_PER_IP = 100
 CONNECTION_ACTIVE_MAX_PER_IP = 256
+
+# One boot/1 exchange is one bidirectional stream, so a handful of concurrent
+# sessions per connection is generous. aioquic hardcodes 128 concurrent bidi
+# streams per connection; without this cap a peer could pin 128 session tasks
+# (and 128x the per-connection memory budget) with streams it never closes.
+# See BootQuicProtocol._spawn_stream.
+MAX_SESSIONS_PER_CONNECTION = 4
 
 # HSYNC service identities are always ECDSA P-256 (ADR-0037).
 PrivateKey = ec.EllipticCurvePrivateKey
@@ -170,6 +180,32 @@ def make_identity(host: str = "0.0.0.0", *, public_hosts: Sequence[str] = ()) ->
     return _generate_identity(host, public_hosts)
 
 
+def _ensure_identity_dir(identity_path: Path) -> None:
+    """Create the identity directory with ``0700``, never re-permission one we did not create.
+
+    ``--identity`` may point into a directory this process does not own (a shared
+    state tree, a bind-mounted volume, ``/tmp``): tightening its permissions
+    unconditionally would break every other user of that path. A directory we
+    create is ``0700``; a pre-existing one is reported when it is
+    group/world-writable and left untouched.
+    """
+    parent = identity_path.parent
+    if parent.exists():
+        try:
+            mode = stat.S_IMODE(parent.stat().st_mode)
+        except OSError as exc:
+            raise IdentityError(f"could not stat identity directory {parent}: {exc}") from exc
+        if mode & 0o022:
+            warn_event(
+                "identity directory is group/world writable",
+                path=str(parent),
+                reason=f"mode {oct(mode)}; use 0700 for the private key directory",
+            )
+        return
+    parent.mkdir(parents=True, exist_ok=True, mode=_IDENTITY_DIR_MODE)
+    os.chmod(parent, _IDENTITY_DIR_MODE)
+
+
 def load_or_create_identity(
     path: str | Path,
     *,
@@ -189,8 +225,7 @@ def load_or_create_identity(
         return load_identity(identity_path)
 
     identity = _generate_identity(host, public_hosts)
-    identity_path.parent.mkdir(parents=True, exist_ok=True, mode=_IDENTITY_DIR_MODE)
-    os.chmod(identity_path.parent, _IDENTITY_DIR_MODE)
+    _ensure_identity_dir(identity_path)
     _atomic_write_identity(identity_path, _identity_pem(identity))
     return identity
 
@@ -614,6 +649,13 @@ class BootQuicProtocol(QuicConnectionProtocol):
 
     def _spawn_stream(self, reader: Any, writer: Any) -> None:
         peer = self._observed_peer()
+        if len(self._stream_tasks) >= MAX_SESSIONS_PER_CONNECTION:
+            # boot/1 uses one stream per exchange: refuse the extra stream instead
+            # of pinning another session task for a connection that is over its
+            # session budget (see MAX_SESSIONS_PER_CONNECTION).
+            debug_event("stream refused session-cap", peer=f"{peer[0]}:{peer[1]}")
+            writer.close()
+            return
         debug_event("session open", peer=f"{peer[0]}:{peer[1]}")
         task = asyncio.create_task(self._serve_stream(reader, writer))
         self._stream_tasks.add(task)

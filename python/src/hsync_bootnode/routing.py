@@ -108,20 +108,27 @@ class PeerRecord:
 
 
 class RoutingTable:
-    """Thread-safe in-memory registry of active peers (per ``boot/1``)."""
+    """In-memory registry of active peers (per ``boot/1``), RAM only.
+
+    Owned by the node's single asyncio event-loop thread: there is no lock, so a
+    caller must never share one table across threads (the daemon does not).
+    """
 
     def __init__(
         self,
         *,
         max_records: int | None = None,
         max_records_per_group: int | None = None,
+        max_records_per_bucket: int | None = None,
     ) -> None:
         self._records: dict[tuple[str, str, str | None], PeerRecord] = {}
         self._by_group: dict[tuple[str, str | None], list[tuple[str, str, str | None]]] = {}
         self._by_cid: dict[tuple[str, str], set[tuple[str, str, str | None]]] = {}
         self._pos: dict[tuple[str, str, str | None], int] = {}
+        self._per_bucket: dict[str, int] = {}
         self._max_records = max_records
         self._max_per_group = max_records_per_group
+        self._max_per_bucket = max_records_per_bucket
 
     # -- mutation ----------------------------------------------------------
 
@@ -129,15 +136,22 @@ class RoutingTable:
         """Insert or refresh a peer record; ``False`` when a ceiling is hit.
 
         An existing key is always updated (it does not grow the table). A new
-        key is refused once ``max_records`` is reached, or once its
-        ``(bucket, group)`` population reaches ``max_records_per_group`` — the
-        per-group ceiling stops one bucket from being filled to the whole
-        ceiling and dominating its random sample. Either refusal lets the caller
-        answer with backpressure instead of growing RAM without limit.
+        key is refused once ``max_records`` is reached, once its bucket reaches
+        ``max_records_per_bucket``, or once its ``(bucket, group)`` population
+        reaches ``max_records_per_group``. The bucket ceiling is the one a
+        hostile registrant cannot rotate around: ``group`` is attacker-chosen,
+        so the per-group cap alone would let one bucket fill the whole table by
+        rotating it. Either refusal lets the caller answer with backpressure
+        instead of growing RAM without limit.
         """
         key = (record.cid, record.bucket, record.group)
         if key not in self._records:
             if self._max_records is not None and len(self._records) >= self._max_records:
+                return False
+            if (
+                self._max_per_bucket is not None
+                and self._per_bucket.get(record.bucket, 0) >= self._max_per_bucket
+            ):
                 return False
             group_keys = self._by_group.get((record.bucket, record.group))
             if (
@@ -150,6 +164,7 @@ class RoutingTable:
             self._pos[key] = len(lst)
             lst.append(key)
             self._by_cid.setdefault((record.cid, record.bucket), set()).add(key)
+            self._per_bucket[record.bucket] = self._per_bucket.get(record.bucket, 0) + 1
         self._records[key] = record
         return True
 
@@ -170,24 +185,37 @@ class RoutingTable:
         if not lst:
             del self._by_group[(bucket, group)]
 
+    def _decrement_bucket(self, bucket: str) -> None:
+        """Account one record leaving ``bucket`` (keeps ``_per_bucket`` exact)."""
+        remaining = self._per_bucket.get(bucket, 0) - 1
+        if remaining > 0:
+            self._per_bucket[bucket] = remaining
+        else:
+            self._per_bucket.pop(bucket, None)
+
     def _drop(self, key: tuple[str, str, str | None]) -> None:
-        """Remove ``key`` from ``_records`` and the group index."""
+        """Remove ``key`` from ``_records``, the group index and the bucket count."""
+        bucket = key[1]
         del self._records[key]
         self._unindex(key)
+        self._decrement_bucket(bucket)
 
     def _rebuild_indexes(self) -> None:
         """Rebuild every secondary index from ``_records`` in one linear pass."""
         by_group: dict[tuple[str, str | None], list[tuple[str, str, str | None]]] = {}
         by_cid: dict[tuple[str, str], set[tuple[str, str, str | None]]] = {}
         pos: dict[tuple[str, str, str | None], int] = {}
+        per_bucket: dict[str, int] = {}
         for key in self._records:
             lst = by_group.setdefault((key[1], key[2]), [])
             pos[key] = len(lst)
             lst.append(key)
             by_cid.setdefault((key[0], key[1]), set()).add(key)
+            per_bucket[key[1]] = per_bucket.get(key[1], 0) + 1
         self._by_group = by_group
         self._by_cid = by_cid
         self._pos = pos
+        self._per_bucket = per_bucket
 
     def remove(
         self,
@@ -235,9 +263,26 @@ class RoutingTable:
             return []
         return [self._records[key].ip for key in keys]
 
-    def get(self, cid: str, bucket: str, group: str | None = None) -> PeerRecord | None:
-        """Return the active record for the exact key, or ``None`` (refresh)."""
-        return self._records.get((cid, bucket, group))
+    def get(
+        self,
+        cid: str,
+        bucket: str,
+        group: str | None = None,
+        *,
+        now: float | None = None,
+    ) -> PeerRecord | None:
+        """Return the **active** record for the exact key, or ``None``.
+
+        A record past its TTL is absent: it must not block another source from
+        claiming the key, and a refresh must not revive it (the peer
+        re-registers instead). Ownership decisions (``_may_replace``) and
+        ``refresh`` both read through here, so expiry is the single authority.
+        """
+        record = self._records.get((cid, bucket, group))
+        if record is None:
+            return None
+        now = time.monotonic() if now is None else now
+        return record if now < record.expires_at else None
 
     def prune(self, now: float | None = None, *, max_remove: int | None = None) -> int:
         """Drop expired records; returns the number of removed entries.
@@ -264,6 +309,7 @@ class RoutingTable:
             self._by_group.clear()
             self._by_cid.clear()
             self._pos.clear()
+            self._per_bucket.clear()
             return total
         for key in expired:
             del self._records[key]
@@ -273,6 +319,7 @@ class RoutingTable:
         else:
             for key in expired:
                 self._unindex(key)
+                self._decrement_bucket(key[1])
                 cset = self._by_cid[(key[0], key[1])]
                 cset.discard(key)
                 if not cset:

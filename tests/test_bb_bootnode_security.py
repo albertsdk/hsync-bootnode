@@ -559,3 +559,53 @@ async def test_refusal_amplification_is_bounded(bootnode_factory, bucket) -> Non
         writer.close()
     # Then: the reply stays within the anti-amplification guidance
     assert len(reply) / len(query) < 3.0
+
+
+# ---------------------------------------------------------------------------
+# Relay bounds (what a registrant can make the node emit)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_query_relay_is_bounded(bootnode_factory, bucket, rng) -> None:
+    """A 16-endpoint register is relayed as at most 4 endpoints, in order."""
+    # Given: a peer that advertises the maximum number of long endpoints
+    handle = bootnode_factory()
+    cid = random_cid(rng)
+    long_host = ".".join(["a" * 63] * 3)
+    frame = register_frame(cid, bucket)
+    frame["endpoints"] = [
+        {"proto": "tcp", "host": long_host, "port": 4000 + index} for index in range(16)
+    ]
+    async with BootClient(handle.port) as client:
+        ack = await client.exchange(frame)
+        assert ack["type"] == "ack"
+        # When: anyone queries the bucket
+        response = await client.exchange(query_frame(bucket, limit=50))
+    # Then: the relay carries the first four candidates and stays bounded
+    assert response["count"] == 1
+    relayed = response["peers"][0]["endpoints"]
+    assert len(relayed) == 4
+    assert relayed[0]["port"] == 4000
+    assert len(json.dumps(response)) <= 32 * 1024
+
+
+@pytest.mark.asyncio
+async def test_a_non_dialable_endpoint_host_is_refused(bootnode_factory, bucket, rng) -> None:
+    """An advertised host no client could dial is an invalid frame, not relayed data."""
+    # Given: a running node
+    handle = bootnode_factory()
+    cid = random_cid(rng)
+    # When: a register advertises a host outside the dialable grammar
+    transport, protocol = await _connect_from("127.0.0.1", handle.port)
+    try:
+        frame = register_frame(cid, bucket)
+        frame["endpoints"] = [{"proto": "tcp", "host": "../elsewhere", "port": 443}]
+        silent = await _send_expect_silent(protocol, frame)
+    finally:
+        await _close_raw(transport, protocol)
+    # Then: the frame is dropped and nothing is relayed for that bucket
+    assert silent
+    async with BootClient(handle.port) as client:
+        response = await client.exchange(query_frame(bucket))
+    assert response["count"] == 0

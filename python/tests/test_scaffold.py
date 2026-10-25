@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from hsync_bootnode.protocol import (
     CAPACITY_MAX,
@@ -20,6 +21,9 @@ from hsync_bootnode.protocol import (
 )
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
+
+# A canonical SHA-256 certificate fingerprint (the value a pin compares).
+FP = "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
 
 
 def _load_fixture(name: str) -> dict:
@@ -59,7 +63,7 @@ def test_bucket_uses_canonical_hsync_name_rule() -> None:
         "protocol_version": "boot/1",
         "type": "register",
         "cid": CID,
-        "cert_fp": "AA:BB",
+        "cert_fp": FP,
         "version": "1.0.0",
     }
     for good in ("shared", "a", "my-bucket_1", "b" * 63):
@@ -78,7 +82,7 @@ def test_bucket_uses_canonical_hsync_name_rule() -> None:
         BootPeer(
             cid=CID,
             endpoints=[{"proto": "tcp", "host": "198.51.100.7", "port": 443}],
-            cert_fp="AA:BB",
+            cert_fp=FP,
             bucket="has space",
             version="1.0.0",
         )
@@ -91,7 +95,7 @@ def test_register_accepts_valid_and_rejects_unknown_fields() -> None:
         cid=CID,
         bucket="shared",
         group="home",
-        cert_fp="AA:BB",
+        cert_fp=FP,
         version="1.0.0",
         endpoints=[{"proto": "tcp", "host": "198.51.100.7", "port": 443}],
     )
@@ -105,7 +109,7 @@ def test_register_accepts_valid_and_rejects_unknown_fields() -> None:
             type="register",
             cid=CID,
             bucket="shared",
-            cert_fp="AA:BB",
+            cert_fp=FP,
             version="1.0.0",
             file_search="photo.jpg",  # type: ignore[call-arg]
         )
@@ -122,7 +126,7 @@ def test_capacity_hint_domain_bounds() -> None:
         "type": "register",
         "cid": CID,
         "bucket": "shared",
-        "cert_fp": "AA:BB",
+        "cert_fp": FP,
         "version": "1.0.0",
     }
     assert BootRegister(**register).capacity == 0  # absent → 0
@@ -133,7 +137,7 @@ def test_capacity_hint_domain_bounds() -> None:
     peer = {
         "cid": CID,
         "endpoints": [{"proto": "tcp", "host": "198.51.100.7", "port": 443}],
-        "cert_fp": "AA:BB",
+        "cert_fp": FP,
         "bucket": "shared",
         "version": "1.0.0",
     }
@@ -156,7 +160,7 @@ def test_election_advertisement_domain_bounds() -> None:
         "type": "register",
         "cid": CID,
         "bucket": "shared",
-        "cert_fp": "AA:BB",
+        "cert_fp": FP,
         "version": "1.0.0",
     }
     default = BootRegister(**register)
@@ -196,7 +200,7 @@ def test_election_advertisement_domain_bounds() -> None:
     peer = {
         "cid": CID,
         "endpoints": [{"proto": "tcp", "host": "198.51.100.7", "port": 443}],
-        "cert_fp": "AA:BB",
+        "cert_fp": FP,
         "bucket": "shared",
         "version": "1.0.0",
     }
@@ -230,7 +234,7 @@ def test_bucket_token_wire_grammar_is_64_lowercase_hex() -> None:
         "type": "register",
         "cid": CID,
         "bucket": "shared",
-        "cert_fp": "AA:BB",
+        "cert_fp": FP,
         "version": "1.0.0",
     }
     good = "0123456789abcdef" * 4
@@ -255,7 +259,7 @@ def test_connected_advisory_bound_is_bounded() -> None:
         "type": "register",
         "cid": CID,
         "bucket": "shared",
-        "cert_fp": "AA:BB",
+        "cert_fp": FP,
         "version": "1.0.0",
     }
     assert BootRegister(**register).connected is None
@@ -277,7 +281,7 @@ def test_routing_table_upsert_prune_sample() -> None:
             ip="198.51.100.7",
             port=443,
             proto="tcp",
-            cert_fp="AA:BB",
+            cert_fp=FP,
             version="1.0.0",
             endpoints=(),
             expires_at=2000.0,
@@ -291,7 +295,7 @@ def test_routing_table_upsert_prune_sample() -> None:
             ip="198.51.100.8",
             port=443,
             proto="tcp",
-            cert_fp="CC:DD",
+            cert_fp=FP,
             version="1.0.0",
             endpoints=(),
             expires_at=3000.0,
@@ -314,3 +318,37 @@ def test_token_bucket_burst_then_sustained() -> None:
     # sustained: exactly 5 tokens have refilled after one window
     assert lim.allow("a", now + 60) is True
     assert lim.retry_after("a") >= 1
+
+
+@pytest.mark.parametrize("host", ["198.51.100.7", "peer.example", "2001:db8::1", "[2001:db8::1]"])
+def test_register_accepts_dialable_endpoint_hosts(host: str) -> None:
+    frame = _load_fixture("bootnode-register.json")
+    frame["endpoints"] = [{"proto": "tcp", "host": host, "port": 443}]
+    assert BootRegister.model_validate(frame).endpoints[0].host == host
+
+
+@pytest.mark.parametrize(
+    "host", ["", "..\\..", "../elsewhere", "a b", "a\x00b", "999.1.1.1", "a..b", "x" * 64]
+)
+def test_register_rejects_non_dialable_endpoint_hosts(host: str) -> None:
+    frame = _load_fixture("bootnode-register.json")
+    frame["endpoints"] = [{"proto": "tcp", "host": host, "port": 443}]
+    with pytest.raises(ValidationError):
+        BootRegister.model_validate(frame)
+
+
+@pytest.mark.parametrize("cert_fp", ["", "f", "AA:BB", "not-a-fingerprint", "sha256:zz"])
+def test_register_rejects_a_malformed_certificate_fingerprint(cert_fp: str) -> None:
+    frame = _load_fixture("bootnode-register.json")
+    frame["cert_fp"] = cert_fp
+    with pytest.raises(ValidationError):
+        BootRegister.model_validate(frame)
+
+
+def test_peer_certificate_fingerprint_uses_the_same_grammar() -> None:
+    peer = _load_fixture("bootnode-response.json")["peers"][0]
+    peer["cert_fp"] = "sha256:" + FP.replace(":", "").lower()
+    assert BootPeer.model_validate(peer)
+    peer["cert_fp"] = "AA:BB"
+    with pytest.raises(ValidationError):
+        BootPeer.model_validate(peer)

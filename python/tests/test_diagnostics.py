@@ -28,7 +28,7 @@ from hsync_bootnode.diagnostics import (
 from hsync_bootnode.handler import BootHandler
 
 CID = "A1b2C3d4E5f6G7h8I9j0K"
-FP = "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
+FP = "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
 
 # "2026-09-30T10:30:45.123Z - hsync-bootnode[1234] <level>: <body>"
 _LINE_RE = re.compile(

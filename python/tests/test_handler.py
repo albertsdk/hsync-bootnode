@@ -15,7 +15,7 @@ from hsync_bootnode.tokens import derive_bucket_token
 
 CID = "A1b2C3d4E5f6G7h8I9j0K"
 CID2 = "abcdefghijklmnopqrstu"
-FP = "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
+FP = "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
 KEY = b"group-secret"
 
 
@@ -699,7 +699,7 @@ def test_refresh_renews_ttl_but_never_creates() -> None:
         patch("hsync_bootnode.handler.time.monotonic", return_value=1_000.0),
     ):
         send(h, register_frame(), peer_ip="10.0.0.1", peer_port=1)
-    before = h.routing.get(CID, "shared", "home")
+    before = h.routing.get(CID, "shared", "home", now=1_000.0)
     assert before is not None
     before_expires = before.expires_at  # live record: touch() mutates it too
     with (
@@ -723,7 +723,7 @@ def test_refresh_renews_ttl_but_never_creates() -> None:
         )
     assert refreshed is not None
     assert refreshed["type"] == "ack"
-    after = h.routing.get(CID, "shared", "home")
+    after = h.routing.get(CID, "shared", "home", now=1_030.0)
     assert after is not None
     assert after.connected == 7
     assert after.expires_at > before_expires
@@ -1103,6 +1103,7 @@ def test_routing_table_cap_applies_backpressure() -> None:
         max_active_connections=8,
         max_active_connections_per_ip=8,
         max_records_per_group=2,
+        max_records_per_bucket=10,
     )
     h = BootHandler(limits=limits)
     assert decoded(send(h, register_frame(cid=CID), peer_ip="1.1.1.1", peer_port=1)) is not None
@@ -1118,3 +1119,146 @@ def test_routing_table_cap_applies_backpressure() -> None:
     # refreshing an existing key never grows the table and stays accepted
     refreshed = decoded(send(h, refresh_frame(), peer_ip="1.1.1.1", peer_port=1))
     assert refreshed is not None and refreshed["type"] == "ack"
+
+
+# --- expiry-aware ownership, layered ceilings and bounded relay ---------------
+
+
+def test_an_expired_record_is_absent_from_the_table_view() -> None:
+    """A record past its TTL reads as absent, not as a stale claim."""
+    h = make_handler()
+    send(h, register_frame(), peer_ip="10.0.0.1", peer_port=1)
+    record = h.routing.get(CID, "shared", "home", now=1_000.0)
+    assert record is not None
+    assert h.routing.get(CID, "shared", "home", now=record.expires_at + 1.0) is None
+
+
+def test_a_ttl_lapse_frees_the_key_for_another_source() -> None:
+    """Ownership follows liveness: an expired record blocks nobody."""
+    h = make_handler()
+    with patch("hsync_bootnode.routing.time.monotonic", return_value=1_000.0):
+        send(h, register_frame(host="10.0.0.1"), peer_ip="10.0.0.1", peer_port=1)
+    with (
+        patch("hsync_bootnode.routing.time.monotonic", return_value=1_070.0),
+        patch("hsync_bootnode.handler.time.monotonic", return_value=1_070.0),
+    ):
+        ack = decoded(
+            send(h, register_frame(host="203.0.113.9"), peer_ip="203.0.113.9", peer_port=2)
+        )
+    assert ack is not None and ack["type"] == "ack"
+    record = h.routing.get(CID, "shared", "home", now=1_070.0)
+    assert record is not None and record.ip == "203.0.113.9"
+
+
+def test_refresh_never_revives_an_expired_record() -> None:
+    """A refresh past the TTL is dropped: the client falls back to a register."""
+    h = make_handler()
+    with patch("hsync_bootnode.routing.time.monotonic", return_value=1_000.0):
+        send(h, register_frame(), peer_ip="10.0.0.1", peer_port=1)
+    with (
+        patch("hsync_bootnode.routing.time.monotonic", return_value=1_070.0),
+        patch("hsync_bootnode.handler.time.monotonic", return_value=1_070.0),
+    ):
+        assert send(h, refresh_frame(), peer_ip="10.0.0.1", peer_port=1) is None
+
+
+def test_the_bucket_ceiling_cannot_be_rotated_around_with_group_names() -> None:
+    """``group`` is registrant-chosen, so the per-bucket ceiling is the binding one."""
+    from hsync_bootnode.resources import ResourceLimits
+
+    limits = ResourceLimits(
+        max_peer_records=10,
+        max_limiter_keys=64,
+        max_active_connections=8,
+        max_active_connections_per_ip=8,
+        max_records_per_group=10,
+        max_records_per_bucket=2,
+    )
+    h = BootHandler(limits=limits, enforce_rate_limits=False)
+    replies = [
+        decoded(
+            send(
+                h,
+                register_frame(cid=f"Bkt{index:018d}", group=f"g{index}"),
+                peer_ip="1.1.1.1",
+                peer_port=1_000 + index,
+            )
+        )
+        for index in range(4)
+    ]
+    assert [reply["type"] for reply in replies] == ["ack", "ack", "response", "response"]
+    assert [reply.get("error") for reply in replies[2:]] == ["overloaded", "overloaded"]
+    assert h.routing.count("shared") == 2
+
+
+def test_pruning_releases_the_bucket_accounting_on_both_paths() -> None:
+    """Both sweep paths (incremental and bulk rebuild) keep ``_per_bucket`` exact."""
+    from hsync_bootnode.routing import PeerRecord, RoutingTable
+
+    def record(cid: str, expires_at: float) -> PeerRecord:
+        return PeerRecord(
+            cid=cid,
+            bucket="shared",
+            group=None,
+            ip="10.0.0.1",
+            port=443,
+            proto="tcp",
+            cert_fp=FP,
+            version="1.0.0",
+            endpoints=(),
+            expires_at=expires_at,
+        )
+
+    # Incremental path: one of four expires, so the ceiling must free one slot.
+    table = RoutingTable(max_records=10, max_records_per_bucket=4)
+    assert table.upsert(record("Inc000000000000000000", 900.0)) is True
+    for index in range(1, 4):
+        assert table.upsert(record(f"Inc{index:018d}", 1_000.0)) is True
+    assert table.prune(now=950.0) == 1
+    assert table.upsert(record("Inc900000000000000000", 1_000.0)) is True
+
+    # Bulk path: every record expires, so the counters reset with the table.
+    table = RoutingTable(max_records=10, max_records_per_bucket=2)
+    assert table.upsert(record("All000000000000000000", 900.0)) is True
+    assert table.upsert(record("All100000000000000000", 900.0)) is True
+    assert table.prune(now=1_000.0) == 2
+    assert table.upsert(record("All200000000000000000", 1_000.0)) is True
+
+
+def test_relayed_peer_endpoints_are_capped() -> None:
+    """A register may advertise 16 candidates; the relay carries the first four."""
+    from hsync_bootnode.protocol import MAX_RELAY_ENDPOINTS
+
+    h = make_handler()
+    endpoints = [
+        {"proto": "tcp", "host": f"198.51.100.{index + 1}", "port": 4_000 + index}
+        for index in range(16)
+    ]
+    send(h, register_frame(endpoints=endpoints), peer_ip="10.0.0.1", peer_port=1)
+    reply = decoded(send(h, query_frame(), peer_ip="10.0.0.2", peer_port=2))
+    assert reply is not None and reply["count"] == 1
+    relayed = reply["peers"][0]["endpoints"]
+    assert len(relayed) == MAX_RELAY_ENDPOINTS
+    assert relayed[0]["host"] == "198.51.100.1"
+
+
+def test_a_response_stays_within_the_byte_budget() -> None:
+    """Endpoint-heavy registrants cannot make one query emit an unbounded reply."""
+    from hsync_bootnode.protocol import MAX_RESPONSE_BYTES
+
+    h = make_handler()
+    host = ".".join(["a" * 63] * 3)  # 191-char dialable DNS name
+    endpoints = [{"proto": "tcp", "host": host, "port": 443}] * 4
+    registered = 40
+    for index in range(registered):
+        send(
+            h,
+            register_frame(cid=f"Bud{index:018d}", endpoints=endpoints, version="1" * 64),
+            peer_ip=f"10.1.{index // 256}.{index % 256}",
+            peer_port=1_000 + index,
+        )
+    reply = send(h, query_frame(limit=50), peer_ip="9.9.9.9", peer_port=4444)
+    assert reply is not None
+    assert len(reply) <= MAX_RESPONSE_BYTES
+    relayed = decoded(reply)["count"]
+    assert 1 <= relayed < registered

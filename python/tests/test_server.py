@@ -32,7 +32,7 @@ from hsync_bootnode.server import (
 from hsync_bootnode.tokens import derive_bucket_token
 
 CID = "A1b2C3d4E5f6G7h8I9j0K"
-FP = "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
+FP = "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
 
 
 def test_make_identity_produces_self_signed_fingerprint() -> None:
@@ -442,3 +442,24 @@ def test_connection_guard_global_cap_and_release() -> None:
     assert guard.total_count() == 1
     assert guard.admit("10.0.0.3", now=0.1) is True
     assert guard.total_count() == 2
+
+
+def test_a_connection_cannot_pin_more_sessions_than_the_cap() -> None:
+    """Streams beyond the per-connection session cap are closed, not spawned."""
+    from hsync_bootnode.server import MAX_SESSIONS_PER_CONNECTION
+
+    protocol = object.__new__(BootQuicProtocol)
+    protocol.peer_addr = ("203.0.113.9", 51000)
+    protocol._stream_tasks = {object() for _ in range(MAX_SESSIONS_PER_CONNECTION)}
+
+    class _Writer:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    writer = _Writer()
+    protocol._spawn_stream(object(), writer)
+    assert writer.closed is True
+    assert len(protocol._stream_tasks) == MAX_SESSIONS_PER_CONNECTION

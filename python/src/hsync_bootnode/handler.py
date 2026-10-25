@@ -26,6 +26,8 @@ from hsync_bootnode.protocol import (
     BOOT_FRAME_ADAPTER,
     BOOT_PEER_ADAPTER,
     BUCKET_TOKEN_LEN,
+    MAX_RELAY_ENDPOINTS,
+    MAX_RESPONSE_BYTES,
     PROTOCOL_VERSION_BOOT,
     BootAck,
     BootError,
@@ -82,6 +84,11 @@ _PRUNE_INTERVAL_SECONDS = 15.0
 # Max expired records one request-path sweep may remove (see _maybe_prune).
 REQUEST_PATH_PRUNE_BUDGET = 2048
 
+# Bytes of a ``response`` reserved for the envelope around the peer fragments
+# (protocol_version/type/count/ttl/error/retry_after), so the relayed fragments
+# can fill the rest of MAX_RESPONSE_BYTES without the frame exceeding it.
+_ENVELOPE_RESERVE_BYTES = 256
+
 
 class BootConfigError(RuntimeError):
     """Invalid operator configuration (fail fast at startup, never silently)."""
@@ -133,6 +140,7 @@ class BootHandler:
             else RoutingTable(
                 max_records=self.limits.max_peer_records,
                 max_records_per_group=self.limits.max_records_per_group,
+                max_records_per_bucket=self.limits.max_records_per_bucket,
             )
         )
         # ``None`` sentinel forces the first handle() to sweep; a 0.0 seed would
@@ -456,11 +464,13 @@ class BootHandler:
     def _may_replace(self, cid: str, bucket: str, group: str | None, peer_ip: str) -> bool:
         """Whether ``peer_ip`` may create/replace the ``(cid, bucket, group)`` record.
 
-        An absent record is always claimable. A live record is owned by the
-        source network it registered from: only the same source IP may replace
-        or renew it, unless the frame was already token-authorized (a protected
-        or private bucket), which authenticates bucket membership from any
-        source — the same model ``leave`` uses.
+        An absent **or expired** record is always claimable: ``RoutingTable.get``
+        only returns live records, so a TTL lapse never leaves a stale claim
+        blocking the rightful owner. A live record is owned by the source network
+        it registered from: only the same source IP may replace or renew it,
+        unless the frame was already token-authorized (a protected or private
+        bucket), which authenticates bucket membership from any source — the
+        same model ``leave`` uses.
         """
         record = self.routing.get(cid, bucket, group)
         if record is None or record.ip == peer_ip:
@@ -545,7 +555,19 @@ class BootHandler:
 
         records = self.routing.sample(model.bucket, model.group, model.limit)
         to_peer = self._to_peer
-        peers = [to_peer(record, model) for record in records]
+        # Bound the relay in bytes, not only in peer count: a registrant chooses
+        # its own endpoints, so ``limit`` alone would let one query pull tens of
+        # KB per 81-byte request.
+        budget = MAX_RESPONSE_BYTES - _ENVELOPE_RESERVE_BYTES
+        peers: list[bytes] = []
+        relayed: list[PeerRecord] = []
+        for record in records:
+            fragment = to_peer(record, model)
+            if len(fragment) > budget:
+                break
+            peers.append(fragment)
+            relayed.append(record)
+            budget -= len(fragment)
         if debug_enabled():
             debug_event(
                 "query response",
@@ -553,7 +575,7 @@ class BootHandler:
                 group=model.group,
                 peer=peer_ip,
                 peers=len(peers),
-                cids=[record.cid for record in records],
+                cids=[record.cid for record in relayed],
             )
         return self._response(peers=peers, error=None, retry_after=None)
 
@@ -729,15 +751,15 @@ class BootHandler:
 
     @staticmethod
     def _to_peer(record: PeerRecord, model: BootQuery) -> bytes:
-        """Relay the peer's full advertised candidate list over the observed source.
+        """Relay the peer's candidate endpoints over the observed source.
 
-        Every declared ``endpoints[]`` element is relayed verbatim and in order;
-        only a register that carried no endpoint at all (the first STUN
-        register) falls back to a single-element list with the observed source
-        endpoint. Both branches share one projection so the relayed advisory
-        fields (``capacity``, ``reachable`` and the election advertisement)
-        cannot drift; the whole record is relayed verbatim and never
-        interpreted.
+        The first :data:`MAX_RELAY_ENDPOINTS` advertised candidates are relayed
+        verbatim and in order; only a register that carried no endpoint at all
+        (the first STUN register) falls back to a single-element list with the
+        observed source endpoint. Both branches share one projection so the
+        relayed advisory fields (``capacity``, ``reachable`` and the election
+        advertisement) cannot drift; the whole record is relayed verbatim and
+        never interpreted.
 
         Returns the pre-serialized JSON fragment (not the ``BootPeer`` model), so
         the record caches bytes — see ``PeerRecord.wire``.
@@ -748,7 +770,7 @@ class BootHandler:
         if record.endpoints:
             endpoints = [
                 Endpoint(proto=proto, host=host, port=port)
-                for (proto, host, port) in record.endpoints
+                for (proto, host, port) in record.endpoints[:MAX_RELAY_ENDPOINTS]
             ]
         else:
             endpoints = [Endpoint(proto=record.proto, host=record.ip, port=record.port)]

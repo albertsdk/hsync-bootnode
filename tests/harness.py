@@ -50,9 +50,19 @@ def resolve_bin() -> str:
     )
 
 
+# Service-manager variables the suite always scrubs: a run inside a systemd
+# session would otherwise leak the runner's own manager into the spawned node,
+# which would then announce READY/WATCHDOG to it.
+_SERVICE_MANAGER_VARS = frozenset({"NOTIFY_SOCKET", "WATCHDOG_USEC", "WATCHDOG_PID"})
+
+
 def scrub_environment() -> dict[str, str]:
-    """Environment minus every ``HSYNC_*`` variable (isolation contract)."""
-    return {k: v for k, v in os.environ.items() if not k.startswith("HSYNC_")}
+    """Environment minus every ``HSYNC_*``/service-manager variable (isolation contract)."""
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("HSYNC_") and key not in _SERVICE_MANAGER_VARS
+    }
 
 
 def run_cli(args: Sequence[str], timeout: float = 30.0) -> subprocess.CompletedProcess[str]:

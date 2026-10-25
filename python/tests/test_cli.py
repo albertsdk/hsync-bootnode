@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import errno
 import os
 import re
+import signal
 import tempfile
 from pathlib import Path
 
@@ -12,10 +14,12 @@ import pytest
 from typer.testing import CliRunner
 
 from hsync_bootnode.cli import (
+    _install_shutdown_handlers,
     _load_keys,
     _near_expiry_reason,
     _remove_ready_file,
     _resolve_identity,
+    _watchdog_loop,
     _write_ready_file,
     app,
     default_identity_path,
@@ -601,6 +605,74 @@ def test_packaged_unit_matches_the_source_unit() -> None:
         "StateDirectory=hsync-bootnode" in packaged
     )
     assert (_IDENTITY_FLAG in source) == (_IDENTITY_FLAG in packaged)
+
+
+# Directives every packaged unit carries: readiness/watchdog, restart bounds,
+# stop semantics and resource caps. The deb and the source unit must agree, so
+# both files are checked against the same list.
+_REQUIRED_UNIT_DIRECTIVES = (
+    "Type=notify",
+    "NotifyAccess=main",
+    "WatchdogSec=30",
+    "Restart=on-failure",
+    "RestartSec=5s",
+    "StartLimitIntervalSec=60",
+    "StartLimitBurst=5",
+    "TimeoutStopSec=15",
+    "KillSignal=SIGTERM",
+    "MemoryMax=512M",
+    "TasksMax=256",
+    "LimitNOFILE=8192",
+)
+
+
+@pytest.mark.parametrize("unit", [_PACKAGED_UNIT, _SOURCE_UNIT], ids=["deb", "source"])
+def test_unit_is_a_supervised_notify_service(unit: Path) -> None:
+    """Readiness, watchdog, restart bounds and resource caps are explicit."""
+    text = unit.read_text(encoding="utf-8")
+    for directive in _REQUIRED_UNIT_DIRECTIVES:
+        assert directive in text, f"{unit.name}: missing {directive}"
+
+
+@pytest.mark.parametrize("unit", [_PACKAGED_UNIT, _SOURCE_UNIT], ids=["deb", "source"])
+def test_unit_never_enables_the_peer_aware_debug_log(unit: Path) -> None:
+    """The journal is written to disk, so a unit must never run with --debug."""
+    for line in unit.read_text(encoding="utf-8").splitlines():
+        if line.startswith("ExecStart=") or line.startswith("Environment="):
+            assert "--debug" not in line, line
+            assert "HSYNC_BOOTNODE_DEBUG" not in line, line
+
+
+def test_sighup_is_ignored_and_stop_signals_are_handled() -> None:
+    """A hangup is not a stop request; SIGINT/SIGTERM take the graceful path."""
+    if not hasattr(signal, "SIGHUP"):
+        pytest.skip("SIGHUP unavailable on this platform")
+    watched = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
+    saved = {sig: signal.getsignal(sig) for sig in watched}
+    try:
+        _install_shutdown_handlers()
+        assert signal.getsignal(signal.SIGHUP) is signal.SIG_IGN
+        assert signal.getsignal(signal.SIGINT) is not signal.SIG_DFL
+        assert signal.getsignal(signal.SIGTERM) is not signal.SIG_DFL
+    finally:
+        for sig, handler in saved.items():
+            signal.signal(sig, handler)
+
+
+def test_watchdog_loop_feeds_the_service_manager(monkeypatch) -> None:
+    """The watchdog task pings at the armed interval (half of WatchdogSec=)."""
+    pings: list[str] = []
+    monkeypatch.setattr("hsync_bootnode.cli.notify_watchdog", lambda: pings.append("ping") or True)
+
+    async def _run() -> None:
+        task = asyncio.create_task(_watchdog_loop(0.01))
+        await asyncio.sleep(0.2)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(_run())
+    assert len(pings) >= 2
 
 
 def _combined(result) -> str:

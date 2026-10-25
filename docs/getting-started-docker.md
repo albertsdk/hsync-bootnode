@@ -95,6 +95,10 @@ docker compose ps
 docker compose logs | grep -i fingerprint
 ```
 
+`docker compose ps` also reports the container's health, which is the node's own
+readiness file: `healthy` means a QUIC/UDP listener is bound, not merely that the
+container is up.
+
 ## Manage and update
 
 ```bash

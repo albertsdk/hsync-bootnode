@@ -322,7 +322,12 @@ async def test_parser_abuse_is_bounded(bootnode_factory, bucket, rng) -> None:
         b'{"protocol_version":"boot/1","type":"query","bucket":"bb-x","limit":1e999}\n',
         (
             json.dumps(
-                {"protocol_version": "boot/1", "type": "register", "cid": "\uff21" * 21, "bucket": bucket}
+                {
+                    "protocol_version": "boot/1",
+                    "type": "register",
+                    "cid": "\uff21" * 21,
+                    "bucket": bucket,
+                }
             )
             + "\n"
         ).encode("utf-8"),  # fullwidth unicode CID
@@ -491,8 +496,8 @@ def test_group_keys_never_on_argv_or_in_env(bootnode_factory, bucket, group_key)
     # When: the running process argv and environment are inspected
     assert handle.node_pid is not None, "readiness did not report the application pid"
     argv = Path(f"/proc/{handle.node_pid}/cmdline").read_bytes().replace(b"\x00", b" ").decode()
-    environ = Path(f"/proc/{handle.node_pid}/environ").read_bytes().decode(
-        "utf-8", errors="replace"
+    environ = (
+        Path(f"/proc/{handle.node_pid}/environ").read_bytes().decode("utf-8", errors="replace")
     )
     # Then: the secret appears in neither
     assert group_key not in argv

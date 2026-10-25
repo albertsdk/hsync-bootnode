@@ -1,4 +1,4 @@
-.TH HSYNC-BOOTNODE 1 "2026-10-25" "hsync-bootnode 1.0.8" "User Commands"
+.TH HSYNC-BOOTNODE 1 "2026-10-26" "hsync-bootnode 1.0.8" "User Commands"
 .SH NAME
 hsync-bootnode \- HSYNC P2P bootstrap node (no-log, zero-knowledge)
 .SH SYNOPSIS
@@ -158,7 +158,9 @@ ISO\-8601 timestamp and the emitting process identity
 (\fBts - hsync-bootnode[pid] debug:\fP), so the stream can be ordered and
 correlated with the logs of the other HSYNC components. Stderr only \- it is
 never written to disk, and without it no peer data leaves memory. The always\-on
-warn/error channel does not depend on this flag. Env form:
+warn/error channel does not depend on this flag. Use it for the session you are
+diagnosing, never as a deployment setting: the peer identity it carries would be
+persisted by the log the service manager keeps. Env form:
 .BR HSYNC_BOOTNODE_DEBUG=1 .
 .TP
 .BI run\ \fR--ready-file\fP= PATH
@@ -172,8 +174,9 @@ form:
 .TP
 .B run\ \fR--no-rate-limit\fP
 Disable rate limiting entirely (benchmark/test seam; never in production \[em] it
-removes the anti\-abuse limits the spec requires). Env form:
-.BR HSYNC_BOOTNODE_NO_RATE_LIMIT=1 .
+removes the anti\-abuse limits the spec requires). Command\-line only: there is
+deliberately no environment\-variable form, so a stale unit or environment file
+cannot silently unthrottle a public node.
 .TP
 .B \fR--version\fP
 Print the version and the protocol, then exit.
@@ -206,12 +209,6 @@ to enable the full operation log on stderr (peer identity included); same as
 .B HSYNC_BOOTNODE_READY_FILE
 Path for the readiness PID file; same as
 .BR "run \-\-ready\-file" .
-.TP
-.B HSYNC_BOOTNODE_NO_RATE_LIMIT
-Set to
-.I 1
-to disable rate limiting (benchmark/test seam); same as
-.BR "run \-\-no\-rate\-limit" .
 .TP
 .B HSYNC_BOOTNODE_PRIVATE
 Set to
@@ -255,7 +252,15 @@ for the identity file, whose default location is
 .TP
 .I /usr/lib/systemd/system/hsync-bootnode.service
 Hardened systemd unit (DynamicUser, ProtectSystem=strict, SystemCallFilter,
-StandardOutput=null). Installed but not enabled: opt in with
+StandardOutput=null, MemoryMax). It is a
+.B Type=notify
+unit with a watchdog: it is considered started only once every QUIC/UDP
+listener is bound, and it is restarted when the event loop stops answering,
+not merely when the process dies. A graceful stop exits 0, so only a failure
+triggers a restart. Its
+.B MemoryMax=
+is also the capacity ceiling: the node sizes its in\-memory limits from the memory
+its cgroup allows. Installed but not enabled: opt in with
 .B systemctl enable --now hsync-bootnode.service.
 .TP
 .I /usr/bin/hsync-bootnode
@@ -329,6 +334,18 @@ Readiness\-file failure: the path given to
 .B run\ \fR--ready-file\fP
 cannot be created (missing parent directory, no permission, or a stale file the
 exclusive\-create seam refuses to overwrite).
+.SH SIGNALS
+.TP
+.B SIGINT, SIGTERM
+Graceful shutdown: the transports are closed, the readiness file (if any) is
+removed and the process exits with status 0. This is the stop path of every
+service manager and of Ctrl+C.
+.TP
+.B SIGHUP
+Ignored. A hangup \- a terminal closed, an SSH session dropped, a PTY torn down
+\- is not a stop request, so an unattended node keeps serving. There is no
+configuration reload path: the identity and the group keys are read at startup,
+so a replacement takes a restart.
 .SH SEE ALSO
 .BR systemctl (1),
 .BR systemd.exec (5)

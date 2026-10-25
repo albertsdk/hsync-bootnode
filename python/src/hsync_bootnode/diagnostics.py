@@ -15,6 +15,10 @@ peer-free **by construction**.
 channel when enabled. It **includes peer identity** (CID, bucket, IP, port) and
 exists only on stderr: the process never writes it to disk.
 
+A stderr that disappears (the terminal that carried it was closed, a pipe whose
+reader died) disables both channels permanently instead of raising: diagnostics
+are best-effort and must never take the node down.
+
 Line format (``timestamp - source[pid] level: message``) for both channels::
 
     2026-09-30T10:30:45.123Z - hsync-bootnode[1234] debug: register ack cid=… bucket=shared
@@ -63,6 +67,10 @@ _DEDUP_WINDOW_SECONDS = 60.0
 _DEDUP_MAX_KEYS = 64
 
 _enabled = False
+# Set once stderr is gone for good (closed terminal, dead pipe). Diagnostics are
+# best-effort: after that every emission is a no-op rather than an OSError inside
+# whichever task happened to log.
+_sink_failed = False
 # ``(event, rendered fields) -> (window start, suppressed count)``, plus the
 # insertion order used to keep the mapping bounded.
 _dedup: dict[tuple[str, str], tuple[float, int]] = {}
@@ -125,12 +133,24 @@ def _emit(level: str, body: str) -> None:
     """Write one ``timestamp - source[pid] level: body`` line to stderr.
 
     The single emission point for every channel, so the prefix is rendered once.
+    A write failure marks the sink dead for the rest of the process (see
+    :data:`_sink_failed`); it is never propagated to the caller.
     The pid is resolved per line — a fork without ``exec`` would otherwise keep
     logging the parent's pid (the same reason loguru renders
     ``record["process"].id`` per record).
     """
-    sys.stderr.write(f"{utc_now_iso()} - {_LOG_IDENTITY}[{os.getpid()}] {level}: {body}\n")
-    sys.stderr.flush()
+    global _sink_failed
+    if _sink_failed:
+        return
+    stream = sys.stderr
+    if stream is None:
+        _sink_failed = True
+        return
+    try:
+        stream.write(f"{utc_now_iso()} - {_LOG_IDENTITY}[{os.getpid()}] {level}: {body}\n")
+        stream.flush()
+    except (OSError, ValueError):
+        _sink_failed = True
 
 
 def _dedup_suppressed(key: tuple[str, str]) -> int | None:

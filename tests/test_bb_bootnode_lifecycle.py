@@ -12,6 +12,7 @@ import contextlib
 import re
 import signal
 import socket
+import time
 
 import pytest
 from harness import query_frame, register_frame, run_cli
@@ -21,6 +22,22 @@ _LINE_RE = re.compile(
     r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z"
     r" - hsync-bootnode\[\d+\] (debug|warn|error): .+"
 )
+
+
+def _collect_notifications(
+    sock: socket.socket, wanted: set[str], timeout: float = 10.0
+) -> set[str]:
+    """Read sd_notify datagrams until every payload in *wanted* has arrived."""
+    seen: set[str] = set()
+    deadline = time.monotonic() + timeout
+    while not wanted <= seen and time.monotonic() < deadline:
+        try:
+            seen.add(sock.recv(4096).decode("utf-8"))
+        except TimeoutError:
+            continue
+    return seen
+
+
 _DEBUG_LINE_RE = re.compile(
     r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z"
     r" - hsync-bootnode\[\d+\] debug: .+"
@@ -297,3 +314,52 @@ def test_invalid_ttl_fails_fast() -> None:
         result = run_cli(["run", "--ttl", bad])
         # Then: both fail fast with exit 2
         assert result.returncode == 2
+
+
+@pytest.mark.asyncio
+async def test_sighup_does_not_stop_the_node(bootnode_factory, bucket, rng) -> None:
+    """A hung-up terminal is not a stop request: the node keeps serving boot/1."""
+    from harness import BootClient, random_cid
+
+    if not hasattr(signal, "SIGHUP"):
+        pytest.skip("SIGHUP unavailable on this platform")
+
+    # Given: a running node
+    handle = bootnode_factory()
+    # When: SIGHUP is delivered (terminal closed, SSH session dropped)
+    handle.proc.send_signal(signal.SIGHUP)
+    await asyncio.sleep(0.2)
+    # Then: it is still alive and answers a register
+    assert handle.proc.poll() is None
+    async with BootClient(handle.port) as client:
+        ack = await client.exchange(register_frame(random_cid(rng), bucket))
+    assert ack["type"] == "ack"
+
+
+@pytest.mark.asyncio
+async def test_sd_notify_reports_ready_watchdog_and_stopping(bootnode_factory, tmp_path) -> None:
+    """The service-manager contract: READY on bind, WATCHDOG while serving, STOPPING on stop."""
+    if not hasattr(socket, "AF_UNIX"):
+        pytest.skip("AF_UNIX unavailable on this platform")
+
+    # Given: a notification socket standing in for the service manager, with the
+    #        watchdog armed at 200 ms (the node feeds it every 100 ms)
+    notify_path = tmp_path / "notify.sock"
+    notify = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    notify.bind(str(notify_path))
+    notify.settimeout(0.2)
+    try:
+        handle = bootnode_factory(
+            env_extra={"NOTIFY_SOCKET": str(notify_path), "WATCHDOG_USEC": "200000"}
+        )
+        # Then: readiness and the watchdog feed reach the manager
+        seen = _collect_notifications(notify, {"READY=1", "WATCHDOG=1"})
+        assert {"READY=1", "WATCHDOG=1"} <= seen, seen
+
+        # When: the service manager stops the node
+        handle.proc.terminate()
+        await asyncio.to_thread(handle.proc.wait, 15)
+        # Then: the teardown is announced, so no restart is inferred from the drop
+        assert "STOPPING=1" in _collect_notifications(notify, {"STOPPING=1"}, timeout=5.0)
+    finally:
+        notify.close()

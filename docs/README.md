@@ -65,11 +65,16 @@ Pass the node to the client's `p2p` command (`hsync p2p <host>`; with the group
 key for a private node). The client side is covered by the
 [client p2p bootnode guide](https://github.com/albertsdk/hsync-client/blob/main/docs/p2p-bootnode.md).
 
-### 4. Reference & internals
+### 4. Operate it
+
+Supervision, readiness and watchdog, log bounds, identity backup and rotation,
+upgrades and the external reachability probe: [operations.md](operations.md).
+
+### 5. Reference & internals
 
 | Document | Content |
 |---|---|
-| [usage.md](usage.md) | CLI reference, protected buckets and private nodes, keys provisioning, privacy/security model, OS services |
-| [faq.md](faq.md) | Operational FAQ: certificate pin/TOFU mismatches, stable identity, client-side recovery |
-| [usage.md](usage.md#deploying-as-a-service) | Deploying as a service (systemd/launchd/Windows) |
+| [usage.md](usage.md) | CLI reference, protected buckets and private nodes, keys provisioning, privacy/security model, signals and the OS service units |
+| [operations.md](operations.md) | Operating how-to: systemd lifecycle, watchdog, log bounds, identity backup/rotation, upgrades, reachability probe |
+| [faq.md](faq.md) | Operational FAQ: certificate pin/TOFU mismatches, stable identity, client-side recovery, signals |
 | `protocol-spec/boot-1.md` | Wire protocol specification |

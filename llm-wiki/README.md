@@ -22,7 +22,7 @@ Internal, agent-optimized knowledge base for the `hsync-bootnode` project
 | [`run.sh`](../run.sh) | Uniform "run after clone" entry point (checks the sibling `hsync-common`, creates the in-project venv, runs the node) — mirrors `hsync-server/run.sh` |
 | Install/distribution | `install.sh` (Docker Compose installer), `compose.yaml`, `Dockerfile` + `Dockerfile.dockerignore` + `python/entrypoint.sh` (image, group keys as fd 3), `docker.sh` (source image build/lifecycle) |
 | OS service units | `packaging/{systemd,launchd,windows}/` |
-| End-user documentation | `docs/` (`getting-started.md` chooser + one `getting-started-<method>.md` per install method; `usage.md`/`faq.md` are the reference) |
+| End-user documentation | `docs/` (`getting-started.md` chooser + one `getting-started-<method>.md` per install method; `usage.md`/`faq.md` are the reference; `operations.md` is the operating how-to: supervision, watchdog, log bounds, identity backup/rotation, upgrades, reachability probe) |
 
 ## Hard invariants (read before touching any module)
 

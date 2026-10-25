@@ -103,8 +103,11 @@ HSYNC_BB_BOOTNODE=1 HSYNC_BOOTNODE_BIN=/path/to/hsync-bootnode \
   onefile-packaged binary (PyInstaller, the `.deb` payload) runs the app in a
   child process, so the two PIDs differ.
 - Each test starts a fresh subprocess with an environment scrubbed of every
-  `HSYNC_*` variable and tears it down in a `finally`/fixture, so there are no
-  orphan processes or cross-test contamination. The process runs in its own
+  `HSYNC_*` variable **and** of the service-manager variables (`NOTIFY_SOCKET`,
+  `WATCHDOG_USEC`, `WATCHDOG_PID`), so a suite running inside a systemd session
+  cannot make the spawned node announce readiness to the runner's own manager.
+  Teardown happens in a `finally`/fixture, so there are no orphan processes or
+  cross-test contamination. The process runs in its own
   session (`start_new_session`) and is terminated as a whole group (SIGTERM,
   then SIGKILL), so a onefile launcher's application child is reaped too; a
   readiness failure also terminates the spawned process before re-raising.

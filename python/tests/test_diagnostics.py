@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from collections import deque
 from datetime import datetime
 
@@ -54,6 +55,7 @@ def _restore_sink(monkeypatch):
     configure_debug(False)
     monkeypatch.setattr(diagnostics, "_dedup", {})
     monkeypatch.setattr(diagnostics, "_dedup_order", deque())
+    monkeypatch.setattr(diagnostics, "_sink_failed", False)
     yield
     configure_debug(False)
 
@@ -228,3 +230,45 @@ class TestHandlerOperationLog:
         err = capsys.readouterr().err
         assert "drop invalid-frame" in err
         assert "peer=1.2.3.4:1" in err
+
+
+class _DeadStderr:
+    """A stderr that fails every write, like a PTY whose terminal is gone."""
+
+    def __init__(self) -> None:
+        self.writes: list[str] = []
+
+    def write(self, data: str) -> int:
+        self.writes.append(data)
+        raise OSError(5, "Input/output error")
+
+    def flush(self) -> None:
+        raise OSError(5, "Input/output error")
+
+
+class TestDeadSink:
+    """A stderr that disappears must retire the sink, never raise into the node."""
+
+    def test_a_closed_stderr_never_raises(self, monkeypatch):
+        # Given: stderr fails every write (the terminal was closed)
+        monkeypatch.setattr(sys, "stderr", _DeadStderr())
+        # When/Then: both channels swallow the failure and retire the sink
+        warn_event("listener port unavailable", port=443)
+        error_event("session failed")
+        assert diagnostics._sink_failed is True
+
+    def test_a_retired_sink_is_silent(self, monkeypatch):
+        dead = _DeadStderr()
+        monkeypatch.setattr(sys, "stderr", dead)
+        configure_debug(True)
+        warn_event("session failed")
+        # When: further diagnostics are emitted
+        debug_event("register", cid=CID)
+        error_event("session failed")
+        # Then: only the first line was attempted
+        assert len(dead.writes) == 1
+
+    def test_a_missing_stderr_retires_the_sink(self, monkeypatch):
+        monkeypatch.setattr(sys, "stderr", None)
+        warn_event("session failed")
+        assert diagnostics._sink_failed is True

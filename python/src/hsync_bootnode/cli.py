@@ -45,6 +45,12 @@ from hsync_bootnode.server import (
     rotation_hint,
     start_servers,
 )
+from hsync_bootnode.systemd import (
+    notify_ready,
+    notify_stopping,
+    notify_watchdog,
+    watchdog_interval,
+)
 from hsync_bootnode.upnp import UpnpManager
 
 app = typer.Typer(
@@ -620,7 +626,15 @@ async def _async_main(
             ready_written = True
             debug_log(f"readiness written to {ready_file}")
 
+        # Readiness for the service manager: the same condition as the ready
+        # file (every requested listener bound), so a Type=notify start waits
+        # for the socket the clients actually use.
+        notify_ready()
+
         tasks.append(asyncio.create_task(_prune_loop(handler, connection_guard)))
+        watchdog = watchdog_interval()
+        if watchdog is not None:
+            tasks.append(asyncio.create_task(_watchdog_loop(watchdog)))
         if upnp:
             # One mapping per bound port: every offered door must also be mapped
             # on the router, not just the first. A client may reach the node on
@@ -633,6 +647,9 @@ async def _async_main(
 
         await asyncio.Future()  # serve forever
     finally:
+        # The stop is intentional and bounded: announce it before the transports
+        # close, so the service manager does not treat the drop as a failure.
+        notify_stopping()
         for server in servers:
             server.close()
         for task in tasks:
@@ -691,6 +708,18 @@ async def _prune_loop(
             # Same cadence as the routing sweep: forget closed-and-quiet IPs so
             # the guard map cannot grow without bound under IP churn.
             connection_guard.evict_stale()
+
+
+async def _watchdog_loop(interval: float) -> None:
+    """Feed the service manager's watchdog at half the armed interval.
+
+    ``interval`` is already half of ``WatchdogSec=`` (:func:`watchdog_interval`),
+    so one missed ping still leaves a full period for the next one to arrive. A
+    wedged event loop stops pinging and the service manager restarts the node.
+    """
+    while True:
+        await asyncio.sleep(interval)
+        notify_watchdog()
 
 
 def _load_keys(keys_fd: int | None, keys_file: str | None = None) -> dict[str, SecretStr]:
@@ -856,7 +885,7 @@ def _install_uvloop() -> None:
 
 
 def _install_shutdown_handlers() -> None:
-    """Make SIGINT and SIGTERM run the same graceful teardown.
+    """Make SIGINT and SIGTERM run the same graceful teardown; ignore SIGHUP.
 
     SIGINT is installed explicitly because a non-interactive parent (nohup, a
     background job, some service managers) can start us with SIGINT ignored; the
@@ -864,6 +893,11 @@ def _install_shutdown_handlers() -> None:
     ``finally`` in ``_async_main`` (transport close + ready-file removal).
     Raising ``KeyboardInterrupt`` from either handler reuses the graceful path
     caught around ``asyncio.run``.
+
+    SIGHUP is ignored: a hangup (a terminal closed, an SSH session dropped, a PTY
+    torn down) is not a stop request, so the node keeps serving instead of dying
+    silently on the default disposition. Stopping stays on SIGTERM/SIGINT, which
+    every service manager and Ctrl+C use.
     """
 
     def _handle(_signum: int, _frame: object) -> None:
@@ -871,6 +905,8 @@ def _install_shutdown_handlers() -> None:
 
     signal.signal(signal.SIGINT, _handle)
     signal.signal(signal.SIGTERM, _handle)
+    if hasattr(signal, "SIGHUP"):
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
 
 
 if __name__ == "__main__":

@@ -61,6 +61,34 @@ lives in the client's trust store (`bootnode_known_hosts.json` under
 **Never** accept a fingerprint you cannot explain: a mismatch is precisely what
 the pin protects against.
 
+## Why does closing the terminal or dropping the SSH session not stop the node?
+
+**By design.** `SIGHUP` is ignored: a hangup (the terminal was closed, the SSH
+session dropped, the PTY was torn down) is not a stop request, so an unattended
+node keeps serving `boot/1` instead of dying silently with the session. Stopping
+stays on `SIGINT`/`SIGTERM` — what `systemctl stop` and Ctrl+C send — which
+closes the transports, removes the readiness file and exits 0 (see
+[Signals](usage.md#signals-and-service-manager)).
+
+If the node did disappear, the cause is not the session:
+
+```bash
+systemctl status hsync-bootnode.service
+sudo journalctl -u hsync-bootnode.service
+uptime -s
+sudo journalctl -k | grep -i "killed process"
+```
+
+A climbing restart counter means a crash (the journal holds the always-on
+`warn`/`error` line behind it); a recent boot means the host restarted; a
+`killed process` line means the OOM killer. A reboot or an OOM kill leaves no
+traceback in the node's own log — and an enabled unit is brought back by
+systemd, which is exactly why the node belongs under it.
+
+A foreground run has no restart policy, no resource limits, no filesystem
+sandbox and no journal, so it is not a deployment: see
+[operations.md](operations.md#start-it-and-keep-it-running).
+
 ## What is `--public-host` for?
 
 `hsync p2p` authenticates the node by **certificate fingerprint** (prompt, TOFU

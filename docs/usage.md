@@ -452,12 +452,14 @@ it is enabled the node says so once on the always-on channel
 (`warn: peer data logging enabled`).
 
 Neither channel ever writes to disk from the process: without `--debug` no peer
-data leaves memory, and `--debug` is for a specific troubleshooting session, not
-a permanent setting. The shipped units store stderr in the operating system's log
-— bound its retention there (`/etc/systemd/journald.conf`: `SystemMaxUse=`,
-`MaxRetentionSec=`, then `journalctl -u hsync-bootnode`; the launchd log file
-`/var/log/hsync-bootnode.err`, which you rotate with `newsyslog` or trim
-periodically; the WinSW log).
+data leaves memory. `--debug` is a **troubleshooting switch, never a deployment
+setting**: the lines it emits carry peer identity (CID, bucket, IP, port), and
+the shipped units hand stderr to a log the operating system persists (the
+journal, a file — `/var/log/hsync-bootnode.err` on macOS, the WinSW log on
+Windows), which would turn that into an on-disk record of peer activity. Enable
+it for the session you are diagnosing, then remove it; bound the log retention
+there too (`/etc/systemd/journald.conf`: `SystemMaxUse=`, `MaxRetentionSec=`,
+then `journalctl -u hsync-bootnode`; rotate the launchd file with `newsyslog`).
 
 The `--ready-file`/`HSYNC_BOOTNODE_READY_FILE` seam writes the process PID to
 the given path once the QUIC listener is bound (and removes it on graceful
@@ -469,7 +471,37 @@ entrypoint removes a stale readiness file before `exec`, so a container killed
 ungracefully (`docker kill` timeout → SIGKILL) never leaves the next start
 wedged.
 
+## Signals and service manager
+
+The process contract is small: the node is meant to be owned by a supervisor.
+
+| Signal | Effect |
+|---|---|
+| `SIGINT`, `SIGTERM` | Graceful stop: the QUIC transports close, the readiness file is removed, the process exits 0. |
+| `SIGHUP` | Ignored: a hangup (a terminal closed, an SSH session dropped, a PTY torn down) is not a stop request, so an unattended node keeps serving. |
+
+There is no reload path: the TLS identity and the group keys are read at
+startup, so a replacement takes a restart (see
+[TLS identity & pinning](#tls-identity--pinning)).
+
+Under systemd the unit is `Type=notify` with a watchdog, so the node announces
+its state to the service manager:
+
+| Notification | When |
+|---|---|
+| `READY=1` | Every requested listener is bound — the same condition as `--ready-file`, not the mere existence of the process. |
+| `WATCHDOG=1` | Continuously, at half the unit's `WatchdogSec=`: a wedged event loop stops answering and the unit is restarted. |
+| `STOPPING=1` | At the start of the teardown, so an intentional stop is not mistaken for a failure. |
+
+Outside systemd (a container without systemd, launchd, Windows, a foreground
+run) the notifications are inert no-ops and `--ready-file` stays the readiness
+seam for whatever orchestrates the node.
+
 ## Deploying as a service
+
+[operations.md](operations.md) is the operating guide: supervision, readiness
+and watchdog, log bounds, identity backup and rotation, upgrades and the external
+reachability probe. This section is the unit reference it builds on.
 
 The [Debian package](getting-started-deb.md) installs and manages the systemd
 unit automatically; the [Docker](getting-started-docker.md) and

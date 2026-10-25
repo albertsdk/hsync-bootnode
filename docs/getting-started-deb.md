@@ -131,10 +131,11 @@ sudo journalctl -u hsync-bootnode.service -f
 sudo systemctl restart hsync-bootnode.service
 ```
 
-To update, install the newer `.deb` over the existing one (`sudo dpkg -i …`); the
-group keys are preserved. See
-[Operations](https://github.com/albertsdk/hsync-server/blob/main/docs/operations.md)
-for the ecosystem-wide upgrade guidance.
+To update, install the newer `.deb` over the existing one (`sudo dpkg -i …`):
+the group keys and the TLS identity are preserved, and an enabled service is
+restarted for you. [operations.md](operations.md) covers the full procedure,
+plus the watchdog, the log bounds, identity backup and rotation, and the
+external reachability probe.
 
 ## Next
 

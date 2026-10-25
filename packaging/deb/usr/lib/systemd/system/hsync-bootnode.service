@@ -3,9 +3,31 @@ Description=HSYNC P2P bootstrap node (boot/1, QUIC/UDP 443, no-log)
 Documentation=https://github.com/albertsdk/hsync-bootnode
 After=network-online.target
 Wants=network-online.target
+# A crash loop must surface as a failed unit (and an alert) instead of an endless
+# restart storm.
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
-Type=simple
+# Type=notify: the unit is active only once the node has bound the QUIC/UDP
+# listener and announced READY=1 (sd_notify), not as soon as it forks. The
+# watchdog restarts a node whose event loop stops making progress — a wedged
+# process still holds the socket, so liveness cannot be inferred from the PID.
+Type=notify
+NotifyAccess=main
+WatchdogSec=30
+# A SIGTERM stop is graceful and exits 0, so only a failure restarts the unit;
+# the stop timeout bounds the transport teardown before SIGKILL is escalated.
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15
+KillSignal=SIGTERM
+# Host protection: the node sizes its own table/connection limits from RAM and
+# CPU, and the cgroup is what keeps a runaway instance from taking the host down
+# (an OOM inside the cgroup restarts the service, not the machine).
+MemoryMax=512M
+TasksMax=256
+LimitNOFILE=8192
 # No-log node: a dynamic system user (no /home; the only persisted state is the
 # TLS identity), strict filesystem sandbox, allowed to bind the QUIC/UDP port
 # 443. StateDirectory= makes /var/lib/hsync-bootnode writable for the identity
@@ -26,14 +48,13 @@ ExecStart=/bin/sh -c 'if [ -r "$CREDENTIALS_DIRECTORY/group-keys" ]; then exec /
 # without any key. The ExecStart above already passes --keys-fd whenever the
 # credential exists, so uncommenting this line closes an otherwise open node.
 #Environment=HSYNC_BOOTNODE_PRIVATE=1
-Restart=on-failure
-RestartSec=5s
 # No-log: the bootstrap node writes nothing to disk (verified by the
 # read-only-filesystem test suite). The banner on stdout is discarded; stderr
 # goes to the journal so the always-on operational channel (warn/error) is
 # visible with `journalctl -u hsync-bootnode`. That channel is peer-free by
-# construction (see the "Diagnostics" section of usage.md); peer identity is
-# emitted by --debug only. Bound the journal if you need a retention policy:
+# construction (see the "Diagnostics" section of usage.md). Never add --debug
+# here: it emits peer identity and the journal is written to disk. Bound the
+# journal if you need a retention policy:
 #   /etc/systemd/journald.conf: SystemMaxUse=…, MaxRetentionSec=…
 StandardOutput=null
 StandardError=journal

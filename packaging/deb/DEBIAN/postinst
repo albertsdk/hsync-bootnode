@@ -3,9 +3,11 @@
 # postinst — Debian maintainer script, runs after package installation.
 #
 # Creates the directory holding the (out-of-package) group-keys file, reloads
-# the systemd manager and prints the opt-in enable command. The service is
-# NEVER enabled or started automatically: the administrator must opt in
-# explicitly with ``systemctl enable --now hsync-bootnode.service``.
+# the systemd manager and prints the opt-in enable command. A fresh install NEVER
+# enables or starts the service: the administrator opts in explicitly with
+# ``systemctl enable --now hsync-bootnode.service``. An upgrade only brings back
+# a service the administrator had already enabled (prerm stopped it so the
+# executable could be replaced).
 # The process itself runs as a DynamicUser (no system user is created).
 
 set -e
@@ -31,8 +33,14 @@ if [ ! -e "${KEYS_FILE}" ]; then
 fi
 
 # -- systemd ------------------------------------------------------------------
+# daemon-reload picks up the replaced unit; the start is the upgrade path only
+# (an enabled unit was stopped by prerm). is-enabled is false on a fresh install,
+# so a first install still starts nothing.
 if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload 2>/dev/null || true
+    if systemctl is-enabled --quiet hsync-bootnode.service 2>/dev/null; then
+        systemctl start hsync-bootnode.service 2>/dev/null || true
+    fi
 fi
 
 echo "hsync-bootnode installed (service NOT enabled — no-log node, opt-in start)."

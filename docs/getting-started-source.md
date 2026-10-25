@@ -108,7 +108,10 @@ sudo systemctl enable --now hsync-bootnode.service
 
 Edit the executable path inside the unit to your venv or binary. macOS
 (`packaging/launchd/`) and Windows (`packaging/windows/`) units are provided
-too; see [usage.md → Deploying as a service](usage.md#deploying-as-a-service).
+too; the unit reference is
+[usage.md → Deploying as a service](usage.md#deploying-as-a-service) and the
+operating procedures (watchdog, log bounds, identity backup and rotation,
+upgrades, reachability probe) are in [operations.md](operations.md).
 
 ## Update
 

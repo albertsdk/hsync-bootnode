@@ -255,9 +255,9 @@ async def test_group_over_max_length_is_dropped(bootnode_factory, bucket, rng) -
     handle = bootnode_factory()
     async with BootClient(handle.port) as client:
         # When: a 129-char group is sent (max_length is 128)
-        raw = (
-            json.dumps(register_frame(random_cid(rng), bucket, group="g" * 129)) + "\n"
-        ).encode("utf-8")
+        raw = (json.dumps(register_frame(random_cid(rng), bucket, group="g" * 129)) + "\n").encode(
+            "utf-8"
+        )
         result = await client.send_raw(raw)
         # Then: the frame is dropped silently
         assert result.outcome is RawOutcome.SILENT

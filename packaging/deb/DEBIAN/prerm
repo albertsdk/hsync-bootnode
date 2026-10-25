@@ -2,16 +2,32 @@
 #
 # prerm — Debian maintainer script, runs before package removal/upgrade.
 #
-# Stops the running hsync-bootnode service so the binary can be safely
-# replaced or removed.
+# Stops the running node so its executable can be replaced or removed. An
+# upgrade never touches the enablement state: whether the node starts at boot is
+# the administrator's decision, and silently un-asking it during `dpkg -i` would
+# leave an enabled node down after every upgrade. Only a removal deletes the
+# enablement symlink.
 
 set -e
 
+SERVICE="hsync-bootnode.service"
+
 if command -v systemctl >/dev/null 2>&1; then
-    if systemctl is-active --quiet hsync-bootnode.service 2>/dev/null; then
-        systemctl stop hsync-bootnode.service 2>/dev/null || true
-    fi
-    systemctl disable hsync-bootnode.service 2>/dev/null || true
+    case "$1" in
+        remove|deconfigure)
+            if systemctl is-active --quiet "${SERVICE}" 2>/dev/null; then
+                systemctl stop "${SERVICE}" 2>/dev/null || true
+            fi
+            systemctl disable "${SERVICE}" 2>/dev/null || true
+            ;;
+        upgrade|failed-upgrade)
+            if systemctl is-active --quiet "${SERVICE}" 2>/dev/null; then
+                systemctl stop "${SERVICE}" 2>/dev/null || true
+            fi
+            ;;
+        *)
+            ;;
+    esac
 fi
 
 exit 0

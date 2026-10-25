@@ -56,7 +56,11 @@ repeat that flag here. Give clients both the old and the new fingerprint
 (`--bootnode-fingerprint` is repeatable) during the rotation window; the node
 itself keeps only the new certificate. Rotation keeps every existing DNS/IP
 SAN, so hostname-validating clients keep working; pass `--public-host` only for
-new names. Rotation is also the
+new names. The command re-reads and verifies the pair it wrote, then **you must
+restart the node** to serve it (the identity is loaded at startup) and verify
+the certificate clients actually see with
+`hsync trust bootnode fingerprint <host>` — `identity show` prints the persisted
+file, not the served certificate. Rotation is also the
 recovery for a corrupted identity whose key no longer matches its certificate;
 a file that is not a valid PEM identity at all is refused (delete it and restart
 to regenerate).
@@ -408,8 +412,11 @@ the first contact at the prompt, an unattended client pins it with
 see the client `p2p-bootnode` documentation. To rotate the key
 (e.g. after a suspected compromise), regenerate it, give clients both the old
 and the new fingerprint (`--bootnode-fingerprint` is repeatable) during the
-rotation window, then move them to the new one. Rotation does **not** copy the
-old SANs: repeat every `--public-host` the node was created with.
+rotation window, then move them to the new one. Rotation **preserves every
+existing DNS/IP SAN** and adds any new `--public-host`; pass `--public-host`
+only for names the node did not already carry. **Restart the node** to serve the
+new identity (it is loaded at startup), then verify the served certificate from
+a client with `hsync trust bootnode fingerprint <host>`.
 
 ```bash
 hsync-bootnode identity rotate --identity /var/lib/hsync-bootnode/identity.pem \

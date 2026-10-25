@@ -448,15 +448,23 @@ def identity_rotate(
     ),
 ) -> None:
     """Regenerate the persisted identity and print the new fingerprint."""
+    path = identity or default_identity_path()
     try:
-        node = rotate_identity(
-            identity or default_identity_path(), host="0.0.0.0", public_hosts=public_host
-        )
+        rotate_identity(path, host="0.0.0.0", public_hosts=public_host)
+        # Re-read what was written: load_identity() refuses a key that does not
+        # match its certificate, so a half-completed rotation fails here instead
+        # of being announced with a fingerprint the node cannot serve.
+        node = load_identity(path)
     except IdentityError as exc:
         _config_error(exc)
     typer.echo(f"sha256:{node.fingerprint}")
     typer.echo(
         "distribute this fingerprint to clients; accept the old pin during the rotation window",
+        err=True,
+    )
+    typer.echo(
+        "restart the bootnode to serve the new identity, then verify it from a client "
+        "with 'hsync trust bootnode fingerprint <host>'",
         err=True,
     )
 

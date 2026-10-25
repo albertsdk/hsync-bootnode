@@ -108,6 +108,22 @@ def test_rotate_does_not_duplicate_preserved_sans(tmp_path):
     assert values.count("hsync-bootnode") == 1
 
 
+def test_rotate_writes_a_consistent_pair_that_reloads(tmp_path):
+    """A rotated identity re-reads cleanly and reports its persisted fingerprint.
+
+    ``load_identity`` refuses a key that does not match its certificate, so this
+    pins the property the CLI relies on: it only announces a fingerprint the
+    node can actually serve.
+    """
+    path = tmp_path / "identity.pem"
+    load_or_create_identity(path, host="127.0.0.1")
+
+    rotated = rotate_identity(path, host="127.0.0.1")
+    reloaded = load_identity(path)
+
+    assert reloaded.fingerprint == rotated.fingerprint
+
+
 def test_rotation_hint_names_the_identity_path():
     assert rotation_hint("/tmp/my identity.pem") == (
         'hsync-bootnode identity rotate --identity "/tmp/my identity.pem"'

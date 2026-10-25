@@ -98,9 +98,13 @@ hsync-bootnode identity rotate --identity /var/lib/hsync-bootnode/identity.pem \
 Rotation prints the new fingerprint; during the change window clients can be
 given both fingerprints (the client accepts up to two pins), then moved to the
 new one. Rotation keeps the existing DNS/IP SANs and adds any `--public-host`
-you pass. A node started with `--ephemeral` is the exception: it
-keeps the identity in memory, so *any* restart changes the fingerprint — do not
-pin such a node.
+you pass. The command re-reads and verifies the pair it wrote; **restart the
+node** to serve the new identity (it is loaded at startup), then verify the
+certificate a client actually sees with
+`hsync trust bootnode fingerprint <host>` (`identity show` reads the persisted
+file, not the served certificate). A node started with `--ephemeral` is the
+exception: it keeps the identity in memory, so *any* restart changes the
+fingerprint — do not pin such a node.
 
 ## I ran a *public* node — do clients need a fingerprint?
 

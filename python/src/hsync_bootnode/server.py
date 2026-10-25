@@ -155,20 +155,12 @@ def _identity_pem(identity: NodeIdentity) -> bytes:
 def _key_matches_certificate(certificate: x509.Certificate, private_key: PrivateKey) -> bool:
     """True when ``private_key`` is the key behind ``certificate``'s public key.
 
-    Both public keys are serialized to DER SubjectPublicKeyInfo and compared, so
-    an identity file that pairs a certificate with a different key (a corrupted
-    or hand-edited file, or a half-completed rotation) is refused at load with a
-    clear error instead of failing later inside the TLS handshake.
+    Delegates to the shared service-identity model
+    (:func:`hsync_common.ssl_utils.public_keys_match`) so the bootnode, the sync
+    server and their rotation commands cannot drift on how a mismatched pair is
+    detected.
     """
-    cert_public = certificate.public_key().public_bytes(
-        serialization.Encoding.DER,
-        serialization.PublicFormat.SubjectPublicKeyInfo,
-    )
-    file_public = private_key.public_key().public_bytes(
-        serialization.Encoding.DER,
-        serialization.PublicFormat.SubjectPublicKeyInfo,
-    )
-    return cert_public == file_public
+    return ssl_utils.public_keys_match(certificate, private_key)
 
 
 def make_identity(host: str = "0.0.0.0", *, public_hosts: Sequence[str] = ()) -> NodeIdentity:

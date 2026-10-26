@@ -5,6 +5,8 @@ STUN-echo and frame rejection. Pure logic — no sockets involved.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 from unittest.mock import patch
 
 import pytest
@@ -43,6 +45,22 @@ def make_handler(
         private=private,
         group_keys={bucket: SecretStr(key) for bucket, key in keys.items()},
     )
+
+
+@contextmanager
+def frozen_clock(now: float) -> Iterator[None]:
+    """Pin the routing **and** handler clocks for TTL assertions.
+
+    ``PeerRecord.expires_at`` and the on-request prune both read
+    ``time.monotonic()``, so a test that compares against an absolute ``now``
+    must freeze both: against the real clock the outcome would depend on the
+    host uptime (a freshly booted runner sees ``now`` in the future).
+    """
+    with (
+        patch("hsync_bootnode.routing.time.monotonic", return_value=now),
+        patch("hsync_bootnode.handler.time.monotonic", return_value=now),
+    ):
+        yield
 
 
 def register_frame(
@@ -692,20 +710,12 @@ def test_protected_bucket_foreign_leave_without_a_token_is_ignored() -> None:
 
 def test_refresh_renews_ttl_but_never_creates() -> None:
     h = make_handler()
-    # Freeze both clocks (routing + handler) so the TTL math and the periodic
-    # prune inside handle() are deterministic regardless of the host clock.
-    with (
-        patch("hsync_bootnode.routing.time.monotonic", return_value=1_000.0),
-        patch("hsync_bootnode.handler.time.monotonic", return_value=1_000.0),
-    ):
+    with frozen_clock(1_000.0):
         send(h, register_frame(), peer_ip="10.0.0.1", peer_port=1)
     before = h.routing.get(CID, "shared", "home", now=1_000.0)
     assert before is not None
     before_expires = before.expires_at  # live record: touch() mutates it too
-    with (
-        patch("hsync_bootnode.routing.time.monotonic", return_value=1_030.0),
-        patch("hsync_bootnode.handler.time.monotonic", return_value=1_030.0),
-    ):
+    with frozen_clock(1_030.0):
         refreshed = decoded(
             send(
                 h,
@@ -731,10 +741,7 @@ def test_refresh_renews_ttl_but_never_creates() -> None:
     assert after.expires_at == 1_090.0  # refresh: t + TTL from the new time
     # unknown CID: refresh must NOT create a record. Stays under the frozen clock
     # so the periodic prune (now=1030) does not expire the live CID (t+TTL 1090).
-    with (
-        patch("hsync_bootnode.routing.time.monotonic", return_value=1_030.0),
-        patch("hsync_bootnode.handler.time.monotonic", return_value=1_030.0),
-    ):
+    with frozen_clock(1_030.0):
         dropped = send(
             h,
             {
@@ -1127,21 +1134,20 @@ def test_routing_table_cap_applies_backpressure() -> None:
 def test_an_expired_record_is_absent_from_the_table_view() -> None:
     """A record past its TTL reads as absent, not as a stale claim."""
     h = make_handler()
-    send(h, register_frame(), peer_ip="10.0.0.1", peer_port=1)
+    with frozen_clock(1_000.0):
+        send(h, register_frame(), peer_ip="10.0.0.1", peer_port=1)
     record = h.routing.get(CID, "shared", "home", now=1_000.0)
     assert record is not None
+    assert record.expires_at == 1_060.0  # t + DEFAULT_TTL
     assert h.routing.get(CID, "shared", "home", now=record.expires_at + 1.0) is None
 
 
 def test_a_ttl_lapse_frees_the_key_for_another_source() -> None:
     """Ownership follows liveness: an expired record blocks nobody."""
     h = make_handler()
-    with patch("hsync_bootnode.routing.time.monotonic", return_value=1_000.0):
+    with frozen_clock(1_000.0):
         send(h, register_frame(host="10.0.0.1"), peer_ip="10.0.0.1", peer_port=1)
-    with (
-        patch("hsync_bootnode.routing.time.monotonic", return_value=1_070.0),
-        patch("hsync_bootnode.handler.time.monotonic", return_value=1_070.0),
-    ):
+    with frozen_clock(1_070.0):
         ack = decoded(
             send(h, register_frame(host="203.0.113.9"), peer_ip="203.0.113.9", peer_port=2)
         )
@@ -1153,12 +1159,9 @@ def test_a_ttl_lapse_frees_the_key_for_another_source() -> None:
 def test_refresh_never_revives_an_expired_record() -> None:
     """A refresh past the TTL is dropped: the client falls back to a register."""
     h = make_handler()
-    with patch("hsync_bootnode.routing.time.monotonic", return_value=1_000.0):
+    with frozen_clock(1_000.0):
         send(h, register_frame(), peer_ip="10.0.0.1", peer_port=1)
-    with (
-        patch("hsync_bootnode.routing.time.monotonic", return_value=1_070.0),
-        patch("hsync_bootnode.handler.time.monotonic", return_value=1_070.0),
-    ):
+    with frozen_clock(1_070.0):
         assert send(h, refresh_frame(), peer_ip="10.0.0.1", peer_port=1) is None
 
 

@@ -12,8 +12,11 @@ host directory, and starts the node with Docker Compose.
   signature before starting it (pass `--no-verify` to install without it)
 - A UDP port reachable from the Internet (443 by default)
 
-Docker must already be installed. The installer never invokes `sudo`, opens
-firewall ports, or changes router settings.
+Docker must already be installed. If it is missing — or the Compose v2 plugin is
+missing, or the daemon is not running — the installer stops before writing anything
+and prints the install commands for your platform together with the official Docker
+docs. It never installs Docker and never invokes `sudo`; it only prints the commands
+for you to run. See the [FAQ](faq.md#why-does-the-installer-stop-with-required-command-not-found-docker).
 
 ### Docker installed as a snap
 

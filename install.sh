@@ -67,7 +67,252 @@ fail() {
 }
 
 require_command() {
-    command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
+    local name="$1"
+    if ! command -v "${name}" >/dev/null 2>&1; then
+        print_tool_hint "${name}"
+        fail "required command not found: ${name}"
+    fi
+}
+
+# --- Prerequisite guidance --------------------------------------------------
+#
+# The installer never installs Docker and never runs sudo: when a prerequisite
+# is missing it prints the commands and URLs for the user to run themselves, then
+# fails with the same error line as before. Guidance is best-effort per platform
+# and always backed by the canonical Docker documentation links.
+
+# linux | macos | windows-shell | unknown
+detect_platform_os() {
+    case "$(uname -s)" in
+        Linux) printf 'linux' ;;
+        Darwin) printf 'macos' ;;
+        MINGW* | MSYS* | CYGWIN* | Windows_NT) printf 'windows-shell' ;;
+        *) printf 'unknown' ;;
+    esac
+}
+
+# debian | rhel | arch | suse | alpine | unknown
+detect_linux_family() {
+    local id="" id_like="" key value
+    if [[ -r /etc/os-release ]]; then
+        while IFS='=' read -r key value; do
+            value="${value%\"}"
+            value="${value#\"}"
+            case "${key}" in
+                ID) id="${value}" ;;
+                ID_LIKE) id_like="${value}" ;;
+            esac
+        done < /etc/os-release
+    fi
+    case " ${id} ${id_like} " in
+        *" debian "* | *" ubuntu "*) printf 'debian' ;;
+        *" rhel "* | *" fedora "* | *" centos "*) printf 'rhel' ;;
+        *" arch "*) printf 'arch' ;;
+        *" suse "* | *" opensuse "*) printf 'suse' ;;
+        *" alpine "*) printf 'alpine' ;;
+        *) printf 'unknown' ;;
+    esac
+}
+
+print_docker_docs() {
+    printf '  Docs: https://docs.docker.com/engine/install/\n' >&2
+    printf '        https://docs.docker.com/compose/install/\n' >&2
+    printf '        https://docs.docker.com/engine/install/linux-postinstall/\n' >&2
+}
+
+print_docker_install_hint() {
+    local os family
+    os="$(detect_platform_os)"
+    family="$(detect_linux_family)"
+    printf '\nDocker Engine (or Docker Desktop) with the Compose v2 plugin is required.\n' >&2
+    case "${os}" in
+        macos)
+            printf 'Install Docker Desktop:\n' >&2
+            printf '  brew install --cask docker\n' >&2
+            printf 'Or a lightweight alternative:\n' >&2
+            printf '  brew install colima docker docker-compose && colima start\n' >&2
+            ;;
+        windows-shell)
+            printf 'Use Docker Desktop for Windows with the WSL2 backend and enable WSL\n' >&2
+            printf 'integration for this distribution:\n' >&2
+            printf '  https://docs.docker.com/desktop/install/windows-install/\n' >&2
+            ;;
+        linux)
+            case "${family}" in
+                debian)
+                    printf 'Example (Debian/Ubuntu):\n' >&2
+                    printf '  sudo apt-get update && sudo apt-get install -y docker.io docker-compose-v2\n' >&2
+                    printf 'Or the official convenience script: https://get.docker.com\n' >&2
+                    ;;
+                rhel)
+                    printf 'Example (Fedora/RHEL/CentOS/Rocky):\n' >&2
+                    printf '  sudo dnf install -y docker docker-compose-plugin\n' >&2
+                    ;;
+                arch)
+                    printf 'Example (Arch):\n' >&2
+                    printf '  sudo pacman -S --needed docker docker-compose\n' >&2
+                    ;;
+                suse)
+                    printf 'Example (openSUSE):\n' >&2
+                    printf '  sudo zypper install docker docker-compose\n' >&2
+                    ;;
+                alpine)
+                    printf 'Example (Alpine):\n' >&2
+                    printf '  sudo apk add docker docker-cli-compose\n' >&2
+                    printf '  sudo rc-update add docker && sudo service docker start\n' >&2
+                    ;;
+                *)
+                    printf 'Install Docker Engine and the Compose v2 plugin with your package manager.\n' >&2
+                    ;;
+            esac
+            if [[ "${family}" != "alpine" ]]; then
+                printf 'Then enable the service and add your user to the docker group:\n' >&2
+                printf '  sudo systemctl enable --now docker\n' >&2
+                printf '  sudo usermod -aG docker "$USER"   # then log out and back in\n' >&2
+            fi
+            ;;
+        *)
+            printf 'Install Docker Engine and the Compose v2 plugin for your system.\n' >&2
+            ;;
+    esac
+    print_docker_docs
+    case "${os}" in
+        linux)
+            printf 'Note: the snap-packaged Docker works, but its confined home interface\n' >&2
+            printf 'cannot read hidden paths under $HOME; Docker Engine is recommended.\n' >&2
+            printf 'Prefer not to run Docker? Install the Debian package or run from source:\n' >&2
+            printf '  docs/getting-started-deb.md  docs/getting-started-source.md\n' >&2
+            ;;
+        macos)
+            printf 'Prefer not to run Docker? Run from source:\n' >&2
+            printf '  docs/getting-started-source.md\n' >&2
+            ;;
+    esac
+}
+
+print_docker_compose_hint() {
+    local os family
+    os="$(detect_platform_os)"
+    family="$(detect_linux_family)"
+    printf '\nThe Docker Compose v2 plugin is required (the "docker compose" command).\n' >&2
+    if command -v docker-compose >/dev/null 2>&1; then
+        printf 'Found Docker Compose v1 (docker-compose); this installer needs the v2 plugin.\n' >&2
+    fi
+    case "${os}" in
+        macos)
+            printf 'Docker Desktop bundles Compose v2; with the CLI only:\n' >&2
+            printf '  brew install docker-compose\n' >&2
+            ;;
+        windows-shell)
+            printf 'Docker Desktop for Windows bundles Compose v2.\n' >&2
+            ;;
+        linux)
+            case "${family}" in
+                debian) printf '  sudo apt-get install -y docker-compose-v2   # or docker-compose-plugin from the Docker repo\n' >&2 ;;
+                rhel) printf '  sudo dnf install -y docker-compose-plugin\n' >&2 ;;
+                arch) printf '  sudo pacman -S --needed docker-compose\n' >&2 ;;
+                suse) printf '  sudo zypper install docker-compose\n' >&2 ;;
+                alpine) printf '  sudo apk add docker-cli-compose\n' >&2 ;;
+                *) printf '  Install the Compose v2 plugin with your package manager.\n' >&2 ;;
+            esac
+            ;;
+        *)
+            printf 'Install the Compose v2 plugin for your system.\n' >&2
+            ;;
+    esac
+    printf '  Docs: https://docs.docker.com/compose/install/\n' >&2
+}
+
+print_docker_daemon_hint() {
+    local info_output="$1"
+    local os
+    os="$(detect_platform_os)"
+    if [[ "${info_output}" == *"permission denied"* ]]; then
+        printf '\nThe Docker daemon is reachable, but this user cannot access it.\n' >&2
+        printf 'Add your user to the docker group, then log out and back in (or run newgrp docker):\n' >&2
+        printf '  sudo usermod -aG docker "$USER"\n' >&2
+        printf '  Docs: https://docs.docker.com/engine/install/linux-postinstall/\n' >&2
+        return 0
+    fi
+    printf '\nCannot reach the Docker daemon (is it running?).\n' >&2
+    case "${os}" in
+        macos) printf 'Start Docker Desktop and wait until it reports "running".\n' >&2 ;;
+        windows-shell) printf 'Start Docker Desktop for Windows.\n' >&2 ;;
+        *) printf '  sudo systemctl enable --now docker   # or: sudo service docker start\n' >&2 ;;
+    esac
+    if [[ -n "${DOCKER_HOST:-}" ]]; then
+        printf 'DOCKER_HOST=%s is set: verify it points to a reachable daemon.\n' "${DOCKER_HOST}" >&2
+    fi
+    printf 'To only generate the files without starting the container, re-run with --no-start.\n' >&2
+}
+
+print_package_hint() {
+    local os family pkg
+    os="$(detect_platform_os)"
+    family="$(detect_linux_family)"
+    pkg="$1"
+    case "${os}" in
+        macos) printf '  brew install %s\n' "${pkg}" >&2 ;;
+        linux)
+            case "${family}" in
+                debian) printf '  sudo apt-get install -y %s\n' "${pkg}" >&2 ;;
+                rhel) printf '  sudo dnf install -y %s\n' "${pkg}" >&2 ;;
+                arch) printf '  sudo pacman -S --needed %s\n' "${pkg}" >&2 ;;
+                suse) printf '  sudo zypper install %s\n' "${pkg}" >&2 ;;
+                alpine) printf '  sudo apk add %s\n' "${pkg}" >&2 ;;
+                *) printf '  Install %s with your package manager.\n' "${pkg}" >&2 ;;
+            esac
+            ;;
+        *) printf '  Install %s with your package manager.\n' "${pkg}" >&2 ;;
+    esac
+}
+
+print_tool_hint() {
+    local tool="$1"
+    case "${tool}" in
+        cosign)
+            printf '\ncosign verifies the container image signature (or pass --no-verify to skip it).\n' >&2
+            printf '  Docs: https://docs.sigstore.dev/cosign/system_config/installation/\n' >&2
+            ;;
+        openssl | tar | curl)
+            printf '\nInstall "%s".\n' "${tool}" >&2
+            print_package_hint "${tool}"
+            ;;
+        *)
+            printf '\nInstall "%s" with your package manager.\n' "${tool}" >&2
+            ;;
+    esac
+}
+
+require_docker_command() {
+    if command -v docker >/dev/null 2>&1; then
+        return 0
+    fi
+    print_docker_install_hint
+    fail "required command not found: docker"
+}
+
+require_docker_compose_v2() {
+    if docker compose version >/dev/null 2>&1; then
+        return 0
+    fi
+    print_docker_compose_hint
+    fail "Docker Compose v2 is required"
+}
+
+require_docker_daemon() {
+    local info_output
+    local -a docker_info=(docker info)
+    if command -v timeout >/dev/null 2>&1; then
+        docker_info=(timeout 10 docker info)
+    elif command -v gtimeout >/dev/null 2>&1; then
+        docker_info=(gtimeout 10 docker info)
+    fi
+    if info_output="$("${docker_info[@]}" 2>&1)"; then
+        return 0
+    fi
+    print_docker_daemon_hint "${info_output}"
+    fail "cannot connect to the Docker daemon"
 }
 
 validate_version() {
@@ -412,8 +657,12 @@ or install Docker Engine from https://docs.docker.com/engine/install/ instead of
         exit 0
     fi
 
-    require_command docker
-    docker compose version >/dev/null 2>&1 || fail "Docker Compose v2 is required"
+    require_docker_command
+    require_docker_compose_v2
+    # The daemon is only needed to start containers; --no-start stays client-side.
+    if [[ "${START_SERVER}" == true ]]; then
+        require_docker_daemon
+    fi
 
     umask 077
     install_files

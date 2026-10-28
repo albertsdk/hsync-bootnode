@@ -267,9 +267,10 @@ The monorepo `p2p`/bootnode migration is **complete**:
   bootnode's opt-in **debug operation log** (decision 25); client `hsync p2p`
   with both discovery plans and its black-box suite; desktop mode, wd-os5
   packaging; the peer data-plane protocol is `p2p/1`.
-- **Open**: **Android client for `boot/1`** (deferred; the QUIC stack is decided:
-  `quiche` via JNI). Resumption document: the Android project's
-  [`quic-jni`](https://github.com/albertsdk/hsync-android/blob/main/llm-wiki/modules/quic-jni.md)
+- **Open**: **Android client for `boot/1`** (deferred; the QUIC stack decision is
+  still open — the Android project removed its Rust/`quiche` JNI groundwork).
+  Current state: the Android project's
+  [`protocol-mirror`](https://github.com/albertsdk/hsync-android/blob/main/llm-wiki/modules/protocol-mirror.md)
   page.
 - **Done / open (quality)**: a deterministic stdlib **fuzz harness** covers the
   decoder and the SSDP/token validators in CI (decision #47, `python/fuzz/

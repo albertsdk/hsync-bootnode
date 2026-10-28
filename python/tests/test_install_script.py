@@ -40,8 +40,19 @@ def _restricted_bin(tmp_path: Path) -> Path:
     bin_dir = tmp_path / "restricted-bin"
     bin_dir.mkdir(exist_ok=True)
     for name in (
-        "bash", "sh", "uname", "readlink", "id", "date", "sleep",
-        "mkdir", "chmod", "mv", "rm", "cp", "grep",
+        "bash",
+        "sh",
+        "uname",
+        "readlink",
+        "id",
+        "date",
+        "sleep",
+        "mkdir",
+        "chmod",
+        "mv",
+        "rm",
+        "cp",
+        "grep",
     ):
         real = shutil.which(name)
         if real is not None:
@@ -76,15 +87,11 @@ def _run(
         docker = docker_dir / "docker"
         docker_body = "#!/usr/bin/env bash\n"
         if compose_version_fails:
-            docker_body += (
-                'if [[ "$1" == "compose" && "$2" == "version" ]]; then\n'
-                "  exit 1\n"
-                "fi\n"
-            )
+            docker_body += 'if [[ "$1" == "compose" && "$2" == "version" ]]; then\n  exit 1\nfi\n'
         if daemon_message is not None:
             docker_body += (
                 'if [[ "$1" == "info" ]]; then\n'
-                '  printf \'%s\\n\' "${HSYNC_FAKE_DOCKER_INFO:-}" >&2\n'
+                "  printf '%s\\n' \"${HSYNC_FAKE_DOCKER_INFO:-}\" >&2\n"
                 "  exit 1\n"
                 "fi\n"
             )

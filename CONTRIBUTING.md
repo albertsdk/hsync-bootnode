@@ -6,7 +6,7 @@ for P2P topologies.
 
 `hsync-bootnode` is a **multi-language** repository: one wire protocol with
 several implementations of the *same* contract. `python/` is the reference (v1);
-`rust/` is the planned v2. The specification and the fixtures are shared, so a
+`c/` is the planned v2. The specification and the fixtures are shared, so a
 wire change must keep every implementation byte-identical.
 
 ## Prerequisites
@@ -17,9 +17,11 @@ wire change must keep every implementation byte-identical.
 - [Poetry](https://python-poetry.org/) to create the in-project virtualenv
   (`.venv/` is local and **not** committed)
 
-### Rust implementation (`rust/`, planned v2)
+### C implementation (`c/`, planned v2)
 
-- Stable Rust **1.98+** (`rustup` stable channel) — the crate does not exist yet
+- A C11 compiler (`clang` or `gcc`) with `make` — the sources do not exist yet
+- `clang-format` / `clang-tidy` for the style checks, `clang` (or `gcc`) with
+  `-fsanitize=address,undefined` for the test build
 
 ### Packaging and black-box tests
 
@@ -35,7 +37,7 @@ wire change must keep every implementation byte-identical.
 | `tests/` | **Language-neutral** black-box suite (spawns the binary, wire-only) |
 | `bench/` | Benchmarks; L2/L3 are language-neutral, L1/L4/L5 are Python-internal |
 | `python/` | v1 implementation — Python + aioquic, with its white-box unit suite |
-| `rust/` | v2 implementation — Rust + quinn (planned, not started) |
+| `c/` | v2 implementation — C11 (planned, not started) |
 | `packaging/` | OS service units (systemd / launchd / WinSW) and the `.deb` payload |
 | `compile.sh` | Root build entry point (`native`/`rpi`/`deb`/`deb-all`, `-l/--language`) |
 | `llm-wiki/` | Internal agent knowledge base |
@@ -67,7 +69,7 @@ cd hsync-bootnode && ./compile.sh -t deb-all              # amd64, arm64, armhf 
 cd hsync-bootnode && ./compile.sh -l python -t deb
 ```
 
-`-l/--language` defaults to `python` and rejects `rust` until that port exists;
+`-l/--language` defaults to `python` and rejects `c` until that port exists;
 `-v/--version` overrides the version read from `python/pyproject.toml`.
 
 ## Code Style
@@ -94,17 +96,22 @@ with the root `ruff.toml`:
 cd hsync-bootnode && python/.venv/bin/python -m ruff check tests bench
 ```
 
-### Rust (once `rust/` lands)
+### C (once `c/` lands)
 
 ```bash
-cd hsync-bootnode/rust && cargo fmt --check
-cd hsync-bootnode/rust && cargo clippy --all-targets -- -D warnings
+cd hsync-bootnode/c && clang-format --dry-run --Werror src/*.c include/*.h
+cd hsync-bootnode/c && clang-tidy src/*.c -- -std=c11 -Iinclude
+cd hsync-bootnode/c && make test        # sanitizer build: -fsanitize=address,undefined
 ```
 
-`unwrap()`, `expect()` and `panic!()` are not allowed in production code, and
-`unsafe` is not allowed by default. A component that decodes untrusted input must
-ship `cargo fuzz` targets; a change that needs `unsafe` must document its
-invariants and be covered by `cargo miri test`.
+Every build is `-std=c11 -Wall -Wextra -Wpedantic -Werror` and must compile
+without warnings. Undefined behaviour is a defect, not an acceptable outcome:
+bounds are checked before every array/index access, allocations are checked,
+`strcpy`/`sprintf`/`gets` are prohibited in favour of the size-bounded variants,
+and each allocation has a single, explicit owner. A component that decodes
+untrusted bytes must ship a libFuzzer target (`clang -fsanitize=fuzzer`) and a
+memory-safety run of the suite under ASan/UBSan (valgrind where ASan is not
+available).
 
 ## Tests
 
@@ -126,7 +133,7 @@ pass unchanged against another implementation.
 ```bash
 cd hsync-bootnode && HSYNC_BB_BOOTNODE=1 python/.venv/bin/python -m pytest -q tests/
 
-# run the same suite against the future Rust binary
+# run the same suite against the future C binary
 cd hsync-bootnode && HSYNC_BB_BOOTNODE=1 HSYNC_BOOTNODE_BIN=/path/to/binary \
     python/.venv/bin/python -m pytest -q tests/
 ```
@@ -147,7 +154,7 @@ cd hsync-bootnode && python/.venv/bin/python bench/bench_quic.py --connections 5
 
 L2/L3 drive the binary through the wire protocol only (path via
 `HSYNC_BOOTNODE_BIN`, default the Python build), so they run unchanged against the
-Rust port. See [`bench/README.md`](bench/README.md) for the full tier table and
+C port. See [`bench/README.md`](bench/README.md) for the full tier table and
 the measurement methodology.
 
 > From the workspace root, `make lint` (both ruff surfaces), `make test-python`

@@ -10,11 +10,6 @@ venv/
 dist/
 build/
 
-# Rust
-target/
-Cargo.lock
-*.rs.bk
-
 # C
 *.o
 *.a

@@ -2,7 +2,7 @@
 
 Language-neutral functional tests for the `boot/1` bootstrap node. They are
 **independent of the implementation language**: the same suite will
-validate the future `rust/` port unchanged.
+validate the future `c/` port unchanged.
 
 ## Contract
 

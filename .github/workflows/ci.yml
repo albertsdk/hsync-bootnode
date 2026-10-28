@@ -7,7 +7,7 @@
 #   * python/tests — white-box unit tests of the reference implementation;
 #   * tests/       — the language-neutral black-box suite, which spawns the node
 #                    executable and drives only the public CLI + boot/1 wire, so
-#                    it keeps passing against any future implementation (rust/).
+#                    it keeps passing against any future implementation (c/).
 name: CI
 
 on:
@@ -92,7 +92,7 @@ jobs:
         run: python/.venv/bin/python -m ruff check tests bench
 
       # Language-neutral contract suite: spawns the console script and observes
-      # only the public CLI + boot/1 wire, so it stays valid for the rust/ port.
+      # only the public CLI + boot/1 wire, so it stays valid for the c/ port.
       - name: Black-box suite (tests/)
         working-directory: hsync-bootnode
         run: HSYNC_BB_BOOTNODE=1 python/.venv/bin/python -m pytest -q tests/

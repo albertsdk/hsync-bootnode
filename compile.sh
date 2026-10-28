@@ -10,7 +10,7 @@
 # scripts build binaries only.
 #
 #   python → python/compile.sh   (native/onedir; implemented)
-#   rust   → planned v2 port of the same boot/1 protocol (not yet available)
+#   c      → planned v2 port of the same boot/1 protocol (not yet available)
 #
 # Usage:
 #   ./compile.sh [options]
@@ -33,7 +33,7 @@
 #   -l, --language LANG     Implementation language of the executable
 #                           (default: python). Values:
 #                               python    current bootnode (implemented)
-#                               rust      planned v2 port — not yet available
+#                               c         planned v2 port — not yet available
 #                           Also settable via the DEB_LANGUAGE environment
 #                           variable (the CLI flag takes precedence).
 #   -v, --version VERSION   Override the version used for artifacts (default:
@@ -202,7 +202,7 @@ ${BOLD}Options:${RESET}
     -t, --target TARGET      Build target (default: native)
                              Supported: native, rpi, deb, deb-all, rpm, rpm-all
     -l, --language LANGUAGE  Implementation language of the executable
-                             (default: python). Supported: python, rust
+                             (default: python). Supported: python, c
     -v, --version VERSION    Override the artifact version (default: the
                              selected language's project file; python reads
                              python/pyproject.toml). Also settable via
@@ -217,8 +217,8 @@ ${BOLD}Examples:${RESET}
     ./compile.sh -t rpm                               # .rpm for the host arch
     ./compile.sh -t rpm-all                           # x86_64 + aarch64
     ./compile.sh -l python -t deb                     # explicit language
-    DEB_LANGUAGE=rust ./compile.sh -t deb             # rejected until the
-                                                      # Rust port exists
+    DEB_LANGUAGE=c ./compile.sh -t deb                # rejected until the
+                                                      # C port exists
 
 ${BOLD}Output:${RESET}
     native:   ${OUTPUT_DIR}/${APP_NAME}
@@ -297,19 +297,19 @@ _arch_to_rpm() {
 }
 
 # Fail fast if the selected implementation language has no packaging path yet.
-# When the Rust port lands, extend this function and the dispatchers
+# When the C port lands, extend this function and the dispatchers
 # (_build_native / _build_onedir / _container_native_cmd / _container_build_cmd).
 validate_language() {
     case "${DEB_LANGUAGE}" in
         python) ;;  # implemented today
-        rust)
-            log_error "language 'rust' is not yet available (planned v2 port)."
+        c)
+            log_error "language 'c' is not yet available (planned v2 port)."
             log_info "Use --language python (or unset DEB_LANGUAGE) for now."
             exit 1
             ;;
         *)
             log_error "unknown language: ${DEB_LANGUAGE}"
-            echo "Supported languages: python (rust is planned)"
+            echo "Supported languages: python (c is planned)"
             exit 1
             ;;
     esac

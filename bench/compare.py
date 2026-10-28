@@ -7,7 +7,7 @@ Every ``bench/bench_*.py`` script can dump its results as one JSON array via
 ``--json-out`` (``bench_handler.py``, ``bench_quic.py``, ``soak.py``). This tool
 pairs two such inputs (a file, or a directory of ``*.json`` merged) by operation
 name and reports the per-operation delta — the language-neutral way to quantify a
-regression or the Python→Rust port, on the same metrics the tiers emit.
+regression or the Python→C port, on the same metrics the tiers emit.
 
 Regression signal (robust to timer noise): an operation is flagged only when its
 **median** (``p50_ms``) grew by more than ``--threshold`` **and** its before-run
@@ -30,10 +30,10 @@ Usage:
     python/.venv/bin/python bench/bench_handler.py --count 2000 --json-out /tmp/h2.json
     python/.venv/bin/python bench/compare.py /tmp/h1.json /tmp/h2.json
 
-    # Python build vs a different implementation (Rust), same tier + count
-    HSYNC_BOOTNODE_BIN=/path/to/rust/binary \\
-        python/.venv/bin/python bench/bench_quic.py --json-out /tmp/rust.json
-    python/.venv/bin/python bench/compare.py /tmp/py.json /tmp/rust.json --threshold 1.15
+    # Python build vs a different implementation (C), same tier + count
+    HSYNC_BOOTNODE_BIN=/path/to/c/binary \\
+        python/.venv/bin/python bench/bench_quic.py --json-out /tmp/c.json
+    python/.venv/bin/python bench/compare.py /tmp/py.json /tmp/c.json --threshold 1.15
 """
 
 from __future__ import annotations

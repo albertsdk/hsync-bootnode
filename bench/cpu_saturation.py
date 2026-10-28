@@ -6,7 +6,7 @@ asyncio loop, so its CPU is measured as a fraction of ONE core (from
 with a rising number of concurrent query connections; at each level it reports
 the node CPU% next to the client-observed throughput and latency. The knee where
 CPU approaches ~100% while ops/s stops scaling is the vertical limit of the
-single process — the data that decides whether parallelism / a Rust port is
+single process — the data that decides whether parallelism / a C port is
 actually needed (see ``llm-wiki/decisions.md``).
 
 Loopback caveat: the client runs on the same host, so at high concurrency it

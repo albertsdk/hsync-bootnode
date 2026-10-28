@@ -2,7 +2,7 @@
 
 One QUIC/UDP listener, in-memory routing state, no logs; the only persisted
 artifact is the node's own TLS identity. The v1
-implementation is Python (aioquic); the Rust implementation planned in
+implementation is Python (aioquic); the C implementation planned in
 the repo root `README.md` will share the same wire protocol SSOT
 (`protocol-spec/boot-1.md`) and the same fixtures.
 
@@ -155,7 +155,7 @@ UDP :443
 | macOS | `packaging/launchd/it.hsync.bootnode.plist` | v1 |
 | Windows | `packaging/windows/hsync-bootnode-service.xml` (WinSW) | v1 |
 | Windows installer (x64) | `packaging/windows/hsync-bootnode.iss` (Inno Setup, built in CI) + `hsync-bootnode-service-frozen.xml`; per-machine, registers the WinSW service | v1 |
-| Linux `.deb` (amd64/arm64/armhf) | `../compile.sh -t deb`/`deb-all` (`-l/--language`, default `python`; `rust` rejected until that port exists) + `packaging/deb/` (control, maintainer scripts, deb unit, man page) | v1 |
+| Linux `.deb` (amd64/arm64/armhf) | `../compile.sh -t deb`/`deb-all` (`-l/--language`, default `python`; `c` rejected until that port exists) + `packaging/deb/` (control, maintainer scripts, deb unit, man page) | v1 |
 | Linux `.rpm` (x86_64/aarch64) | `../compile.sh -t rpm`/`rpm-all` + `packaging/rpm/` (`.spec`, Rocky Linux 9 builder); `python/compile.sh -t onedir` payload staged for `/usr/lib/hsync-bootnode` | v1 |
 | Raspberry Pi OS (armhf/arm64) | `../compile.sh -t rpi` (Docker + qemu, reuses `packaging/deb/Dockerfile.builder`) → `dist/rpi/<arch>/hsync-bootnode` | v1 |
 
@@ -205,7 +205,7 @@ UDP :443
   Dockerfile `ARG` only — no CLI flag selects an older base. The `.deb`'s
   `Depends: libc6` covers the launcher only, never the bundled Python.
   Operator-facing procedure: `docs/faq.md`.
-- `rust/` port plugs in by extending `validate_language()`, `_build_native()`,
+- `c/` port plugs in by extending `validate_language()`, `_build_native()`,
   `_build_onedir()`, `_container_native_cmd()` and `_container_build_cmd()` in
   `../compile.sh` (dispatch points, fail-fast contract) — never by adding
   packaging logic inside the per-language script.
@@ -246,7 +246,7 @@ seam (keyed on the ready file appearing with a PID, not on PID equality with the
 launcher — a onefile-packaged binary runs the app in a child process), and
 drives it **only** through the public CLI + `boot/1` wire protocol
 (QUIC/UDP, NDJSON, ALPN `hsync-boot/1`). It never imports
-`hsync_bootnode`. The same suite will validate the future `rust/`
+`hsync_bootnode`. The same suite will validate the future `c/`
 port unchanged. Benchmarks (`bench/`) follow the same rule for L2/L3
 (`bench_quic.py`, `soak.py` spawn the binary); L1 (`bench/bench_handler.py`) and
 the diagnostics (L4 `bench/profile_handshake.py` — handshake vs `aioquic`
@@ -277,7 +277,7 @@ The monorepo `p2p`/bootnode migration is **complete**:
   fuzz_boot.py`), and a **coverage-guided in-process driver** (decision #48,
   `python/fuzz/fuzz_guided.py` — arc feedback via `coverage.py`) evolves the
   corpus the same way AFL does, at Python-branch granularity. Still open:
-  Atheris (no Python 3.14 wheel) and `cargo fuzz` for the Rust port (hard
-  requirement there, nightly toolchain, `rust/` not started).
-- **Not started (v2)**: Rust (`quinn`) implementation — target toolchain stable
-  Rust 1.98+.
+  Atheris (no Python 3.14 wheel) and libFuzzer for the C port (hard
+  requirement there, clang toolchain, `c/` not started).
+- **Not started (v2)**: C implementation — target toolchain C11 (`clang` or
+  `gcc`) with `make`; the QUIC stack is chosen with the port.

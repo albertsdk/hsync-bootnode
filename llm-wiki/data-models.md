@@ -3,9 +3,9 @@
 The `boot/1` wire contract is defined once in `protocol-spec/boot-1.md` and mirrored
 by typed models in every implementation. The Python v1 models live in
 `python/src/hsync_bootnode/protocol.py` (pydantic v2, all with `extra="forbid"` so
-any unknown/targeted field makes the frame invalid — rigid schema). The future Rust crate
-mirrors the same frames with `struct`s/`enum`s and deny-unknown-fields serde
-attributes; do not fork the shapes here.
+any unknown/targeted field makes the frame invalid — rigid schema). The future C
+tree mirrors the same frames with `struct`s/`enum`s and an explicit
+unknown-field rejection; do not fork the shapes here.
 
 ## Common header
 

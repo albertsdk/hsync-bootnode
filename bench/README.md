@@ -13,7 +13,7 @@ Six tiers, split by language-dependence:
 
 L2/L3/L6-B launch the bootnode executable (`HSYNC_BOOTNODE_BIN`, default Python
 build) and drive it only through the `boot/1` wire protocol, so the same
-benchmark runs unchanged against the future `rust/` port. L1 (handler),
+benchmark runs unchanged against the future `c/` port. L1 (handler),
 L6-A and the L4/L5 diagnostics are Python-internal; L5's CPU sampling needs Linux
 `/proc` and reports `n/a` elsewhere.
 
@@ -60,7 +60,7 @@ HSYNC_BOOTNODE_BIN=/path/to/hsync-bootnode python/.venv/bin/python bench/bench_q
 (`p50_ms`) grows past `--threshold` while its before-run mean sat at/above the
 `--min-mean-ms` noise floor; it exits 1 on any flagged regression. Same metrics
 on every tier, so it is the language-neutral way to quantify a change or the
-Python→Rust port:
+Python→C port:
 
 ```bash
 python/.venv/bin/python bench/bench_handler.py --count 4000 --json-out /tmp/before.json

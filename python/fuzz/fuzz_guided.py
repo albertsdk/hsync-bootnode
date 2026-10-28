@@ -13,9 +13,9 @@ Why not Atheris/libFuzzer: the environment has no clang and Atheris publishes
 no Python 3.14 wheels, so an in-process ``coverage.py`` feedback loop is the
 only applicable coverage-guided engine for the Python v1 (it trades execution
 speed for portability; the CI burst stays tiny, long sessions are standalone).
-``cargo fuzz`` remains the hard requirement for the Rust port (repo rule for
-network-facing Rust code) — it needs its own nightly toolchain and the ``rust/``
-crate, which is not started.
+libFuzzer (``clang -fsanitize=fuzzer``) remains the hard requirement for the C
+port (repo rule for network-facing C code) — it needs its own clang toolchain and
+the ``c/`` tree, which is not started.
 
 The harness is deterministic for a given seed; ``coverage.py`` is an optional
 dev dependency (installed in the project virtualenv; add it permanently with

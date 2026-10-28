@@ -5,7 +5,7 @@
 # Builds the hsync-bootnode standalone executable from the Python sources
 # using PyInstaller. Binaries only: the Debian/Ubuntu .deb packaging lives in
 # the repository root (../compile.sh), which selects the implementation
-# language (python or rust) and assembles the package. A script placed
+# language (python or c) and assembles the package. A script placed
 # inside one implementation directory stays responsible for that language's
 # binary only.
 #

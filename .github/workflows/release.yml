@@ -9,7 +9,7 @@ name: Release
 #                          optionally create a draft Release).
 #
 # Only the Python v1 implementation is built (`-l python`, the default); the
-# rust/ port is wired into compile.sh once it exists. PyInstaller cannot
+# c/ port is wired into compile.sh once it exists. PyInstaller cannot
 # cross-compile, so native binaries are built on per-OS matrix runners; the
 # Linux-only .deb/.rpm packages are cross-built via Docker + qemu.
 on:
@@ -74,7 +74,7 @@ jobs:
         working-directory: hsync-bootnode
         run: python/.venv/bin/python -m ruff check tests bench
       # Contract suite: spawns the console script and observes only the public
-      # CLI + boot/1 wire, so it stays valid for the rust/ port.
+      # CLI + boot/1 wire, so it stays valid for the c/ port.
       - name: Black-box suite (tests/)
         working-directory: hsync-bootnode
         run: HSYNC_BB_BOOTNODE=1 python/.venv/bin/python -m pytest -q tests/

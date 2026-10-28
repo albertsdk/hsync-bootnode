@@ -18,8 +18,8 @@ Scope (deliberate): pure call paths only.
       ``derive_bucket_token`` on arbitrary text.
 
 A coverage-guided driver (``fuzz/fuzz_guided.py``, arc feedback through
-``coverage.py``) builds on the same generators and invariants; ``cargo fuzz``
-remains the hard requirement for the future Rust port. The generators here are
+``coverage.py``) builds on the same generators and invariants; libFuzzer
+(``clang -fsanitize=fuzzer``) remains the hard requirement for the future C port. The generators here are
 fully deterministic (``random.Random(seed)``) so findings are reproducible; the
 same targets run briefly inside ``tests/test_fuzz_harness.py``.
 

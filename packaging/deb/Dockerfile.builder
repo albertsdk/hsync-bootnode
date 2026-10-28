@@ -4,7 +4,7 @@
 #
 # Single-stage builder based on the official ``python:3.14.9-bookworm`` multi-arch
 # image (Debian 12, glibc 2.36, CPython 3.14.9 built ``--enable-shared``), plus
-# Poetry, the Rust toolchain and ``dpkg-dev``. It is ready to:
+# Poetry and ``dpkg-dev``. It is ready to:
 #   1. invoke PyInstaller on the project sources mounted at /repo
 #   2. assemble a .deb package with dpkg-deb
 #
@@ -37,7 +37,7 @@ FROM --platform=${TARGET_PLATFORM} ${BASE_IMAGE}
 ENV DEBIAN_FRONTEND=noninteractive \
     LC_ALL=C.UTF-8 \
     P2PG=C.UTF-8 \
-    PATH=/opt/rust/cargo/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     POETRY_VIRTUALENVS_IN_PROJECT=0 \
@@ -46,8 +46,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # PyInstaller tooling + .deb packaging + native-extension build dependencies.
 # ``cryptography`` 50 publishes a manylinux_2_31_armv7l wheel (and manylinux2014
-# x86_64/aarch64), so no source build is expected; the *-dev packages and the
-# Rust toolchain below remain a fallback for a future pin without a wheel.
+# x86_64/aarch64), so no source build is expected; the *-dev packages below remain
+# a fallback for a future pin without a wheel.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
@@ -60,40 +60,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         dpkg-dev \
         fakeroot \
     && rm -rf /var/lib/apt/lists/*
-
-# Rust toolchain — used only if a pinned dependency falls back to a source
-# build (``cryptography`` 50 ships an armv7l wheel, so normally nothing is
-# compiled). rustup is pinned to 1.29.1 and the toolchain to 1.84.0; rustup-init
-# is fetched for the target arch and its SHA256 verified, instead of piping the
-# remote https://sh.rustup.rs script into a shell.
-ARG TARGETARCH
-ARG TARGETVARIANT
-ENV RUSTUP_HOME=/opt/rust/rustup \
-    CARGO_HOME=/opt/rust/cargo
-RUN set -eux; \
-    case "${TARGETARCH}${TARGETVARIANT}" in \
-        amd64) rust_target=x86_64-unknown-linux-gnu;      rust_sha=dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71 ;; \
-        arm64) rust_target=aarch64-unknown-linux-gnu;     rust_sha=15f6e4ce9f583b929c996c91562bad6d4454f3281de858b02cdfdef615fac433 ;; \
-        armv7) rust_target=armv7-unknown-linux-gnueabihf; rust_sha=6f34abb0d553273ce08306ea3adb758d0171f21090cc5ad5426f474ded5504d1 ;; \
-        *) echo "unsupported TARGETARCH/TARGETVARIANT: ${TARGETARCH}/${TARGETVARIANT}" >&2; exit 1 ;; \
-    esac; \
-    for attempt in 1 2 3 4 5; do \
-        curl --proto '=https' --tlsv1.2 -fsSL --connect-timeout 30 \
-            --speed-limit 1024 --speed-time 60 \
-            -o /tmp/rustup-init \
-            "https://static.rust-lang.org/rustup/archive/1.29.1/${rust_target}/rustup-init" \
-            && break; \
-        echo "rustup-init download attempt ${attempt}/5 failed, retrying in 5s..." >&2; \
-        rm -f /tmp/rustup-init; \
-        sleep 5; \
-    done; \
-    test -s /tmp/rustup-init; \
-    echo "${rust_sha}  /tmp/rustup-init" | sha256sum -c -; \
-    chmod +x /tmp/rustup-init; \
-    /tmp/rustup-init -y --no-modify-path --profile minimal --default-toolchain 1.84.0; \
-    rm -f /tmp/rustup-init; \
-    rustc --version; \
-    cargo --version
 
 # Poetry — pinned to a known-good 2.x release for reproducibility. Version
 # >= 2.0 is mandatory: the project declares its metadata via the PEP 621

@@ -1,4 +1,4 @@
-# Project Rules & Coding Guidelines (hsync-bootnode — Python + Rust)
+# Project Rules & Coding Guidelines (hsync-bootnode — Python + C)
 
 This document defines the strict architectural, development, and code-reuse rules
 for the `hsync-bootnode` repository. You and any coding agent must strictly adhere to these
@@ -12,9 +12,9 @@ guidelines at all times.
 
 `hsync-bootnode` is a **multi-language repository**: one wire protocol
 (`boot/1`) with several implementations of the *same* contract
-(`python/` today, `rust/` next). This file mirrors the
+(`python/` today, `c/` next). This file mirrors the
 Python project guidelines used by the other HSYNC projects and adds the rules
-that apply to the Rust implementation.
+that apply to the C implementation.
 
 ---
 
@@ -27,7 +27,7 @@ that apply to the Rust implementation.
 | `tests/` | **Language-neutral** black-box suite (spawns the binary, wire-only) |
 | `bench/` | L1/L2/L3 benchmarks; L2/L3 are language-neutral |
 | `python/` | Python + aioquic implementation (v1) and its white-box unit suite |
-| `rust/` | Rust + quinn implementation (planned, v2) |
+| `c/` | C11 implementation of the same contract (planned, v2) |
 | `packaging/` | OS service units (`systemd`/`launchd`/`windows`) and the `.deb` payload |
 | `compile.sh` | Root build entry point (`native`/`rpi`/`deb`/`deb-all`, `-l/--language`) |
 | `llm-wiki/` | Internal agent knowledge base |
@@ -40,10 +40,10 @@ that apply to the Rust implementation.
   another repository.
 * Inspect what you are about to commit (`git -C hsync-bootnode status --short`
   and `git diff --cached`) and prefer explicit paths over `git add -A`.
-* **Never stage build outputs or secrets**: `dist/`, `build/`, `target/`,
-  `*.deb`, `*.o`/`*.a`/`*.so`, `*.env`, and any local `group-keys` file.
+* **Never stage build outputs or secrets**: `dist/`, `build/`, `*.deb`,
+  `*.o`/`*.a`/`*.so`, `*.env`, and any local `group-keys` file.
 * Each implementation is compiled by the build script inside **its own**
-  directory (`python/compile.sh`, and `rust/compile.sh` once the port lands);
+  directory (`python/compile.sh`, and `c/compile.sh` once the port lands);
   `compile.sh` at the root only *dispatches* and assembles artifacts
   (native/rpi/deb/deb-all).
 
@@ -57,7 +57,7 @@ The project maintains two distinct documentation environments. You must understa
 
 ### 1. Docs-First Workflow (Mandatory)
 * **Read Before Exploring or Modifying Code**: Before exploring or modifying application code, you **MUST** first consult the internal wiki, starting from `llm-wiki/README.md`, and then drill down into the specific `llm-wiki/` file(s) relevant to the task. Administrative, repository-inspection, and documentation-only operations may use a proportionate subset of this workflow.
-* **Index-Driven Navigation**: Use `llm-wiki/README.md` as the map: identify which module/feature/data-model docs are relevant, read them, and follow their `path/to/file.py::symbol` (Python) / `path/to/file.rs::symbol` (Rust) references to reach the right code directly instead of blindly searching the whole repository.
+* **Index-Driven Navigation**: Use `llm-wiki/README.md` as the map: identify which module/feature/data-model docs are relevant, read them, and follow their `path/to/file.py::symbol` (Python) / `path/to/file.c::symbol` (C) references to reach the right code directly instead of blindly searching the whole repository.
 * **Docs Guide the Search**: Treat `llm-wiki/` as the first search surface. Codebase-wide exploration is a **fallback** for what the wiki does not yet cover. Remember that `llm-wiki/README.md` also lists the **hard invariants** (no-log, RAM-only, rigid schema, protected buckets, zero backward compatibility) that must be read before touching any module.
 * **Bootstrap on Absence**: If a specific doc does not exist or lacks relevant content, note the gap and create/extend it as part of the task. A missing doc is never an excuse to skip the docs-first step.
 
@@ -77,7 +77,7 @@ to the project's nature (multi-language network daemon) and keep each index
   * `llm-wiki/README.md` — index / table of contents linking every other doc, plus the hard invariants.
   * `llm-wiki/architecture.md` — high-level system overview and component interactions.
   * `llm-wiki/modules/<module>.md` — internal responsibilities, key functions (add, rename, split or omit as the project requires; a doc is justified only when it maps to real code).
-  * `llm-wiki/data-models.md` — the `boot/1` frame models of every implementation and their relationships (pydantic models in `python/`, structs/enums in `rust/`); add it as soon as the models are worth mapping.
+  * `llm-wiki/data-models.md` — the `boot/1` frame models of every implementation and their relationships (pydantic models in `python/`, structs/unions in `c/`); add it as soon as the models are worth mapping.
   * `llm-wiki/decisions.md` — log of design decisions (already present; keep the numbering stable).
 * **User Docs (`docs/`) - Human Optimized** (only the subset that applies):
   * `docs/README.md` — welcome page, installation, and quickstart for the user.
@@ -147,7 +147,7 @@ The wiki must describe the code as it is **now**. Accumulated inaccuracies come 
   `protocol-spec/boot-1.md` is the SSOT for the `boot/1` wire protocol, shared by
   **every** implementation. Before modifying any frame, field, ALPN, framing rule
   or refusal semantic you **MUST** read it and follow it. **Never fork the spec**
-  into `python/` or `rust/`: the same frames must be byte-identical across
+  into `python/` or `c/`: the same frames must be byte-identical across
   languages.
 
 * **Shared fixtures**
@@ -159,9 +159,9 @@ The wiki must describe the code as it is **now**. Accumulated inaccuracies come 
 * **Language-neutral black-box suite**
   `tests/` at the repository root is the *contract* test suite. It spawns the
   binary resolved from `HSYNC_BOOTNODE_BIN` and observes only the public CLI and
-  the `boot/1` wire protocol: it **never** imports `hsync_bootnode` (or any Rust
-  crate) and never touches internal state. The identical suite must pass against
-  `python/` and `rust/`. Frame builders live in `tests/harness.py` (single
+  the `boot/1` wire protocol: it **never** imports `hsync_bootnode` (or any C
+  object) and never touches internal state. The identical suite must pass against
+  `python/` and `c/`. Frame builders live in `tests/harness.py` (single
   source, language-neutral) — do not duplicate them inside an implementation
   directory. Readiness is signalled through the `HSYNC_BOOTNODE_READY_FILE`
   seam; the suite is gated by `HSYNC_BB_BOOTNODE=1`.
@@ -176,13 +176,12 @@ The wiki must describe the code as it is **now**. Accumulated inaccuracies come 
   stderr-only and split in two: an always-on, peer-free operational channel
   (`warn`/`error`) and the opt-in, peer-aware full operation log (`--debug` /
   `HSYNC_BOOTNODE_DEBUG=1`). Enforced for
-  Python by `python/tests/test_nolog.py` (read-only filesystem sandbox): the Rust
+  Python by `python/tests/test_nolog.py` (read-only filesystem sandbox): the C
   port must ship an equivalent enforcement test.
 
 * **Rigid schema**
   Every `boot/1` frame model rejects unknown fields (pydantic
-  `extra="forbid"` in Python; equivalent deny-unknown-fields serde attribute in
-  Rust). Unknown or targeted fields make the frame invalid and it is silently
+  `extra="forbid"` in Python; an explicit unknown-field rejection in C). Unknown or targeted fields make the frame invalid and it is silently
   dropped — never reinterpreted, never partially applied.
 
 * **Protected buckets**
@@ -197,7 +196,7 @@ The wiki must describe the code as it is **now**. Accumulated inaccuracies come 
 * **Packaging — synchronous updates are mandatory**
   Any change to CLI flags, environment variables (`HSYNC_BOOTNODE_*`), option
   defaults or user-facing behavior **REQUIRES** an atomic update to:
-  * the implementation CLI (`python/src/hsync_bootnode/cli.py`, and `rust/` once
+  * the implementation CLI (`python/src/hsync_bootnode/cli.py`, and `c/` once
     the port lands);
   * the man page `packaging/deb/usr/share/man/man1/hsync-bootnode.1`
     (OPTIONS, ENVIRONMENT, FILES, EXAMPLES, `.TH` date/version);
@@ -210,7 +209,7 @@ The wiki must describe the code as it is **now**. Accumulated inaccuracies come 
     contract changes.
 
   A new language port also requires its own per-language binary script (e.g.
-  `rust/compile.sh`) and must be wired into `compile.sh`; the root script must
+  `c/compile.sh`) and must be wired into `compile.sh`; the root script must
   keep failing fast for languages that do not exist yet.
 
 ---
@@ -226,7 +225,7 @@ The wiki must describe the code as it is **now**. Accumulated inaccuracies come 
 * **Multi-language obligation**
   Breaking the wire contract means bumping the mandatory `protocol_version`
   (`boot/1` → `boot/next`) and updating **atomically**: `protocol-spec/boot-1.md`
-  (or its successor), `fixtures/`, `python/`, `rust/`, `tests/`, `bench/`,
+  (or its successor), `fixtures/`, `python/`, `c/`, `tests/`, `bench/`,
   `compile.sh`/`packaging/`, `llm-wiki/` and `docs/`. No implementation may
   keep speaking the retired version, and no compatibility shim may exist in one
   language only.
@@ -258,13 +257,13 @@ trivial documentation-only or formatting-only changes.
 
 | Implementation | Observable behavior | Cross-language / artifact impact |
 | --- | --- | --- |
-| `python/` | CLI, `boot/1` wire behavior, no-log | spec, fixtures, `rust/`, root `tests/`, `bench/`, `compile.sh`, `packaging/`, docs |
-| `rust/` | same CLI + `boot/1` wire behavior | spec, fixtures, `python/`, root `tests/`, `bench/`, `compile.sh`, `packaging/`, docs |
+| `python/` | CLI, `boot/1` wire behavior, no-log | spec, fixtures, `c/`, root `tests/`, `bench/`, `compile.sh`, `packaging/`, docs |
+| `c/` | same CLI + `boot/1` wire behavior | spec, fixtures, `python/`, root `tests/`, `bench/`, `compile.sh`, `packaging/`, docs |
 | root (`tests/`, `bench/`, `fixtures/`, spec) | the shared contract itself | every implementation |
 
 ### 2. First Implementation Pass
 
-Implement the smallest complete change satisfying the acceptance criteria. Do not add speculative functionality, hide failures with broad catches or silent fallbacks, weaken tests, or change unrelated code. In Rust, "silent fallback" includes `unwrap_or_default()`/`ok()`-style error swallowing on the hot path.
+Implement the smallest complete change satisfying the acceptance criteria. Do not add speculative functionality, hide failures with broad catches or silent fallbacks, weaken tests, or change unrelated code. In C, "silent fallback" includes ignoring a return code or an unchecked `malloc`/`read` result on the hot path.
 
 ### 3. Mandatory Verification Pass
 
@@ -308,21 +307,21 @@ interpreter (it is the test runner only):
 ```
 cd hsync-bootnode && python/.venv/bin/python -m ruff check tests bench
 cd hsync-bootnode && HSYNC_BB_BOOTNODE=1 python/.venv/bin/python -m pytest -q tests/
-cd hsync-bootnode && HSYNC_BB_BOOTNODE=1 HSYNC_BOOTNODE_BIN=/path/to/rust/binary \
+cd hsync-bootnode && HSYNC_BB_BOOTNODE=1 HSYNC_BOOTNODE_BIN=/path/to/c/binary \
     python/.venv/bin/python -m pytest -q tests/
 ```
 
-#### Commands — Rust (`rust/`, once the crate exists)
+#### Commands — C (`c/`, once the sources exist)
 
 ```
-cd hsync-bootnode/rust && cargo fmt --check
-cd hsync-bootnode/rust && cargo clippy --all-targets -- -D warnings
-cd hsync-bootnode/rust && cargo test
+cd hsync-bootnode/c && clang-format --dry-run --Werror src/*.c include/*.h
+cd hsync-bootnode/c && clang-tidy src/*.c -- -std=c11 -Iinclude
+cd hsync-bootnode/c && make test          # -fsanitize=address,undefined build
 ```
 
-Plus, when the change touches `unsafe` code, `cargo miri test`; when it touches
-the untrusted-input frame decoder, the `cargo fuzz` targets (see the Rust
-section).
+Plus, when the change touches memory management or buffer arithmetic, the
+ASan/UBSan run (and `valgrind` where ASan is unavailable); when it touches the
+untrusted-input frame decoder, the libFuzzer targets (see the C section).
 
 Notes:
 * Read what a command **actually printed**: never report a check as passed when
@@ -345,7 +344,7 @@ the relevant failure/boundary cases.
 * **Protocol changes**: update `protocol-spec/boot-1.md`, `fixtures/` and every
   implementation atomically, and keep a **drift test** that validates each
   implementation's frame models against the committed fixtures. The same fixtures
-  must be consumed by the Rust suite: mirror the Python drift test, never
+  must be consumed by the C suite: mirror the Python drift test, never
   re-derive the expected bytes locally.
 * **CLI / env / packaging changes**: extend the language-neutral suite in
   `tests/` (exit codes, `--version`, fail-fast refusals) and update the man page,
@@ -379,12 +378,12 @@ reproducible.
   even on error or interruption (`try`/`finally`, fixtures, `tmp_path`). Started
   node processes must be terminated (and reaped) on every exit path.
 * **No cross-test contamination**: a test's outcome must never depend on
-  execution order or on whether a previous test failed. Rust tests must not share
+  execution order or on whether a previous test failed. C tests must not share
   global mutable state; the routing table must be owned per test instance.
 
 ### 5. Bounded Correction Cycle
 
-Fix issues found during verification and repeat the relevant checks, for at most two review-and-correction cycles unless the user requests more. Do not finalize with known failures. If blocked by dependencies, credentials, external services, platform tooling (missing Rust toolchain, `cargo miri`/`cargo fuzz`/`cargo-audit` components), UAC/network availability or pre-existing failures, report the blocker precisely and stop changing code. Never claim a check passed unless it completed successfully.
+Fix issues found during verification and repeat the relevant checks, for at most two review-and-correction cycles unless the user requests more. Do not finalize with known failures. If blocked by dependencies, credentials, external services, platform tooling (missing C compiler, sanitizer runtime, libFuzzer or `valgrind`), UAC/network availability or pre-existing failures, report the blocker precisely and stop changing code. Never claim a check passed unless it completed successfully.
 
 ### 6. Definition of Done
 
@@ -417,36 +416,40 @@ replace self-verification or tests.
 
 ---
 
-## 🦀 Rust Standards & Code Reuse (`rust/**/*.rs`)
+## 🔧 C Standards & Code Reuse (`c/**/*.c`, `c/**/*.h`)
 
-The Rust implementation is a second implementation of the **same** contract: it
+The C implementation is a second implementation of the **same** contract: it
 never gets its own dialect, its own spec or its own fixtures.
 
-### 1. Safety and Rust idioms
-* **Zero warnings**: all code must compile cleanly under
-  `cargo clippy --all-targets -- -D warnings` (and `cargo fmt --check`); a warning
-  is a defect, not a note.
-* **No panics in production paths**: `.unwrap()`, `.expect()` and `panic!()` are
-  **strictly forbidden** in non-test code. Propagate errors with the `?` operator
-  and model failures with **custom error types** (an `enum` implementing
-  `Display` + `std::error::Error`, or the equivalent idiomatic error crate already
-  adopted by the crate). Test code may use them to fail loudly, but must not rely
-  on a panic as its only assertion mechanism.
-* **No `unsafe` by default**: the keyword is not allowed unless genuinely
-  unavoidable; when used, it **must** be preceded by a comment stating the exact
-  invariants upheld and the reasoning for the block, and the code path must be
-  exercised under `cargo miri test`.
+### 1. Safety and C idioms
+* **Zero warnings**: every translation unit compiles under
+  `-std=c11 -Wall -Wextra -Wpedantic -Werror` (`clang` or `gcc`); a warning is a
+  defect, not a note.
+* **No undefined behaviour**: bounds are checked before every index/pointer
+  access, signed overflow is avoided (an unsigned type or an explicit range check),
+  strict aliasing is respected and no object is read after `free`. The whole
+  suite runs under `-fsanitize=address,undefined` (plus `-fsanitize=thread` for
+  the threading paths) and finishes clean; `valgrind` is the fallback where ASan
+  is unavailable.
+* **Checked allocations, single ownership**: every `malloc`/`realloc` result is
+  checked, every allocation has exactly one owner and one matching `free`, and
+  cleanup follows a single `goto cleanup` path so an early error return cannot
+  leak. No `strcpy`/`strcat`/`sprintf`/`gets`: use `snprintf`, `memcpy` with an
+  explicit size, and the `strn*` variants.
+* **No process termination as error handling**: a production path returns an
+  error code and the caller decides; `abort()`/`assert()` are reserved for
+  programmer errors in debug builds, never for input validation.
+* **No silent fallback**: do not ignore a return code, do not cast away `const`,
+  do not add lenient re-interpretation, aliases or compatibility fallbacks to the
+  frame decoding.
 * **Fuzzing the untrusted input**: any component that processes raw network data
   or untrusted input — in this repository the `boot/1` NDJSON frame decoder and
-  its length/UTF-8/field validation — **must** ship `cargo fuzz` targets,
-  seeded from the committed `fixtures/`.
-* **Parsing must be exhaustive and strict**: frame decoding validates size
-  bounds, UTF-8 and unknown fields, and rejects anything that does not match the
-  spec. Do not add lenient re-interpretation, aliases or compatibility fallbacks.
+  its length/UTF-8/field validation — **must** ship libFuzzer targets
+  (`clang -fsanitize=fuzzer,address`), seeded from the committed `fixtures/`.
 * **Concurrency and state**: the routing table is in-memory state shared across
-  sockets; use the crate's async runtime and lock primitives with documented
-  ordering, never hold a lock across `.await`, and never persist state to disk
-  (the no-log invariant applies to Rust exactly as it does to Python).
+  sockets; protect it with a documented lock order, never hold a lock across a
+  blocking call or a plugin callback, and never persist state to disk (the no-log
+  invariant applies to C exactly as it does to Python).
 * **Behavioural parity**: refusals (`token_required`, `rate_limited` +
   `retry_after`, and `overloaded` + advisory `retry_after` for capacity
   backpressure), framing, STUN-echo semantics and TTL handling must be
@@ -454,38 +457,39 @@ never gets its own dialect, its own spec or its own fixtures.
   what the language-neutral `tests/` suite verifies.
 
 ### 2. Types and models
-* **Typed frames**: represent every `boot/1` frame with `struct`s/`enum`s and the
-  crate's serialization library — never hand-rolled string concatenation or manual
-  byte slicing where a typed model applies. One model per frame, one shared enum
-  for the frame kind.
-* **No manual parsing**: do not navigate raw JSON value maps when a typed frame
-  can be deserialized directly.
+* **Typed frames**: represent every `boot/1` frame with a `struct` per frame, one
+  shared `enum` for the frame kind, and the project's JSON library — never
+  hand-rolled string concatenation or manual byte slicing where a typed model
+  applies. An unknown or targeted field rejects the frame (rigid schema), never a
+  best-effort partial parse.
+* **Fixed-width types**: protocol integers are `uint32_t`/`int64_t`/…, sizes are
+  `size_t`, and every narrowing conversion is explicit and range-checked.
 
-### 3. DRY, traits and modularity
+### 3. DRY, headers and modularity
 * **No Copy-Paste-Modify**: copying a module and slightly adapting it for another
   purpose is **STRICTLY PROHIBITED**.
 * **Rule of Three**: when the same logic is needed a second time, treat it as a
   warning; at the third occurrence you **MUST** extract it into a standalone
-  function, a trait (e.g. a shared handler/response trait) or a shared module.
-* **No inline helpers**: nested helper functions/closures inside a large function
-  are **PROHIBITED** when the logic is generic and extractable — promote it to a
-  module-level item.
+  function or a shared module with a single declaration in a header.
+* **No inline helpers**: nested functions and GNU statement expressions are
+  **PROHIBITED**; promote extractable logic to a `static` helper in the same
+  translation unit or to a documented module-level function.
 * **Semantic reuse over superficial similarity**: extract shared logic only when
   behaviour, invariants and reasons to change are the same; prefer small local
   duplication over an incorrect abstraction.
-* **Modularity**: split a module when it carries multiple independently changing
-  responsibilities, not merely because of line count.
+* **Modularity**: split a file when it carries multiple independently changing
+  responsibilities, not merely because of line count; every non-`static` symbol
+  has exactly one declaration in a header.
 
 ### 4. Build and layout
-* The crate lives under `hsync-bootnode/rust/` and must not fork
+* The sources live under `hsync-bootnode/c/` and must not fork
   `protocol-spec/boot-1.md` or `fixtures/`.
-* The Rust CLI exposes the same commands, flags, environment variables, exit
-  codes and `--version` shape as the Python implementation, so the
-  language-neutral suite passes unchanged against
-  `HSYNC_BOOTNODE_BIN=<rust binary>`.
-* Do not add a dependency, change the edition or bump pinned versions unless the
-  task explicitly requires it: this is a no-log daemon, keep the dependency
-  surface minimal.
+* The C CLI exposes the same commands, flags, environment variables, exit codes
+  and `--version` shape as the Python implementation, so the language-neutral
+  suite passes unchanged against `HSYNC_BOOTNODE_BIN=<c binary>`.
+* Do not add a dependency, change the language standard or bump pinned versions
+  unless the task explicitly requires it: this is a no-log daemon, keep the
+  dependency surface minimal (C11 plus the QUIC/JSON libraries the port chooses).
 
 ---
 
@@ -509,8 +513,8 @@ never gets its own dialect, its own spec or its own fixtures.
 * **English-only**: commit messages (subject and body), the internal agent wiki
   (`llm-wiki/`), and the user documentation (`docs/`) MUST be written in
   English, regardless of the language used in the task.
-* This also applies to code comments, doc comments (Python docstrings and Rust
-  `///` doc comments), error messages and CLI help strings.
+* This also applies to code comments, doc comments (Python docstrings and C
+  `/** */` doc comments), error messages and CLI help strings.
 * Commit messages follow Conventional Commits: `type(scope): description`
   (feat, fix, docs, style, refactor, test, chore, perf, ci, build).
 

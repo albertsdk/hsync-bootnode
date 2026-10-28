@@ -21,7 +21,7 @@ mode across networks: same election, same transport, same peer-to-peer data
 plane — only discovery differs.
 
 **Status:** v1 **complete and stable** (Python + aioquic): packaged, tested,
-and the implementation clients currently talk to. A Rust/`quinn` port is
+and the implementation clients currently talk to. A C port is
 planned as an **additive v2** for higher handshake throughput, not a
 prerequisite — this is a **multi-language** repository: one protocol, several
 implementations sharing the same spec and fixtures (see the
@@ -36,7 +36,7 @@ implementations sharing the same spec and fixtures (see the
 [![License: BSD 3-Clause](https://img.shields.io/badge/License-BSD_3--Clause-brightgreen.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/albertsdk/hsync-bootnode)](https://github.com/albertsdk/hsync-bootnode/releases/latest)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/)
-[![Rust 1.98+ (planned)](https://img.shields.io/badge/Rust-1.98+_(planned)-DEA584.svg)](rust/)
+[![C11 (planned)](https://img.shields.io/badge/C-11_(planned)-A8B9CC.svg)](c/)
 [![Status: v1](https://img.shields.io/badge/Status-v1-yellow.svg)](docs/README.md)
 
 ---

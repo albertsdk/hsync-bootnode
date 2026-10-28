@@ -38,7 +38,7 @@ ENV LC_ALL=C.UTF-8 \
     POETRY_NO_INTERACTION=1
 
 # binutils for PyInstaller --strip, rpm-build for packaging, tar/gzip for the
-# pinned CPython download (the base image already ships curl-minimal). No C/Rust
+# pinned CPython download (the base image already ships curl-minimal). No C
 # toolchain: cp314 manylinux wheels cover the native dependencies, so nothing is
 # compiled from source.
 RUN dnf -y install --setopt=install_weak_deps=False \

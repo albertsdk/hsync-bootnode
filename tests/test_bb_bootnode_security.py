@@ -2,7 +2,7 @@
 
 Adversarial suite: each test is an attack attempt against the public surface
 (CLI + ``boot/1`` wire frames over QUIC/UDP), never against the
-implementation — the same probes must keep passing against the future ``rust/``
+implementation — the same probes must keep passing against the future ``c/``
 port. Attack classes covered:
 
 * **Authorization bypass** — cross-bucket token replay, token grammar abuse,

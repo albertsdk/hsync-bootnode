@@ -1,7 +1,7 @@
 # HSYNC Bootnode — wire protocol `boot/1`
 
 > Single source of truth for the bootstrap wire protocol, shared by **all** language
-> implementations (`python/`, future `rust/`). Do not fork this spec into
+> implementations (`python/`, future `c/`). Do not fork this spec into
 > any implementation directory.
 
 ## Transport
@@ -104,7 +104,7 @@
 
 - `bucket_token = HMAC-SHA256(group_key, "boot/1" || bucket)[:32]` hex (64 characters), optional on register/refresh/query/leave. The client's group key is the raw `HSYNC_P2P_KEY`, or the 64-hex key derived from `HSYNC_P2P_PASSPHRASE`; the node always consumes the raw key. The wire grammar is enforced by the frame models in **every** implementation: a value that is not exactly 64 lowercase hex characters makes the frame invalid (silently dropped, budgeted by the malformed-frame limit below) — never a failed-token attempt.
 - **Group-key strength**: the key is the token's only entropy, so the node's key source enforces at least 32 characters (`MIN_GROUP_KEY_CHARS`). A client may instead supply `HSYNC_P2P_PASSPHRASE` (at least 12 characters), which it derives to the same 64-hex key; the node always consumes the derived key. A shorter key is a configuration error (exit code 2), never a weaker deployment.
-- Server-side: operator declares protected buckets (`--protected-bucket`); token compared in constant time (`hmac.compare_digest` Python / `subtle::ConstantTimeEq` Rust).
+- Server-side: operator declares protected buckets (`--protected-bucket`); token compared in constant time (`hmac.compare_digest` Python).
 - Matrix: protected bucket + missing/wrong token → `peers: []`, `error:"token_required"` (uniform — no bucket-existence oracle); correct token → full random `K` sample (default 20, `limit` 1..50). Open bucket: no token needed.
 - **Private node** (`--private` / `HSYNC_BOOTNODE_PRIVATE=1`): the protected-bucket check applies to *every* bucket, not only the declared protected set. A bucket with no key loaded is refused exactly like a wrong token (same `token_required` answer, same failed-token budget), so the set of provisioned buckets is not observable either. `leave` is gated in this mode too — an anonymous `leave` would let anyone who knows a `(cid, bucket)` pair spoof a departure; `leave` has no response frame, so a refusal is a silent drop. Startup fails fast (exit code 2) when `--private` is set with zero group keys. The wire format is unchanged: this is a server-side policy.
 - **Record ownership (open nodes)**: creating, replacing or renewing a `(cid, bucket, group)` record is honoured only from the source network the record was registered from — the observed source IP (the peer itself or its NAT umbrella) — or, on a protected/private bucket, with a valid token from any source. A `register`, `refresh` or `leave` from any other source is silently dropped: a peer that learns another peer's `(cid, bucket, group)` (e.g. from an anonymous `query`) cannot point that discovery record at different endpoints, keep a hijacked record alive through the victim's own refresh, or evict it. **Ownership follows liveness**: a record past its TTL is absent for every decision, so a source-IP change (or a node that went away) frees the key for re-registration at the TTL boundary, and a `refresh` never revives an expired record — the peer registers again. On protected/private buckets the token authenticates bucket membership (not a specific CID), so a token holder may replace a record from any source; the private/protected token path also removes every `(cid, bucket)` record on `leave`.

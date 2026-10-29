@@ -20,9 +20,9 @@ hsync-bootnode --version
 
 | Option | Default | Description |
 |---|---|---|
-| `--host` | `0.0.0.0` | Address to bind the QUIC/UDP listener to. Accepts an optional port (`HOST[:PORT]`, e.g. `0.0.0.0:443` or `[::1]:443`). |
-| `--port` | `443` | UDP port (1–65535). 443 is the QUIC/HTTP3 default; ports below 1024 need root or `CAP_NET_BIND_SERVICE` (the systemd unit grants it). Mutually exclusive with a port in `--host HOST:PORT`. |
-| `--ports` | *(none)* | Comma-separated UDP ports to listen on in **one process** (multi-port). The listeners share one in-memory routing table, so a peer registered via one port is visible to a query on another. The point is to offer several inbound doors because a **client's egress firewall** may block UDP 443 while allowing another UDP port. Recommended reachability set: `443,53` (`BOOT_PORT_SET`); 53 is the most permissive UDP port but is usually held by the local resolver — free it or omit it. Binding is **best-effort**: a port that cannot bind is skipped with a warning and the node keeps serving the rest (it fails only if none bind). Mutually exclusive with `--port` and a port in `--host HOST:PORT`. |
+| `--listen-host` | `0.0.0.0` | Address to bind the QUIC/UDP listener to. Accepts an optional port (`HOST[:PORT]`, e.g. `0.0.0.0:443` or `[::1]:443`). |
+| `--listen-port` | `443` | UDP port (1–65535). 443 is the QUIC/HTTP3 default; ports below 1024 need root or `CAP_NET_BIND_SERVICE` (the systemd unit grants it). Mutually exclusive with a port in `--listen-host HOST:PORT`. |
+| `--listen-ports` | *(none)* | Comma-separated UDP ports to listen on in **one process** (multi-port). The listeners share one in-memory routing table, so a peer registered via one port is visible to a query on another. The point is to offer several inbound doors because a **client's egress firewall** may block UDP 443 while allowing another UDP port. Recommended reachability set: `443,53` (`BOOT_PORT_SET`); 53 is the most permissive UDP port but is usually held by the local resolver — free it or omit it. Binding is **best-effort**: a port that cannot bind is skipped with a warning and the node keeps serving the rest (it fails only if none bind). Mutually exclusive with `--listen-port` and a port in `--listen-host HOST:PORT`. |
 | `--identity` | XDG state path | Path of the persistent TLS identity (key+cert). Created on first run and reused afterwards, so the certificate fingerprint is stable across restarts and can be pinned by clients. Default: `$HSYNC_BOOTNODE_IDENTITY`, else `$HSYNC_STATE_DIR/bootnode/identity.pem`, else `$XDG_STATE_HOME/hsync/bootnode/identity.pem` (`~/.local/state/…`). |
 | `--ephemeral` | *(disabled flag)* | Keep the TLS identity in memory and write no identity file (read-only filesystems, throwaway nodes); the fingerprint changes on every restart, so clients cannot pin it. Mutually exclusive with `--identity`. Environment variable form: `HSYNC_BOOTNODE_EPHEMERAL=1`. |
 | `--public-host` | *(none)* | Public hostname or IP to add to the certificate SAN (repeatable). |
@@ -30,7 +30,7 @@ hsync-bootnode --version
 | `--keys-fd` | *(none)* | File descriptor carrying the group keys (see below). Environment variable form: `HSYNC_BOOTNODE_KEYS_FD`. |
 | `--keys-file` | *(none)* | File carrying the group keys (same `bucket=<hex-key>` format); read once at startup and never written. Portable alternative to `--keys-fd` for service managers that cannot pass a descriptor (Windows/WinSW); the two are mutually exclusive. A missing/non-regular file or a symlink is a configuration error (exit code 2); on POSIX a group-writable or world-accessible file is reported on the always-on warning channel (0640 group-read is accepted). Environment variable form: `HSYNC_BOOTNODE_KEYS_FILE`. |
 | `--private` | *(disabled flag)* | Private node: every frame must carry a valid `bucket_token`, for **every** bucket (not only `--protected-bucket`). Starting it with no group key fails fast (exit code 2). Environment variable form: `HSYNC_BOOTNODE_PRIVATE=1`. |
-| `--upnp` | *(disabled flag)* | Map the QUIC/UDP listener port(s) with UPnP (opt-in; off by default). With `--ports`, every bound port is mapped, so each offered door is also reachable from the WAN side. |
+| `--upnp` | *(disabled flag)* | Map the QUIC/UDP listener port(s) with UPnP (opt-in; off by default). With `--listen-ports`, every bound port is mapped, so each offered door is also reachable from the WAN side. |
 | `--relay` | *(disabled flag)* | Relay the peers' opaque TLS (`boot/1` relay frames), so two peers that no inbound NAT mapping reaches can still run their data plane through this node. Off by default: relaying spends the node's uplink, so the operator opts in. The node never terminates or inspects the relayed TLS. |
 | `--relay-idle-timeout` | `120` | Seconds without traffic in either direction before a relayed session (or a listener control stream) is closed. Range `30..3600`. |
 | `--relay-session-bytes` | `0` | Close a relayed session after this many forwarded bytes (`0` = no per-session cap; the byte rate stays the primary bound). |
@@ -69,7 +69,7 @@ SAN, so hostname-validating clients keep working; pass `--public-host` only for
 new names. The command re-reads and verifies the pair it wrote, then **you must
 restart the node** to serve it (the identity is loaded at startup) and verify
 the certificate clients actually see with
-`hsync trust bootnode fingerprint <host>` — `identity show` prints the persisted
+`hsync trust discovery-server fingerprint <host:port>` — `identity show` prints the persisted
 file, not the served certificate. Rotation is also the
 recovery for a corrupted identity whose key no longer matches its certificate;
 a file that is not a valid PEM identity at all is refused (delete it and restart
@@ -91,7 +91,7 @@ Prints the version and the protocol, e.g.
 |---|---|
 | 0 | Normal termination (Ctrl+C / SIGTERM). |
 | 2 | Configuration error: missing group key (a duplicate `bucket=` line is refused), `--private` without a key, `--keys-fd` together with `--keys-file`, out-of-range `--ttl`, etc. The node refuses to start. |
-| 3 | Listener bind failure: the port is privileged, already in use, or `--host` is not a local address. The stderr message explains how to fix it. |
+| 3 | Listener bind failure: the port is privileged, already in use, or `--listen-host` is not a local address. The stderr message explains how to fix it. |
 | 4 | Readiness-file failure: `--ready-file` points at a path the node cannot create (missing parent directory, no permission, or a stale file the `O_EXCL` seam refuses to overwrite). |
 
 ## Environment variables
@@ -437,7 +437,7 @@ rotation window, then move them to the new one. Rotation **preserves every
 existing DNS/IP SAN** and adds any new `--public-host`; pass `--public-host`
 only for names the node did not already carry. **Restart the node** to serve the
 new identity (it is loaded at startup), then verify the served certificate from
-a client with `hsync trust bootnode fingerprint <host>`.
+a client with `hsync trust discovery-server fingerprint <host:port>`.
 
 ```bash
 hsync-bootnode identity rotate --identity /var/lib/hsync-bootnode/identity.pem \
@@ -604,9 +604,9 @@ Edit the executable paths inside each unit to the location of your venv.
 | `configuration error: --keys-fd and --keys-file are mutually exclusive` | Pass one key source only. |
 | `configuration error: duplicate group key for bucket …` | The keys source lists the same bucket twice: keep exactly one line per bucket. |
 | `warn: group keys file permissions are too open` | The `--keys-file` file is group-writable or world-accessible: restrict it to `0600`/`0640` (the node keeps serving). |
-| `error: cannot bind the QUIC/UDP listener … — permission denied` | You bound a privileged port (< 1024, e.g. the 443 default) without root: use `--port 8443` (any port ≥ 1024), run as root, or grant the capability (`sudo setcap cap_net_bind_service=+ep <hsync-bootnode>`). The systemd unit already grants it. |
-| `error: cannot bind the QUIC/UDP listener … — address already in use` | Another process (or another node instance) is using that UDP port: stop it, or pick a free port with `--port`. |
-| `error: cannot bind the QUIC/UDP listener … — the address is not available` | `--host` is not a local interface address: use a local IP, or `0.0.0.0` to listen on all of them. |
+| `error: cannot bind the QUIC/UDP listener … — permission denied` | You bound a privileged port (< 1024, e.g. the 443 default) without root: use `--listen-port 8443` (any port ≥ 1024), run as root, or grant the capability (`sudo setcap cap_net_bind_service=+ep <hsync-bootnode>`). The systemd unit already grants it. |
+| `error: cannot bind the QUIC/UDP listener … — address already in use` | Another process (or another node instance) is using that UDP port: stop it, or pick a free port with `--listen-port`. |
+| `error: cannot bind the QUIC/UDP listener … — the address is not available` | `--listen-host` is not a local interface address: use a local IP, or `0.0.0.0` to listen on all of them. |
 | Client gets `token_required` | The bucket is gated (declared `--protected-bucket`, or every bucket on a private node) and the client's derived token is missing/wrong — check the group key on the client side. |
 | Client gets `rate_limited` | A per-source limit was exceeded (per-IP ~10 req/s admission, 5/min failed tokens, 5/min queries per (IP, bucket), 20/min aggregate queries per IP, 10/min registers per (IP, bucket)); wait for `retry_after` seconds — this counts against the source. |
 | Client gets `overloaded` | The node is at its host-derived routing-table ceiling (capacity backpressure, not a client abuse signal); retry after `retry_after` seconds, or prefer another bootnode. It is not counted against the source. |

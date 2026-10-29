@@ -21,7 +21,7 @@ first, e.g. `sudo install -d -m 0700 /usr/local/var/hsync-bootnode`).
     <array>
         <string>/bin/sh</string>
         <string>-c</string>
-        <string>exec /usr/local/bin/hsync-bootnode run --host 0.0.0.0 --port 443 --identity /usr/local/var/hsync-bootnode/identity.pem --keys-fd 3 3&lt;/etc/hsync-bootnode/group-keys</string>
+        <string>exec /usr/local/bin/hsync-bootnode run --listen-host 0.0.0.0 --listen-port 443 --identity /usr/local/var/hsync-bootnode/identity.pem --keys-fd 3 3&lt;/etc/hsync-bootnode/group-keys</string>
     </array>
 
     <!-- Private node (protected-bucket policy node-wide): require a valid bucket_token on every

@@ -133,7 +133,7 @@ Clients connect to the host's UDP port (`443`); the container maps it to an
 unprivileged internal port. To use another public port, for example `8443`:
 
 ```bash
-./install.sh --port 8443
+./install.sh --listen-port 8443
 ```
 
 The installer maps a **single** host UDP port. To also serve a second port

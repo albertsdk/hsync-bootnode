@@ -48,7 +48,7 @@ LoadCredential=metrics-token:/etc/hsync-bootnode/metrics-token
 # (`sudo sh -c 'openssl rand -hex 32 > /etc/hsync-bootnode/metrics-token'`) and add
 # the flags in a drop-in; the exact ExecStart is in docs/operations.md,
 # "Measure the node". The token is never passed on the command line.
-ExecStart=/bin/sh -c 'if [ -r "$CREDENTIALS_DIRECTORY/group-keys" ]; then exec /usr/bin/hsync-bootnode run --host 0.0.0.0 --port 443 --identity /var/lib/hsync-bootnode/identity.pem --keys-fd 5 5<"$CREDENTIALS_DIRECTORY/group-keys"; else exec /usr/bin/hsync-bootnode run --host 0.0.0.0 --port 443 --identity /var/lib/hsync-bootnode/identity.pem; fi'
+ExecStart=/bin/sh -c 'if [ -r "$CREDENTIALS_DIRECTORY/group-keys" ]; then exec /usr/bin/hsync-bootnode run --listen-host 0.0.0.0 --listen-port 443 --identity /var/lib/hsync-bootnode/identity.pem --keys-fd 5 5<"$CREDENTIALS_DIRECTORY/group-keys"; else exec /usr/bin/hsync-bootnode run --listen-host 0.0.0.0 --listen-port 443 --identity /var/lib/hsync-bootnode/identity.pem; fi'
 # Private node (protected-bucket policy node-wide): require a valid bucket_token on every frame.
 # Needs a group key for EVERY bucket served and fails fast at startup (exit 2)
 # without any key. The ExecStart above already passes --keys-fd whenever the

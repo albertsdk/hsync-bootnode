@@ -17,7 +17,7 @@
   <description>HSYNC P2P bootstrap node (boot/1, QUIC/UDP 443, no-log)</description>
 
   <executable>%BASE%\hsync-bootnode.exe</executable>
-  <arguments>run --host 0.0.0.0 --port 443 --identity %ProgramData%\hsync-bootnode\identity.pem --keys-file %ProgramData%\hsync-bootnode\group-keys</arguments>
+  <arguments>run --listen-host 0.0.0.0 --listen-port 443 --identity %ProgramData%\hsync-bootnode\identity.pem --keys-file %ProgramData%\hsync-bootnode\group-keys</arguments>
   <workingdirectory>%BASE%</workingdirectory>
 
   <startmode>Automatic</startmode>

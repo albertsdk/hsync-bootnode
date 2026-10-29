@@ -55,7 +55,7 @@ def test_identity_and_ephemeral_are_mutually_exclusive(tmp_path) -> None:
     """A single identity source: ``--identity`` and ``--ephemeral`` cannot combine."""
     # When: both flags are passed
     result = run_cli(
-        ["run", "--port", "8443", "--identity", str(tmp_path / "id.pem"), "--ephemeral"]
+        ["run", "--listen-port", "8443", "--identity", str(tmp_path / "id.pem"), "--ephemeral"]
     )
     # Then: fail-fast configuration error (exit 2)
     assert result.returncode == 2

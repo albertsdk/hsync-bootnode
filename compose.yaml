@@ -9,10 +9,10 @@ services:
     user: "${HSYNC_UID:-1000}:${HSYNC_GID:-1000}"
     # The container binds the unprivileged UDP port 8443 (the image runs as a
     # non-root user); the host's public QUIC port is mapped to it. Clients use
-    # HSYNC_BOOTNODE_PORT (default 443) on the host.
-    command: ["run", "--host", "0.0.0.0", "--port", "8443"]
+    # BOOTNODE_HOST_UDP_PORT (default 443) on the host.
+    command: ["run", "--listen-host", "0.0.0.0", "--listen-port", "8443"]
     ports:
-      - "${HSYNC_BOOTNODE_PORT:-443}:8443/udp"
+      - "${BOOTNODE_HOST_UDP_PORT:-443}:8443/udp"
     env_file:
       - .env
     volumes:

@@ -19,7 +19,7 @@ keys contract.
   <description>HSYNC P2P bootstrap node (boot/1, QUIC/UDP 443, no-log)</description>
 
   <executable>C:\hsync-bootnode\.venv\Scripts\python.exe</executable>
-  <arguments>-m hsync_bootnode run --host 0.0.0.0 --port 443 --identity C:\ProgramData\hsync-bootnode\identity.pem</arguments>
+  <arguments>-m hsync_bootnode run --listen-host 0.0.0.0 --listen-port 443 --identity C:\ProgramData\hsync-bootnode\identity.pem</arguments>
   <workingdirectory>C:\hsync-bootnode</workingdirectory>
 
   <startmode>Automatic</startmode>

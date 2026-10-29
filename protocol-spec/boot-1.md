@@ -7,12 +7,22 @@
 ## Transport
 
 - QUIC/UDP, default port **443** (the shared `BOOT_DEFAULT_PORT`; any UDP port is
-  selectable with `--port`, and a recommended reachability set (`BOOT_PORT_SET`,
-  443 + 53) with `--ports`). **One process, one in-memory routing table, one or
-  more UDP listeners** (multi-port; no TCP fallback — zero legacy). Multiple
-  listeners share the same routing table so a peer registered via one port is
-  visible to a query on another; state sharding across processes is forbidden
-  (it would break discovery).
+  selectable with `--listen-port`, and a recommended reachability set
+  (`BOOT_PORT_SET`, 443 + 53) with `--listen-ports`). **One process, one
+  in-memory routing table, one or more UDP listeners** (multi-port; no TCP
+  fallback — zero legacy). Multiple listeners share the same routing table so a
+  peer registered via one port is visible to a query on another; state sharding
+  across processes is forbidden (it would break discovery).
+- **Redundancy is client-side, never server-side**: the tables of two different
+  nodes are independent and the protocol has no frame that copies one into the
+  other. A client MAY therefore lease and query **several** independent nodes
+  (one `register`/`refresh`/`query` cycle per node) and merge the samples it
+  gets back; a peer seen through one node is then visible through any other the
+  client can reach, while each node keeps its single RAM-only table. The union
+  is client state, not protocol state: a peer registered on node A is *not*
+  visible to a client that only reaches node B, and an implementation MUST NOT
+  pretend otherwise (no re-publication of another peer's record, which would
+  also break the source-IP ownership rule in §Auth).
 - TLS 1.3 inside QUIC: the exchanged peer list is not readable by ISPs.
 - ALPN `hsync-boot/1`.
 - NDJSON payloads (one JSON object per line) over bidirectional QUIC streams;

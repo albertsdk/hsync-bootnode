@@ -155,9 +155,9 @@ def test_ready_file_failure_exits_4_without_a_traceback(tmp_path) -> None:
     result = run_cli(
         [
             "run",
-            "--host",
+            "--listen-host",
             "127.0.0.1",
-            "--port",
+            "--listen-port",
             str(free_udp_port()),
             "--ready-file",
             str(missing),
@@ -194,7 +194,7 @@ def test_port_in_use_fails_fast_with_actionable_error() -> None:
             pytest.skip("UDP SO_REUSEPORT allows a second bind; cannot reproduce")
 
         # When: the node tries to bind the same port
-        result = run_cli(["run", "--host", "127.0.0.1", "--port", str(port)])
+        result = run_cli(["run", "--listen-host", "127.0.0.1", "--listen-port", str(port)])
         # Then: exit 3 with an actionable, traceback-free message
         assert result.returncode == 3
         assert "cannot bind" in result.stderr
@@ -259,7 +259,7 @@ async def test_sigint_exits_cleanly_and_removes_ready_file(bootnode_factory) -> 
 
 @pytest.mark.asyncio
 async def test_ipv6_listener_serves(bootnode_factory, bucket, rng) -> None:
-    """``--host [::1]`` binds the IPv6 loopback and serves ``boot/1`` over it."""
+    """``--listen-host [::1]`` binds the IPv6 loopback and serves ``boot/1`` over it."""
     from harness import BootClient, random_cid
 
     # Given: IPv6 loopback is available

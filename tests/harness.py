@@ -303,14 +303,14 @@ def start_bootnode(
     if ports is not None:
         resolved_ports = list(ports)
         port = resolved_ports[0]
-        port_args = ["--ports", ",".join(str(p) for p in resolved_ports)]
+        port_args = ["--listen-ports", ",".join(str(p) for p in resolved_ports)]
     else:
         port = port or free_udp_port(family)
         resolved_ports = [port]
-        port_args = ["--port", str(port)]
+        port_args = ["--listen-port", str(port)]
     ready_file = tmp_path / "ready.pid" if ready else None
 
-    cmd = [resolve_bin(), "run", "--host", host, *port_args]
+    cmd = [resolve_bin(), "run", "--listen-host", host, *port_args]
     if ephemeral:
         cmd += ["--ephemeral"]
     if ttl is not None:

@@ -15,7 +15,7 @@ The bootnode presented this SHA256 fingerprint:
 ```
 
 The client also prints the known-hosts file that holds the accepted pin and the
-exact `hsync trust bootnode add`/`hsync trust bootnode remove` commands that
+exact `hsync trust discovery-server add`/`hsync trust discovery-server remove` commands that
 unblock the situation.
 
 **Why.** The client authenticates the node's **self-signed** certificate by
@@ -52,9 +52,9 @@ hsync p2p HOST -b BUCKET --bootnode-fingerprint NEW_FINGERPRINT
 ```
 
 Or, if a client already pinned it, forget the stale pin with
-`hsync trust bootnode remove` (the client prints this exact command, with the host
+`hsync trust discovery-server remove` (the client prints this exact command, with the host
 and port, when it refuses) so the next connection is trusted again; the entry
-lives in the client's trust store (`bootnode_known_hosts.json` under
+lives in the client's trust store (`discovery_server_known_hosts.json` under
 `$XDG_STATE_HOME/hsync/`, or the path in
 `HSYNC_BOOTNODE_TRUST_FILE`).
 
@@ -129,7 +129,7 @@ new one. Rotation keeps the existing DNS/IP SANs and adds any `--public-host`
 you pass. The command re-reads and verifies the pair it wrote; **restart the
 node** to serve the new identity (it is loaded at startup), then verify the
 certificate a client actually sees with
-`hsync trust bootnode fingerprint <host>` (`identity show` reads the persisted
+`hsync trust discovery-server fingerprint <host:port>` (`identity show` reads the persisted
 file, not the served certificate). A node started with `--ephemeral` is the
 exception: it keeps the identity in memory, so *any* restart changes the
 fingerprint — do not pin such a node.
@@ -161,12 +161,12 @@ listening on a second inbound port — 443 **and** 53, sharing one routing
 table, with both open in the host firewall:
 
 ```bash
-hsync-bootnode run --ports 443,53
+hsync-bootnode run --listen-ports 443,53
 ```
 
 With a packaged install, set the same option through a unit/Compose override
 (see the Debian, Windows or Docker guide); for the full semantics see
-`--ports` in [usage.md](usage.md#run-options).
+`--listen-ports` in [usage.md](usage.md#run-options).
 
 ## Peers discover each other but never sync (mobile data, hotspot, CGNAT)
 

@@ -55,7 +55,7 @@ The probe is a `boot/1` handshake read from a host that is **not** the node
 installed there):
 
 ```bash
-hsync trust bootnode fingerprint BOOTNODE_HOST
+hsync trust discovery-server fingerprint BOOTNODE_HOST:443
 ```
 
 It exits non-zero when no QUIC handshake completes, and prints the fingerprint it
@@ -65,7 +65,7 @@ identity change. To run it on a schedule, add a timer on the monitoring host:
 ```bash
 sudo tee /usr/local/bin/hsync-bootnode-probe >/dev/null <<'EOF'
 #!/bin/sh
-exec hsync trust bootnode fingerprint "$1"
+exec hsync trust discovery-server fingerprint "$1"
 EOF
 sudo chmod 755 /usr/local/bin/hsync-bootnode-probe
 ```
@@ -123,7 +123,7 @@ sudo systemctl edit hsync-bootnode.service
 [Service]
 Environment=HSYNC_BOOTNODE_STATS_FILE=/var/lib/hsync-bootnode/stats.prom
 ExecStart=
-ExecStart=/bin/sh -c 'exec /usr/bin/hsync-bootnode run --host 0.0.0.0 --port 443 --identity /var/lib/hsync-bootnode/identity.pem --keys-fd 5 5<"${CREDENTIALS_DIRECTORY}/group-keys" --metrics-port 9101 --metrics-token-fd 6 6<"${CREDENTIALS_DIRECTORY}/metrics-token"'
+ExecStart=/bin/sh -c 'exec /usr/bin/hsync-bootnode run --listen-host 0.0.0.0 --listen-port 443 --identity /var/lib/hsync-bootnode/identity.pem --keys-fd 5 5<"${CREDENTIALS_DIRECTORY}/group-keys" --metrics-port 9101 --metrics-token-fd 6 6<"${CREDENTIALS_DIRECTORY}/metrics-token"'
 ```
 
 ```bash
@@ -220,7 +220,7 @@ Rotation is explicit, because a running node has no reload path:
 sudo hsync-bootnode identity rotate \
     --identity /var/lib/hsync-bootnode/identity.pem
 sudo systemctl restart hsync-bootnode.service
-hsync trust bootnode fingerprint BOOTNODE_HOST
+hsync trust discovery-server fingerprint BOOTNODE_HOST:443
 ```
 
 During the rotation window give clients **both** fingerprints: `--bootnode-fingerprint` is

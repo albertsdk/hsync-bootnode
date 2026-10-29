@@ -63,7 +63,7 @@ sudo systemctl edit hsync-bootnode.service
 ```ini
 [Service]
 ExecStart=
-ExecStart=/bin/sh -c 'exec /usr/bin/hsync-bootnode run --host 0.0.0.0 --port 443 --identity /var/lib/hsync-bootnode/identity.pem --protected-bucket BUCKET --keys-fd 5 5<"$CREDENTIALS_DIRECTORY/group-keys"'
+ExecStart=/bin/sh -c 'exec /usr/bin/hsync-bootnode run --listen-host 0.0.0.0 --listen-port 443 --identity /var/lib/hsync-bootnode/identity.pem --protected-bucket BUCKET --keys-fd 5 5<"$CREDENTIALS_DIRECTORY/group-keys"'
 ```
 
 For a fully private node (every bucket gated), an environment drop-in is enough
@@ -97,7 +97,7 @@ sudo systemctl edit hsync-bootnode.service
 ```ini
 [Service]
 ExecStart=
-ExecStart=/usr/bin/hsync-bootnode run --host 0.0.0.0 --ports 443,53 --identity /var/lib/hsync-bootnode/identity.pem
+ExecStart=/usr/bin/hsync-bootnode run --listen-host 0.0.0.0 --listen-ports 443,53 --identity /var/lib/hsync-bootnode/identity.pem
 ```
 
 ```bash
@@ -109,7 +109,7 @@ Open UDP 53 in the host firewall too, and free that port if the local resolver
 already holds it. If you provisioned group keys, this override **loses** the
 unit's automatic `--keys-fd`: keep `LoadCredential=` and append
 `--keys-fd 5 5<"$CREDENTIALS_DIRECTORY/group-keys"` to the command (as in the
-protected-bucket example above). See `--ports` in
+protected-bucket example above). See `--listen-ports` in
 [usage.md](usage.md#run-options).
 
 ## Verify the node is running

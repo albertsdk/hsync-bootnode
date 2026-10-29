@@ -22,7 +22,7 @@ readonly CONTAINER_NAME="hsync-bootnode"
 # non-root user); the host's public QUIC port is mapped to it.
 readonly CONTAINER_PORT="8443"
 # Host UDP port clients connect to.
-HSYNC_BOOTNODE_PORT="${HSYNC_BOOTNODE_PORT:-443}"
+BOOTNODE_HOST_UDP_PORT="${BOOTNODE_HOST_UDP_PORT:-443}"
 # Host directory holding the persistent TLS identity and the readiness PID.
 _DATA_DIR_RAW="${HSYNC_BOOTNODE_DATA_DIR:-${SCRIPT_DIR}/hsync-data}"
 if [[ "${_DATA_DIR_RAW}" = /* ]]; then
@@ -82,7 +82,7 @@ ${BOLD}Options:${RESET}
     -h, --help      Show this help message
 
 ${BOLD}Environment Variables:${RESET}
-    HSYNC_BOOTNODE_PORT          Host UDP port clients connect to (default: 443)
+    BOOTNODE_HOST_UDP_PORT          Host UDP port clients connect to (default: 443)
     HSYNC_BOOTNODE_PRIVATE       Set to 1 for a private node (every frame needs a token)
     HSYNC_BOOTNODE_KEYS_PATH     Host path of the group-keys file (mounted at /keys, opened as fd 3)
     HSYNC_BOOTNODE_DEBUG         Set to 1 for the full operation log (peer identity included)
@@ -96,7 +96,7 @@ ${BOLD}Examples:${RESET}
     ./docker.sh logs -f
 
 The container binds UDP ${CONTAINER_PORT} internally; the host maps
-HSYNC_BOOTNODE_PORT to it. The persistent TLS identity lives on the host under
+BOOTNODE_HOST_UDP_PORT to it. The persistent TLS identity lives on the host under
 ${DATA_DIR}; back it up to keep the certificate fingerprint stable across hosts.
 EOF
 }
@@ -141,7 +141,7 @@ cmd_start() {
         --restart unless-stopped
         --read-only
         --tmpfs /tmp
-        -p "${HSYNC_BOOTNODE_PORT}:${CONTAINER_PORT}/udp"
+        -p "${BOOTNODE_HOST_UDP_PORT}:${CONTAINER_PORT}/udp"
         # Run under the invoking user's ids so the bind-mounted identity
         # directory stays writable (created above as the same user).
         --user "${HSYNC_UID:-$(id -u)}:${HSYNC_GID:-$(id -g)}"
@@ -167,9 +167,9 @@ cmd_start() {
 
     rm -f "${READY_FILE}"
     docker "${docker_args[@]}" "${IMAGE_NAME}:${IMAGE_TAG}" \
-        run --host 0.0.0.0 --port "${CONTAINER_PORT}"
+        run --listen-host 0.0.0.0 --listen-port "${CONTAINER_PORT}"
 
-    log_info "Host port: ${HSYNC_BOOTNODE_PORT}/udp → container ${CONTAINER_PORT}/udp"
+    log_info "Host port: ${BOOTNODE_HOST_UDP_PORT}/udp → container ${CONTAINER_PORT}/udp"
     log_info "Identity:  ${DATA_DIR}"
 
     if [[ "${STARTUP_READY_TIMEOUT}" =~ ^[0-9]+$ ]] && (( STARTUP_READY_TIMEOUT > 0 )); then
@@ -180,7 +180,7 @@ cmd_start() {
             docker logs --tail 30 "${CONTAINER_NAME}" >&2 || true
             exit 1
         fi
-        log_ok "HSYNC bootnode is live → udp/${HSYNC_BOOTNODE_PORT}"
+        log_ok "HSYNC bootnode is live → udp/${BOOTNODE_HOST_UDP_PORT}"
     else
         log_info "Readiness check skipped (HSYNC_BOOTNODE_STARTUP_TIMEOUT=0)"
     fi

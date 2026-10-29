@@ -418,7 +418,7 @@ def _sans_for(host: str, public_hosts: Sequence[str]) -> list[x509.GeneralName]:
         try:
             general: x509.GeneralName = x509.IPAddress(ipaddress.ip_address(name))
         except ValueError:
-            # A DNS-name bind host (e.g. ``--host localhost``) has no IP SAN;
+            # A DNS-name bind host (e.g. ``--listen-host localhost``) has no IP SAN;
             # record it as a DNS SAN instead of failing identity generation.
             general = x509.DNSName(name)
         key = (isinstance(general, x509.IPAddress), str(general.value))

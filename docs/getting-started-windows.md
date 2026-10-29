@@ -46,8 +46,8 @@ Restart-Service hsync-bootnode
 - Read the fingerprint clients pin with
   `hsync-bootnode identity show --identity C:\ProgramData\hsync-bootnode\identity.pem`.
 - To serve a **second** inbound UDP port (for clients whose network blocks UDP
-  443), add `--ports 443,53` to the service `<arguments>` in the XML above and
-  open the extra port — see `--ports` in
+  443), add `--listen-ports 443,53` to the service `<arguments>` in the XML above and
+  open the extra port — see `--listen-ports` in
   [Usage](../docs/usage.md#run-options).
 
 ## Update and remove

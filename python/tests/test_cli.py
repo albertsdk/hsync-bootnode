@@ -370,12 +370,12 @@ def test_bind_permission_denied_is_actionable(monkeypatch) -> None:
         )
 
     _patch_run_no_side_effects(monkeypatch, _boom)
-    result = runner.invoke(app, ["run", "--port", "443"], env=_EPHEMERAL_ENV)
+    result = runner.invoke(app, ["run", "--listen-port", "443"], env=_EPHEMERAL_ENV)
     assert result.exit_code == 3
     out = _combined(result)
     assert "permission denied" in out
     assert "CAP_NET_BIND_SERVICE" in out
-    assert "--port 8443" in out
+    assert "--listen-port 8443" in out
     assert "Traceback" not in out
 
 
@@ -384,11 +384,11 @@ def test_bind_address_in_use_is_actionable(monkeypatch) -> None:
         raise OSError(errno.EADDRINUSE, "Address already in use")
 
     _patch_run_no_side_effects(monkeypatch, _boom)
-    result = runner.invoke(app, ["run", "--port", "443"], env=_EPHEMERAL_ENV)
+    result = runner.invoke(app, ["run", "--listen-port", "443"], env=_EPHEMERAL_ENV)
     assert result.exit_code == 3
     out = _combined(result)
     assert "already in use" in out
-    assert "--port <PORT>" in out
+    assert "--listen-port <PORT>" in out
     assert "Traceback" not in out
 
 
@@ -397,11 +397,13 @@ def test_bind_bad_host_is_actionable(monkeypatch) -> None:
         raise OSError(errno.EADDRNOTAVAIL, "Cannot assign requested address")
 
     _patch_run_no_side_effects(monkeypatch, _boom)
-    result = runner.invoke(app, ["run", "--host", "127.0.0.1", "--port", "443"], env=_EPHEMERAL_ENV)
+    result = runner.invoke(
+        app, ["run", "--listen-host", "127.0.0.1", "--listen-port", "443"], env=_EPHEMERAL_ENV
+    )
     assert result.exit_code == 3
     out = _combined(result)
     assert "not available" in out
-    assert "--host" in out
+    assert "--listen-host" in out
     assert "0.0.0.0" in out
 
 
@@ -416,7 +418,7 @@ def test_run_port_default_uses_the_shared_ssot() -> None:
 
 
 def test_host_port_shorthand_is_accepted() -> None:
-    """``--host HOST:PORT`` resolves host and port without a separate ``--port``."""
+    """``--listen-host HOST:PORT`` resolves host and port without a separate ``--listen-port``."""
     from hsync_bootnode.cli import _resolve_listeners
 
     assert _resolve_listeners("0.0.0.0:8443", None, None) == ("0.0.0.0", [8443])
@@ -424,7 +426,7 @@ def test_host_port_shorthand_is_accepted() -> None:
 
 
 def test_host_port_and_port_flag_are_mutually_exclusive() -> None:
-    """A port in ``--host`` and in ``--port`` is a usage error, not a precedence."""
+    """A port in ``--listen-host`` and in ``--listen-port`` is a usage error, not a precedence."""
     import pytest
     import typer
 
@@ -435,14 +437,14 @@ def test_host_port_and_port_flag_are_mutually_exclusive() -> None:
 
 
 def test_port_flag_alone_keeps_the_default_host() -> None:
-    """``--port`` without ``--host`` binds all interfaces, as before."""
+    """``--listen-port`` without ``--listen-host`` binds all interfaces."""
     from hsync_bootnode.cli import _resolve_listeners
 
     assert _resolve_listeners(None, 8443, None) == ("0.0.0.0", [8443])
 
 
 def test_ports_flag_resolves_the_ordered_set() -> None:
-    """``--ports`` resolves a comma-separated ordered set and conflicts with --port."""
+    """``--listen-ports`` resolves a comma-separated ordered set and conflicts with --listen-port."""
     import pytest
     import typer
 
@@ -453,9 +455,9 @@ def test_ports_flag_resolves_the_ordered_set() -> None:
     assert _resolve_listeners("0.0.0.0", None, "53, 443") == ("0.0.0.0", [53, 443])
 
     with pytest.raises(typer.BadParameter):
-        _resolve_listeners(None, 443, "443,53")  # --port + --ports
+        _resolve_listeners(None, 443, "443,53")  # --listen-port + --listen-ports
     with pytest.raises(typer.BadParameter):
-        _resolve_listeners("0.0.0.0:8443", None, "443,53")  # host port + --ports
+        _resolve_listeners("0.0.0.0:8443", None, "443,53")  # host port + --listen-ports
     with pytest.raises(typer.BadParameter):
         _resolve_listeners(None, None, "443,443")  # duplicate
     with pytest.raises(typer.BadParameter):
@@ -486,7 +488,7 @@ def test_ready_file_failure_is_actionable_exit_4(monkeypatch, tmp_path) -> None:
     _patch_run_no_side_effects(monkeypatch, _start)
     ready = tmp_path / "missing-dir" / "ready.pid"
     result = runner.invoke(
-        app, ["run", "--port", "8443", "--ready-file", str(ready)], env=_EPHEMERAL_ENV
+        app, ["run", "--listen-port", "8443", "--ready-file", str(ready)], env=_EPHEMERAL_ENV
     )
 
     assert result.exit_code == 4
@@ -509,7 +511,7 @@ def test_ready_file_conflict_leaves_the_existing_file_alone(monkeypatch, tmp_pat
     ready.write_text("stale", encoding="utf-8")
 
     result = runner.invoke(
-        app, ["run", "--port", "8443", "--ready-file", str(ready)], env=_EPHEMERAL_ENV
+        app, ["run", "--listen-port", "8443", "--ready-file", str(ready)], env=_EPHEMERAL_ENV
     )
 
     assert result.exit_code == 4
@@ -531,7 +533,7 @@ def test_debug_run_announces_the_peer_aware_stream(monkeypatch, tmp_path) -> Non
     ready = tmp_path / "missing-dir" / "ready.pid"
     result = runner.invoke(
         app,
-        ["run", "--port", "8443", "--debug", "--no-rate-limit", "--ready-file", str(ready)],
+        ["run", "--listen-port", "8443", "--debug", "--no-rate-limit", "--ready-file", str(ready)],
         env=_EPHEMERAL_ENV,
     )
 
@@ -733,7 +735,7 @@ def test_the_environment_cannot_enable_the_no_rate_limit_seam(monkeypatch) -> No
     """--no-rate-limit is CLI-only: a stale env var cannot disable the limits."""
     monkeypatch.setenv("HSYNC_BOOTNODE_NO_RATE_LIMIT", "1")
     # TEST-NET-1 is never a local address, so the bind fails after the banner.
-    result = runner.invoke(app, ["run", "--host", "192.0.2.1", "--port", "9"])
+    result = runner.invoke(app, ["run", "--listen-host", "192.0.2.1", "--listen-port", "9"])
     assert "rate limit: enabled" in _plain(_combined(result))
 
 
@@ -834,7 +836,16 @@ def test_a_metrics_port_without_a_token_fails_fast() -> None:
     """Configuration is checked before any listener is bound."""
     result = runner.invoke(
         app,
-        ["run", "--host", "192.0.2.1", "--port", "9", "--ephemeral", "--metrics-port", "9101"],
+        [
+            "run",
+            "--listen-host",
+            "192.0.2.1",
+            "--listen-port",
+            "9",
+            "--ephemeral",
+            "--metrics-port",
+            "9101",
+        ],
     )
     assert result.exit_code == 2
     assert "requires a bearer token" in _combined(result)
@@ -842,6 +853,8 @@ def test_a_metrics_port_without_a_token_fails_fast() -> None:
 
 @pytest.mark.parametrize("args", [["--metrics-port", "0"], ["--stats-interval", "0"]])
 def test_out_of_range_operational_values_fail_fast(args: list[str]) -> None:
-    result = runner.invoke(app, ["run", "--host", "192.0.2.1", "--port", "9", "--ephemeral", *args])
+    result = runner.invoke(
+        app, ["run", "--listen-host", "192.0.2.1", "--listen-port", "9", "--ephemeral", *args]
+    )
     assert result.exit_code == 2
     assert "must be between" in _combined(result)

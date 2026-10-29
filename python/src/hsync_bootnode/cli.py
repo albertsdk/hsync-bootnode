@@ -1,6 +1,7 @@
 """Typer CLI for the ``hsync-bootnode`` Python v1 process.
 
-Starts the single QUIC/UDP listener on ``--port`` (default 443), with RETRY +
+Starts the QUIC/UDP listener(s) on ``--listen-port`` / ``--listen-ports``
+(default 443), with RETRY +
 address-validation tokens, the token policy (the operator's protected
 buckets, or every bucket in node-wide ``--private`` mode), per-IP/per-bucket
 rate limits, STUN-echo and optional zero-touch UPnP. No-log: nothing
@@ -163,51 +164,53 @@ def main(
 
 
 def _parse_port_list(raw: str) -> list[int]:
-    """Parse a ``--ports`` value (comma-separated UDP ports, order preserved).
+    """Parse a ``--listen-ports`` value (comma-separated UDP ports, order preserved).
 
     Thin strict wrapper over the shared ``hsync_common.endpoint.parse_port_list``
-    SSOT, which the client reuses in its lenient ``HSYNC_BOOTNODE_PORTS`` policy.
+    SSOT, which the client reuses in its lenient
+    ``HSYNC_DISCOVERY_SERVER_EXTRA_PORTS`` policy.
     """
     try:
         ports = parse_port_list(raw, strict=True)
     except ValueError as exc:
-        raise typer.BadParameter(f"--ports {exc}") from exc
+        raise typer.BadParameter(f"--listen-ports {exc}") from exc
     if not ports:
-        raise typer.BadParameter("--ports requires at least one port")
+        raise typer.BadParameter("--listen-ports requires at least one port")
     return list(ports)
 
 
 def _resolve_listeners(
-    host: str | None, port: int | None, ports: str | None
+    listen_host: str | None, listen_port: int | None, listen_ports: str | None
 ) -> tuple[str, list[int]]:
     """Resolve the bind address and ordered UDP port set.
 
-    ``--ports`` (multi, comma-separated) is mutually exclusive with ``--port``
-    and with a port carried in ``--host HOST:PORT``. Otherwise the single value
-    comes from ``--port`` (or the host port) and defaults to
-    ``BOOT_DEFAULT_PORT``. ``--host`` may carry a port; the returned host is
-    always unbracketed.
+    ``--listen-ports`` (multi, comma-separated) is mutually exclusive with
+    ``--listen-port`` and with a port carried in ``--listen-host HOST:PORT``.
+    Otherwise the single value comes from ``--listen-port`` (or the host port)
+    and defaults to ``BOOT_DEFAULT_PORT``. The returned host is always
+    unbracketed.
     """
     resolved_host = "0.0.0.0"
     host_port: int | None = None
-    if host is not None:
+    if listen_host is not None:
         try:
-            hp = parse_host_port(host)
+            hp = parse_host_port(listen_host)
         except ValueError as exc:
             raise typer.BadParameter(str(exc)) from exc
         resolved_host = hp.host
         host_port = hp.port
-    if ports is not None:
-        if port is not None or host_port is not None:
+    if listen_ports is not None:
+        if listen_port is not None or host_port is not None:
             raise typer.BadParameter(
-                "--ports is mutually exclusive with --port and a port in --host HOST:PORT"
+                "--listen-ports is mutually exclusive with --listen-port and a port "
+                "in --listen-host HOST:PORT"
             )
-        return resolved_host, _parse_port_list(ports)
-    if port is not None and host_port is not None:
+        return resolved_host, _parse_port_list(listen_ports)
+    if listen_port is not None and host_port is not None:
         raise typer.BadParameter(
-            "specify the port either in --host HOST:PORT or with --port, not both"
+            "specify the port either in --listen-host HOST:PORT or with --listen-port, not both"
         )
-    single = port if port is not None else host_port
+    single = listen_port if listen_port is not None else host_port
     return resolved_host, [single if single is not None else BOOT_DEFAULT_PORT]
 
 
@@ -218,36 +221,37 @@ def _near_expiry_reason(days_left: int, identity_path: str) -> str:
 
 @app.command()
 def run(
-    host: str | None = typer.Option(
+    listen_host: str | None = typer.Option(
         None,
-        "--host",
+        "--listen-host",
         metavar="HOST[:PORT]",
         help=(
             "Address to bind the QUIC/UDP listener to, optionally with a port "
             "(HOST[:PORT], e.g. 0.0.0.0:443 or [::1]:443). Default: 0.0.0.0."
         ),
     ),
-    port: int | None = typer.Option(
+    listen_port: int | None = typer.Option(
         None,
-        "--port",
+        "--listen-port",
         min=1,
         max=65535,
         help=(
-            f"UDP port (default {BOOT_DEFAULT_PORT} for QUIC/HTTP3). "
-            "Mutually exclusive with a port in --host HOST:PORT. "
-            "Use --ports to listen on several UDP ports at once "
+            f"UDP port to listen on (default {BOOT_DEFAULT_PORT} for QUIC/HTTP3). "
+            "Mutually exclusive with a port in --listen-host HOST:PORT. "
+            "Use --listen-ports to listen on several UDP ports at once "
             "(client-egress fallback). "
             "Ports below 1024 need root or CAP_NET_BIND_SERVICE."
         ),
     ),
-    ports: str | None = typer.Option(
+    listen_ports: str | None = typer.Option(
         None,
-        "--ports",
+        "--listen-ports",
         metavar="P1,P2,...",
         help=(
             "Comma-separated UDP ports to listen on (multi-port; one process, one "
             "routing table, so a peer on one port is visible to queries on another). "
-            "Mutually exclusive with --port and a port in --host HOST:PORT. "
+            "Mutually exclusive with --listen-port and a port in --listen-host "
+            "HOST:PORT. "
             f"Recommended reachability set: {','.join(map(str, BOOT_PORT_SET))} "
             "(443 QUIC + 53 DNS; freeing the local resolver is usually required for 53). "
             "Ports below 1024 need root or CAP_NET_BIND_SERVICE."
@@ -449,7 +453,7 @@ def run(
     ),
 ) -> None:
     """Run the bootstrap node: one or more QUIC/UDP listeners (boot/1)."""
-    resolved_host, resolved_ports = _resolve_listeners(host, port, ports)
+    resolved_host, resolved_ports = _resolve_listeners(listen_host, listen_port, listen_ports)
     limits = ResourceLimits.detect()
     # One aggregate counter object per process: the handler, the connection guard
     # and every sink (STATUS=, stats file, /metrics) share it.
@@ -505,7 +509,9 @@ def run(
     # Single-port startup: hint at the multi-port option that makes the node
     # reachable from a client network whose egress firewall blocks UDP 443.
     multi_hint = (
-        " — add --ports 443,53 for client-egress reachability" if len(resolved_ports) == 1 else ""
+        " — add --listen-ports 443,53 for client-egress reachability"
+        if len(resolved_ports) == 1
+        else ""
     )
     banner = (
         f"hsync-bootnode {__version__} — boot/1, no-log, in-memory\n"
@@ -625,7 +631,7 @@ def identity_rotate(
     )
     typer.echo(
         "restart the bootnode to serve the new identity, then verify it from a client "
-        "with 'hsync trust bootnode fingerprint <host>'",
+        "with 'hsync trust discovery-server fingerprint <host:port>'",
         err=True,
     )
 
@@ -683,7 +689,7 @@ def _bind_error_message(exc: ListenerBindError) -> str:
         return (
             f"error: cannot bind the QUIC/UDP listener on {target} — permission denied.\n"
             "       Ports below 1024 (the 443 default) need root or CAP_NET_BIND_SERVICE.\n"
-            "       Fix: use an unprivileged port (hsync-bootnode run --port 8443), run as\n"
+            "       Fix: use an unprivileged port (hsync-bootnode run --listen-port 8443), run as\n"
             "       root, or grant the capability to the binary:\n"
             "         sudo setcap cap_net_bind_service=+ep <hsync-bootnode>\n"
             "       The packaged systemd unit already grants CAP_NET_BIND_SERVICE."
@@ -692,17 +698,17 @@ def _bind_error_message(exc: ListenerBindError) -> str:
         return (
             f"error: cannot bind the QUIC/UDP listener on {target} — address already in use.\n"
             "       Another process or another node instance is using that UDP port.\n"
-            "       Stop it, or pick a free port: hsync-bootnode run --port <PORT>"
+            "       Stop it, or pick a free port: hsync-bootnode run --listen-port <PORT>"
         )
     if exc.errno_value in (errno.EADDRNOTAVAIL, errno.EINVAL):
         return (
             f"error: cannot bind the QUIC/UDP listener on {target} — the address is not available.\n"
-            "       --host must be a local interface address, or 0.0.0.0 to listen on all of them."
+            "       --listen-host must be a local interface address, or 0.0.0.0 to listen on all of them."
         )
     reason = os.strerror(exc.errno_value) if exc.errno_value is not None else "bind failed"
     return (
         f"error: cannot bind the QUIC/UDP listener on {target}: {reason}.\n"
-        "       Check --host/--port; ports below 1024 need root or CAP_NET_BIND_SERVICE."
+        "       Check --listen-host/--listen-port; ports below 1024 need root or CAP_NET_BIND_SERVICE."
     )
 
 

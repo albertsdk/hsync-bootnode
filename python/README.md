@@ -39,7 +39,7 @@ python/
 ## Run
 
 ```bash
-python -m hsync_bootnode run --host 0.0.0.0 --port 443
+python -m hsync_bootnode run --listen-host 0.0.0.0 --listen-port 443
 ```
 
 ## Build (standalone binary)

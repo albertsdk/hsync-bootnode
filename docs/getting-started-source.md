@@ -62,11 +62,11 @@ open in the host firewall):
 
 ```bash
 cd python
-.venv/bin/hsync-bootnode run --ports 443,53
+.venv/bin/hsync-bootnode run --listen-ports 443,53
 ```
 
 The ports share one routing table, so a peer registered on one port is
-visible to a query on another. See `--ports` in
+visible to a query on another. See `--listen-ports` in
 [usage.md](usage.md#run-options).
 
 ## Standalone binary (no Python on the target)

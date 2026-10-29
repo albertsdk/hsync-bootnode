@@ -148,7 +148,7 @@ The other components of the HSYNC ecosystem:
 - [HSYNC Main](https://github.com/albertsdk/hsync/blob/main/README.md) — Umbrella repository and project overview.
 - [HSYNC Desktop](https://github.com/albertsdk/hsync-desktop/blob/main/README.md) — Desktop GUI front-end.
 - [HSYNC Server](https://github.com/albertsdk/hsync-server/blob/main/README.md) — Central sync hub: REST API, WebSocket relay, file storage.
-- [HSYNC Client](https://github.com/albertsdk/hsync-client/blob/main/README.md) — Command-line sync client.
+- [HSYNC Client](https://github.com/albertsdk/hsync-client/blob/main/README.md) — Reference client agent: the `hsync` CLI and its sync engine.
 - [HSYNC Common](https://github.com/albertsdk/hsync-common/blob/main/README.md) — Shared library: data models, protocol, delta transfer, hashing.
 - [HSYNC Android](https://github.com/albertsdk/hsync-android/blob/main/README.md) — Android client app. *(in development)*
 

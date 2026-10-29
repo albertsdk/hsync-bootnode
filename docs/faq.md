@@ -168,6 +168,27 @@ With a packaged install, set the same option through a unit/Compose override
 (see the Debian, Windows or Docker guide); for the full semantics see
 `--ports` in [usage.md](usage.md#run-options).
 
+## Peers discover each other but never sync (mobile data, hotspot, CGNAT)
+
+Two peers behind carrier-grade NAT have no inbound address at all: discovery and
+the master election work, then the slave keeps logging `No reachable endpoint for
+master …`. Start the node with `--relay` and it also carries the data plane,
+forwarding the peers' TLS verbatim (it never sees content, names or credentials;
+it does see which devices are paired and how many bytes they exchanged):
+
+```bash
+hsync-bootnode run --relay
+```
+
+The client then logs `[RELAY]` on both sides and the sync proceeds through the
+node. Relaying spends the node's uplink, so it is opt-in and capped: set the
+aggregate rate with `--relay-bandwidth` (KiB/s, default 8192), the per-session
+ceiling with `--relay-session-bytes` and the idle window with
+`--relay-idle-timeout` (default 120 s). Without `--relay` the node answers every
+relay frame with `relay_unavailable` and only directly reachable peers connect.
+See [usage.md](usage.md#run-options) and the wire contract in
+[`protocol-spec/boot-1.md`](../protocol-spec/boot-1.md) (§Data relay).
+
 ## Where can I read the pin the client stored?
 
 On the client host, in `bootnode_known_hosts.json` under `$XDG_STATE_HOME/hsync/`

@@ -68,8 +68,12 @@ more:
 - The routing table is **RAM-only** with a 60-second TTL: stop the process and
   every trace of the network is gone.
 
-It is not a relay, not a storage node and not a control plane: file data always
-flows directly between peers. See [How it works](docs/README.md#how-it-works-in-one-paragraph).
+It is a rendezvous point and, when the operator opts in with `--relay`, a
+**relay of opaque TLS**: two peers that no inbound NAT mapping reaches (mobile
+carrier-grade NAT, a hotspot behind a carrier) can still run their data plane
+through the node, which forwards their bytes without ever terminating or
+inspecting that TLS — content, file names and credentials stay invisible to it.
+Without `--relay` file data flows only between directly reachable peers.
 
 A node run as-is is a **public** rendezvous point for anyone who knows its
 hostname. Started with `--private` it becomes the closed rendezvous point of a

@@ -71,13 +71,69 @@
 | `refresh` | `{protocol_version:"boot/1", type:"refresh", cid, bucket, group?, bucket_token?, connected?}` |
 | `leave` | `{protocol_version:"boot/1", type:"leave", cid, bucket, bucket_token?}` |
 | `query` | `{protocol_version:"boot/1", type:"query", bucket, group?, bucket_token?, limit?}` |
+| `relay_listen` | `{protocol_version:"boot/1", type:"relay_listen", cid, bucket, group?, bucket_token?}` (§Data relay) |
+| `relay_ping` | `{protocol_version:"boot/1", type:"relay_ping", cid, bucket}` (§Data relay) |
+| `relay_connect` | `{protocol_version:"boot/1", type:"relay_connect", cid, bucket, target_cid, group?, bucket_token?}` (§Data relay) |
+| `relay_attach` | `{protocol_version:"boot/1", type:"relay_attach", cid, bucket, relay_id, bucket_token?}` (§Data relay) |
 
 ## Frames (server → client)
 
 | Frame | Payload |
 |---|---|
 | `ack` | `{protocol_version:"boot/1", type:"ack", observed_endpoint:{proto:"udp", ip, port}, ttl, server_time, retry_after?}` (STUN-echo) |
-| `response` | `{protocol_version:"boot/1", type:"response", peers:[{cid, endpoints:[{proto:"tcp"\|"udp", host, port}], cert_fp, bucket, group?, version, capacity, connected, reachable, server_ready, prefer_master, never_master, startup_time, sync_direction}], count, ttl}` or `{peers: [], count: 0, error:"token_required"\|"rate_limited"\|"overloaded", retry_after?}` |
+| `response` | `{protocol_version:"boot/1", type:"response", peers:[{cid, endpoints:[{proto:"tcp"\|"udp", host, port}], cert_fp, bucket, group?, version, capacity, connected, reachable, server_ready, prefer_master, never_master, startup_time, sync_direction}], count, ttl}` or `{peers: [], count: 0, error:"token_required"\|"rate_limited"\|"overloaded"\|"relay_unavailable", retry_after?}` |
+| `relay_listening` | `{protocol_version:"boot/1", type:"relay_listening", ttl}` (§Data relay) |
+| `relay_incoming` | `{protocol_version:"boot/1", type:"relay_incoming", relay_id, cid, expires_in}` (§Data relay) |
+| `relay_ok` | `{protocol_version:"boot/1", type:"relay_ok", relay_id}` (§Data relay) |
+| `relay_error` | `{protocol_version:"boot/1", type:"relay_error", error:"token_required"\|"rate_limited"\|"overloaded"\|"relay_unavailable", retry_after?}` (§Data relay) |
+
+## Data relay
+
+Two peers that no inbound NAT mapping reaches (carrier-grade NAT, a hotspot
+behind a carrier, a guest network) can still run the `p2p/1` data plane: the node
+pairs them and forwards their bytes, which stay **opaque TLS** end to end. The
+node never terminates or inspects that TLS, so content, file names and
+credentials remain invisible to it, and the peers keep authenticating each other
+by certificate pinning. What the node necessarily observes is the pairing
+(`cid` ↔ `cid`) and the volume.
+
+- **Opt-in per node**: without `--relay` every relay frame is answered
+  `relay_error{error:"relay_unavailable"}` (uniform, like every other refusal) and
+  no relay state is ever created.
+- **Listener** (the peer that serves — the p2p master): opens one stream, sends
+  `relay_listen`, receives `relay_listening`. That stream is the **control**
+  stream of the registration: the node pushes one `relay_incoming` per requester,
+  and the peer answers with `relay_ping` lines (no reply) to keep the QUIC
+  connection alive while no session runs. A second `relay_listen` for the same
+  `(cid, bucket)` from the same content replaces the previous control stream.
+- **Requester**: opens a **fresh** stream and sends `relay_connect` with the
+  `target_cid` it wants to reach. The node answers `relay_ok{relay_id}` on that
+  same stream; from that byte on the stream is opaque in both directions. A
+  refusal is `relay_error` followed by a close.
+- **Attach**: for each `relay_incoming`, the listener opens a **fresh** stream
+  whose first line is `relay_attach{relay_id}`; every following byte is opaque.
+  The node bridges the two streams with a fixed 64 KiB buffer and `drain()` on
+  both sides (backpressure reaches the real sender).
+- **Authorization**: `relay_listen` is accepted only from the current owner of the
+  `(cid, bucket, group)` record (the same source-IP-or-token rule `register`
+  uses), so a peer cannot open a relay in another peer's name; `relay_connect`,
+  `relay_attach` and `relay_listen` all carry the optional `bucket_token` and are
+  refused uniformly (`token_required`) on protected/private buckets;
+  `relay_attach` must also match the `relay_id`, the listener `cid`/`bucket` and
+  the listener's source IP, and an unknown `relay_id` attaches to nothing.
+- **Bounds**: `relay_id` is 16 random bytes (32 lowercase hex). A session the
+  listener does not attach within `expires_in` is dropped. Sessions are capped
+  globally, per source IP and per bucket (host-derived, answered with
+  `overloaded`), throttled to an operator-set aggregate byte rate and closed at
+  an optional per-session byte ceiling; an idle session (no bytes either way for
+  the configured idle timeout) is closed. `relay_connect` is rate-limited per
+  `(IP, bucket)` like `query`, `relay_listen` like `register`.
+- **Stream budget**: a listener connection holds its control stream plus one
+  stream per relayed session; the per-connection stream cap therefore covers
+  `MAX_SESSIONS_PER_CONNECTION + MAX_RELAY_STREAMS_PER_CONNECTION`.
+- **No-log unchanged**: relay counters are aggregates only (sessions, bytes); no
+  CID, bucket, IP or port is written anywhere, and an idle control stream is the
+  only thing a listener keeps open.
 
 ## Rules
 

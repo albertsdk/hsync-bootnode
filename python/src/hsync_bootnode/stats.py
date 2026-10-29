@@ -64,6 +64,11 @@ class NodeStats:
     peers_peak_at: float = 0.0
     peers_updates_total: int = 0
     peers_expired_total: int = 0
+    relay_sessions_current: int = 0
+    relay_sessions_peak: int = 0
+    relay_sessions_peak_at: float = 0.0
+    relay_sessions_total: int = 0
+    relay_bytes_total: int = 0
     metrics_requests: dict[str, int] = field(
         default_factory=lambda: dict.fromkeys(METRICS_OUTCOMES, 0)
     )
@@ -94,6 +99,22 @@ class NodeStats:
         if outcome in self.metrics_requests:
             self.metrics_requests[outcome] += 1
 
+    def relay_session_opened(self) -> None:
+        """Record one relay session starting to relay bytes."""
+        self.relay_sessions_current += 1
+        self.relay_sessions_total += 1
+        if self.relay_sessions_current > self.relay_sessions_peak:
+            self.relay_sessions_peak = self.relay_sessions_current
+            self.relay_sessions_peak_at = time.time()
+
+    def relay_session_closed(self) -> None:
+        """Record one relay session ending (the level never goes below zero)."""
+        self.relay_sessions_current = max(0, self.relay_sessions_current - 1)
+
+    def relay_bytes(self, count: int) -> None:
+        """Count relayed bytes (one aggregate, never per peer)."""
+        self.relay_bytes_total += count
+
     def stats_write_failed(self) -> None:
         """Count one failed periodic write of the Prometheus text file."""
         self.stats_write_errors += 1
@@ -102,7 +123,8 @@ class NodeStats:
         """One-line summary for the service manager's ``STATUS=`` assignment."""
         return (
             f"conn={self.connections_current}/{self.connections_peak} "
-            f"peers={self.peers_current}/{self.peers_peak}"
+            f"peers={self.peers_current}/{self.peers_peak} "
+            f"relay={self.relay_sessions_current}/{self.relay_sessions_peak}"
         )
 
     def render_prometheus(self) -> str:
@@ -144,6 +166,22 @@ class NodeStats:
             "# HELP hsync_bootnode_peers_expired_total Records dropped by the TTL sweep.",
             "# TYPE hsync_bootnode_peers_expired_total counter",
             f"hsync_bootnode_peers_expired_total {self.peers_expired_total}",
+            "# HELP hsync_bootnode_relay_sessions_current Relayed sessions right now.",
+            "# TYPE hsync_bootnode_relay_sessions_current gauge",
+            f"hsync_bootnode_relay_sessions_current {self.relay_sessions_current}",
+            "# HELP hsync_bootnode_relay_sessions_peak Highest relayed-session level.",
+            "# TYPE hsync_bootnode_relay_sessions_peak gauge",
+            f"hsync_bootnode_relay_sessions_peak {self.relay_sessions_peak}",
+            "# HELP hsync_bootnode_relay_sessions_peak_timestamp_seconds When the peak was reached.",
+            "# TYPE hsync_bootnode_relay_sessions_peak_timestamp_seconds gauge",
+            "hsync_bootnode_relay_sessions_peak_timestamp_seconds "
+            f"{self.relay_sessions_peak_at:.3f}",
+            "# HELP hsync_bootnode_relay_sessions_total Relay sessions opened.",
+            "# TYPE hsync_bootnode_relay_sessions_total counter",
+            f"hsync_bootnode_relay_sessions_total {self.relay_sessions_total}",
+            "# HELP hsync_bootnode_relay_bytes_total Bytes forwarded by the relay.",
+            "# TYPE hsync_bootnode_relay_bytes_total counter",
+            f"hsync_bootnode_relay_bytes_total {self.relay_bytes_total}",
             "# HELP hsync_bootnode_metrics_requests_total Requests answered by /metrics.",
             "# TYPE hsync_bootnode_metrics_requests_total counter",
         ]

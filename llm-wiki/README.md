@@ -39,7 +39,10 @@ Internal, agent-optimized knowledge base for the `hsync-bootnode` project
    (decision #25); without `--debug` nothing peer-related leaves memory.
 2. **RAM only**: the routing table lives in
    `python/src/hsync_bootnode/routing.py` and is never persisted. TTL 60 s,
-   prune every 15 s, client refresh every 30 s.
+   prune every 15 s, client refresh every 30 s. The data relay keeps the same
+   promise: its listener/session state lives in
+   `python/src/hsync_bootnode/relay.py`, RAM only, and only aggregate counters
+   exist (`--relay` opt-in, ADR-0047).
 3. **Rigid schema**: every `boot/1` frame model uses pydantic
    `extra="forbid"` — unknown/targeted fields make the frame invalid and it is
    silently dropped. The field domains are enforced too: `bucket_token` must be

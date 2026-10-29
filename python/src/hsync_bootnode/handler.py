@@ -25,6 +25,7 @@ from hsync_bootnode.protocol import (
     BOOT_ACK_ADAPTER,
     BOOT_FRAME_ADAPTER,
     BOOT_PEER_ADAPTER,
+    BOOT_RELAY_ERROR_ADAPTER,
     BUCKET_TOKEN_LEN,
     MAX_RELAY_ENDPOINTS,
     MAX_RESPONSE_BYTES,
@@ -37,10 +38,16 @@ from hsync_bootnode.protocol import (
     BootQuery,
     BootRefresh,
     BootRegister,
+    BootRelayAttach,
+    BootRelayConnect,
+    BootRelayError,
+    BootRelayListen,
+    BootRelayPing,
     Endpoint,
     ObservedEndpoint,
 )
 from hsync_bootnode.ratelimit import TokenBucketLimiter
+from hsync_bootnode.relay import RelayHandoff, RelayQuotas, RelayRegistry
 from hsync_bootnode.resources import ResourceLimits
 from hsync_bootnode.routing import DEFAULT_TTL, PeerRecord, RoutingTable
 from hsync_bootnode.stats import NodeStats
@@ -65,6 +72,10 @@ QUERY_IP_LIMIT = 20  # query per IP across every bucket (anti-enumeration)
 QUERY_IP_BURST = 40
 REGISTER_PAIR_LIMIT = 10  # register/refresh per (IP, bucket)
 REGISTER_PAIR_BURST = 10
+RELAY_CONNECT_LIMIT = 5  # relay_connect per (IP, bucket)
+RELAY_CONNECT_BURST = 10
+RELAY_LISTEN_LIMIT = 2  # relay_listen per (IP, bucket): reconnect churn only
+RELAY_LISTEN_BURST = 2
 BAD_TOKEN_IP_LIMIT = 5  # failed-token attempts per IP
 # Malformed/unknown frames: own budget per IP (rationale in handle()); it also
 # gates the parser, so an IP that exhausts it is dropped before parsing.
@@ -130,6 +141,10 @@ class BootHandler:
         enforce_rate_limits: bool = True,
         limits: ResourceLimits | None = None,
         stats: NodeStats | None = None,
+        relay_enabled: bool = False,
+        relay_idle_timeout: float = 120.0,
+        relay_session_bytes: int = 0,
+        relay_bytes_per_second: int = 0,
     ) -> None:
         self.ttl = ttl
         # Peer-free operational counters (RAM only). The level is updated where a
@@ -205,6 +220,27 @@ class BootHandler:
         self._bad_parse_ip = TokenBucketLimiter(
             PARSE_IP_BURST, PARSE_IP_LIMIT, WINDOW_SECONDS, max_keys=max_keys
         )
+        self._relay_connect_pair = TokenBucketLimiter(
+            RELAY_CONNECT_BURST, RELAY_CONNECT_LIMIT, WINDOW_SECONDS, max_keys=max_keys
+        )
+        self._relay_listen_pair = TokenBucketLimiter(
+            RELAY_LISTEN_BURST, RELAY_LISTEN_LIMIT, WINDOW_SECONDS, max_keys=max_keys
+        )
+        # The relay is opt-in per node: without ``--relay`` every relay frame is
+        # answered ``relay_unavailable`` and no state is ever created.
+        self.relay = RelayRegistry(
+            enabled=relay_enabled,
+            quotas=RelayQuotas(
+                max_sessions=self.limits.max_relay_sessions,
+                max_sessions_per_ip=self.limits.max_relay_sessions_per_ip,
+                max_sessions_per_bucket=self.limits.max_relay_sessions_per_bucket,
+                session_bytes=relay_session_bytes,
+                bytes_per_second=relay_bytes_per_second,
+            ),
+            stats=self.stats,
+            idle_timeout=relay_idle_timeout,
+            ttl=int(self.ttl),
+        )
         debug_event(
             "handler ready",
             ttl=int(self.ttl),
@@ -214,6 +250,8 @@ class BootHandler:
             rate_limits=self._enforce_rate_limits,
             max_peer_records=self.limits.max_peer_records,
             max_limiter_keys=max_keys,
+            relay=relay_enabled,
+            max_relay_sessions=self.limits.max_relay_sessions,
         )
 
     # ------------------------------------------------------------------ API
@@ -243,10 +281,13 @@ class BootHandler:
         *,
         peer_ip: str,
         peer_port: int,
-    ) -> bytes | None:
-        """Process one raw NDJSON frame; return the serialized response or ``None`` to drop.
+    ) -> bytes | None | RelayHandoff:
+        """Process one raw NDJSON frame; return the reply, a relay handoff or ``None``.
 
-        Malformed / unknown frames are silently dropped (no-log, no oracle).
+        Malformed / unknown frames are silently dropped (no-log, no oracle). A
+        relay frame returns a :class:`RelayHandoff` instead of bytes: its work
+        needs the connection's streams, which this transport-agnostic core does
+        not own.
         """
         frame = self._parse_frame(raw, peer_ip=peer_ip, peer_port=peer_port)
         if frame is None:
@@ -311,8 +352,10 @@ class BootHandler:
                 debug_event("drop invalid-frame", peer=f"{peer_ip}:{peer_port}", bytes=len(raw))
             return None
 
-    def _dispatch(self, frame: BootFrame, peer_ip: str, peer_port: int) -> bytes | None:
-        """Route a validated frame to its handler (``leave`` produces no reply)."""
+    def _dispatch(
+        self, frame: BootFrame, peer_ip: str, peer_port: int
+    ) -> bytes | None | RelayHandoff:
+        """Route a validated frame to its handler (``leave``/``ping`` produce no reply)."""
         match frame:
             case BootRegister():
                 return self._register(frame, peer_ip, peer_port)
@@ -321,8 +364,85 @@ class BootHandler:
             case BootLeave():
                 self._leave(frame, peer_ip)
                 return None
-            case _:
+            case BootQuery():
                 return self._query(frame, peer_ip)
+            case BootRelayPing():
+                # Keepalive on a listener's control stream: the stream is already
+                # held open by the relay coroutine, so there is nothing to answer.
+                return None
+            case _:
+                return self._relay(frame, peer_ip, peer_port)
+
+    def _relay(
+        self,
+        model: BootRelayListen | BootRelayConnect | BootRelayAttach,
+        peer_ip: str,
+        peer_port: int,
+    ) -> bytes | RelayHandoff | None:
+        """Authorize one relay frame and hand its stream to the registry.
+
+        ``relay_listen``/``relay_connect`` still have a framed stream, so a
+        refusal is a ``relay_error`` line. ``relay_attach`` arrives on a stream
+        that becomes opaque immediately, so a refusal is expressed as an
+        unauthorized handoff (the registry closes the stream).
+        """
+        attach = isinstance(model, BootRelayAttach)
+        if not self.relay.enabled:
+            if attach:
+                return RelayHandoff(model, authorized=False)
+            return self._relay_refusal("relay_unavailable", None)
+        if isinstance(model, BootRelayListen):
+            refused = self._charge_relay(self._relay_listen_pair, model, peer_ip, peer_port)
+            if refused is not None:
+                return refused
+            if self._authorize(model.bucket, model.bucket_token, peer_ip) != "ok":
+                return self._relay_refusal("token_required", None)
+            # Only the current owner of the discovery record may open a relay in
+            # that CID's name: a third party cannot make the node accept a
+            # session the record owner never offered.
+            if not self._may_replace(model.cid, model.bucket, model.group, peer_ip):
+                return None
+            return RelayHandoff(model)
+        if isinstance(model, BootRelayConnect):
+            refused = self._charge_relay(self._relay_connect_pair, model, peer_ip, peer_port)
+            if refused is not None:
+                return refused
+            if self._authorize(model.bucket, model.bucket_token, peer_ip) != "ok":
+                return self._relay_refusal("token_required", None)
+            return RelayHandoff(model)
+        authorized = self._authorize(model.bucket, model.bucket_token, peer_ip) == "ok"
+        return RelayHandoff(model, authorized=authorized)
+
+    def _charge_relay(
+        self,
+        limiter: TokenBucketLimiter,
+        model: BootRelayListen | BootRelayConnect,
+        peer_ip: str,
+        peer_port: int,
+    ) -> bytes | None:
+        """Charge the per-(IP, bucket) relay limiter; return a refusal, or ``None``."""
+        key = f"{peer_ip}|{model.bucket}"
+        if self._limit_ok(limiter, key):
+            return None
+        if debug_enabled():
+            debug_event(
+                f"{model.type} rate_limited pair",
+                cid=model.cid,
+                bucket=model.bucket,
+                peer=f"{peer_ip}:{peer_port}",
+            )
+        return self._relay_refusal("rate_limited", limiter.retry_after(key))
+
+    def _relay_refusal(self, error: BootError, retry_after: int | None) -> bytes:
+        """Serialize one uniform ``relay_error`` refusal (no bucket oracle)."""
+        return BOOT_RELAY_ERROR_ADAPTER.dump_json(
+            BootRelayError(
+                protocol_version=PROTOCOL_VERSION_BOOT,
+                type="relay_error",
+                error=error,
+                retry_after=retry_after,
+            )
+        )
 
     def prune(self, now: float | None = None, *, max_remove: int | None = None) -> int:
         """Drop expired records (TTL sweep); returns number removed."""

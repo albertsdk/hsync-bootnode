@@ -445,11 +445,12 @@ def test_connection_guard_global_cap_and_release() -> None:
 
 
 def test_a_connection_cannot_pin_more_sessions_than_the_cap() -> None:
-    """Streams beyond the per-connection session cap are closed, not spawned."""
+    """Streams beyond the per-connection discovery budget are closed, not spawned."""
     from hsync_bootnode.server import MAX_SESSIONS_PER_CONNECTION
 
     protocol = object.__new__(BootQuicProtocol)
     protocol.peer_addr = ("203.0.113.9", 51000)
+    protocol._relay_streams = 0
     protocol._stream_tasks = {object() for _ in range(MAX_SESSIONS_PER_CONNECTION)}
 
     class _Writer:
@@ -463,3 +464,40 @@ def test_a_connection_cannot_pin_more_sessions_than_the_cap() -> None:
     protocol._spawn_stream(object(), writer)
     assert writer.closed is True
     assert len(protocol._stream_tasks) == MAX_SESSIONS_PER_CONNECTION
+
+
+def test_the_relay_headroom_is_a_separate_budget() -> None:
+    """Relay streams never extend the discovery budget, and have their own cap."""
+    from hsync_bootnode.server import (
+        MAX_RELAY_STREAMS_PER_CONNECTION,
+        MAX_SESSIONS_PER_CONNECTION,
+        MAX_STREAMS_PER_CONNECTION,
+    )
+
+    assert MAX_STREAMS_PER_CONNECTION == (
+        MAX_SESSIONS_PER_CONNECTION + MAX_RELAY_STREAMS_PER_CONNECTION
+    )
+
+    class _Writer:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    # A listener holds one control stream plus one stream per relayed session:
+    # the discovery budget is untouched by them...
+    listener = object.__new__(BootQuicProtocol)
+    listener.peer_addr = ("203.0.113.9", 51000)
+    listener._stream_tasks = {object() for _ in range(MAX_SESSIONS_PER_CONNECTION)}
+    listener._relay_streams = MAX_SESSIONS_PER_CONNECTION
+    over_relay_budget = object.__new__(BootQuicProtocol)
+    over_relay_budget.peer_addr = ("203.0.113.9", 51000)
+    over_relay_budget._stream_tasks = {object() for _ in range(MAX_RELAY_STREAMS_PER_CONNECTION)}
+    over_relay_budget._relay_streams = MAX_RELAY_STREAMS_PER_CONNECTION
+
+    # ...but its own ceiling still refuses further streams.
+    writer = _Writer()
+    over_relay_budget._spawn_stream(object(), writer)
+    assert writer.closed is True
+    assert listener._relay_streams == MAX_SESSIONS_PER_CONNECTION

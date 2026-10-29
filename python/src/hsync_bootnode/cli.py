@@ -85,6 +85,12 @@ _DEFAULT_DEBUG_ENV = "HSYNC_BOOTNODE_DEBUG"
 _DEFAULT_READY_FILE_ENV = "HSYNC_BOOTNODE_READY_FILE"
 # Node-wide private mode: require a valid bucket_token on every frame.
 _DEFAULT_PRIVATE_ENV = "HSYNC_BOOTNODE_PRIVATE"
+# Data relay (opt-in). One switch plus the bounds that keep a public node from
+# becoming a free CDN: idle timeout, per-session byte cap and global byte rate.
+_DEFAULT_RELAY_ENV = "HSYNC_BOOTNODE_RELAY"
+_DEFAULT_RELAY_IDLE_TIMEOUT_ENV = "HSYNC_BOOTNODE_RELAY_IDLE_TIMEOUT"
+_DEFAULT_RELAY_SESSION_BYTES_ENV = "HSYNC_BOOTNODE_RELAY_SESSION_BYTES"
+_DEFAULT_RELAY_BANDWIDTH_ENV = "HSYNC_BOOTNODE_RELAY_BANDWIDTH"
 # Persistent TLS identity path; the default XDG state path keeps the
 # fingerprint stable and pin-able across restarts.
 _DEFAULT_IDENTITY_ENV = "HSYNC_BOOTNODE_IDENTITY"
@@ -280,6 +286,55 @@ def run(
         "--upnp",
         help="Map every bound QUIC/UDP port with UPnP (opt-in; off by default).",
     ),
+    relay: bool = typer.Option(
+        False,
+        "--relay",
+        envvar=_DEFAULT_RELAY_ENV,
+        help=(
+            "Relay peers' opaque TLS through this node (opt-in; off by default). "
+            "Two peers that no inbound NAT mapping reaches (mobile CGNAT, a "
+            "hotspot behind a carrier) then still run the p2p data plane; the "
+            "node never sees content and never terminates the peers' TLS. "
+            "Env: HSYNC_BOOTNODE_RELAY=1."
+        ),
+    ),
+    relay_idle_timeout: int = typer.Option(
+        120,
+        "--relay-idle-timeout",
+        min=30,
+        max=3600,
+        envvar=_DEFAULT_RELAY_IDLE_TIMEOUT_ENV,
+        metavar="SECONDS",
+        help=(
+            "Drop a relayed session (and a listener control stream) after this "
+            "many seconds without traffic in either direction (default 120). "
+            "Env: HSYNC_BOOTNODE_RELAY_IDLE_TIMEOUT."
+        ),
+    ),
+    relay_session_bytes: int = typer.Option(
+        0,
+        "--relay-session-bytes",
+        min=0,
+        envvar=_DEFAULT_RELAY_SESSION_BYTES_ENV,
+        metavar="BYTES",
+        help=(
+            "Close a relayed session after this many forwarded bytes (0 = no "
+            "per-session cap; the byte rate remains the primary bound). "
+            "Env: HSYNC_BOOTNODE_RELAY_SESSION_BYTES."
+        ),
+    ),
+    relay_bandwidth: int = typer.Option(
+        8192,
+        "--relay-bandwidth",
+        min=0,
+        envvar=_DEFAULT_RELAY_BANDWIDTH_ENV,
+        metavar="KIB_PER_SECOND",
+        help=(
+            "Aggregate relay throughput cap in KiB/s (default 8192 = 8 MiB/s; "
+            "0 = unlimited). Excess traffic is throttled, never dropped. "
+            "Env: HSYNC_BOOTNODE_RELAY_BANDWIDTH."
+        ),
+    ),
     ttl: int = typer.Option(
         60,
         "--ttl",
@@ -418,6 +473,10 @@ def run(
             enforce_rate_limits=not no_rate_limit,
             limits=limits,
             stats=stats,
+            relay_enabled=relay,
+            relay_idle_timeout=float(relay_idle_timeout),
+            relay_session_bytes=relay_session_bytes,
+            relay_bytes_per_second=relay_bandwidth * 1024,
         )
         node_identity = _resolve_identity(
             identity, ephemeral, host=resolved_host, public_hosts=public_host
@@ -463,6 +522,7 @@ def run(
         f"  debug     : {'on (full operation log incl. peer identity, stderr only)' if debug else 'off (in-memory only)'}\n"
         f"  rate limit: {'disabled' if no_rate_limit else 'enabled'}\n"
         f"  upnp      : {'enabled (zero-touch)' if upnp else 'disabled'}\n"
+        f"  relay     : {_relay_display(relay, relay_bandwidth, relay_session_bytes, relay_idle_timeout)}\n"
         f"  metrics   : {_metrics_display(metrics_endpoint)}\n"
         f"  stats     : {stats_file or '(off)'} every {stats_interval}s"
     )
@@ -788,6 +848,9 @@ async def _async_main(
         # The stop is intentional and bounded: announce it before the transports
         # close, so the service manager does not treat the drop as a failure.
         notify_stopping()
+        # Drop relayed sessions before the transports close, so every peer sees a
+        # stream close instead of a half-open tunnel the QUIC stack tears down.
+        handler.relay.close()
         for server in servers:
             server.close()
         if metrics_server is not None:
@@ -1048,6 +1111,15 @@ def _metrics_display(endpoint: MetricsEndpoint | None) -> str:
         return "off"
     host = f"[{endpoint.host}]" if ":" in endpoint.host else endpoint.host
     return f"http://{host}:{endpoint.port}{REST_METRICS_PATH} (loopback, Bearer token)"
+
+
+def _relay_display(enabled: bool, bandwidth_kib: int, session_bytes: int, idle_s: int) -> str:
+    """One banner line for the data relay (never peer-identifying)."""
+    if not enabled:
+        return "disabled"
+    rate = "unlimited" if bandwidth_kib == 0 else f"{bandwidth_kib} KiB/s"
+    cap = "unlimited" if session_bytes == 0 else f"{session_bytes} bytes/session"
+    return f"enabled (opaque TLS; {rate} total, {cap}, idle {idle_s}s)"
 
 
 def _check_stats_target(path: str) -> None:

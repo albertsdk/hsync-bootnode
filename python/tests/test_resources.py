@@ -60,6 +60,9 @@ def test_ceilings_are_exposed_as_a_flat_mapping() -> None:
         "max_active_connections_per_ip": 4,
         "max_records_per_group": 5,
         "max_records_per_bucket": 6,
+        "max_relay_sessions": 8,
+        "max_relay_sessions_per_ip": 2,
+        "max_relay_sessions_per_bucket": 4,
     }
 
 

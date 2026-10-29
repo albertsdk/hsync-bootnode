@@ -31,6 +31,10 @@ hsync-bootnode --version
 | `--keys-file` | *(none)* | File carrying the group keys (same `bucket=<hex-key>` format); read once at startup and never written. Portable alternative to `--keys-fd` for service managers that cannot pass a descriptor (Windows/WinSW); the two are mutually exclusive. A missing/non-regular file or a symlink is a configuration error (exit code 2); on POSIX a group-writable or world-accessible file is reported on the always-on warning channel (0640 group-read is accepted). Environment variable form: `HSYNC_BOOTNODE_KEYS_FILE`. |
 | `--private` | *(disabled flag)* | Private node: every frame must carry a valid `bucket_token`, for **every** bucket (not only `--protected-bucket`). Starting it with no group key fails fast (exit code 2). Environment variable form: `HSYNC_BOOTNODE_PRIVATE=1`. |
 | `--upnp` | *(disabled flag)* | Map the QUIC/UDP listener port(s) with UPnP (opt-in; off by default). With `--ports`, every bound port is mapped, so each offered door is also reachable from the WAN side. |
+| `--relay` | *(disabled flag)* | Relay the peers' opaque TLS (`boot/1` relay frames), so two peers that no inbound NAT mapping reaches can still run their data plane through this node. Off by default: relaying spends the node's uplink, so the operator opts in. The node never terminates or inspects the relayed TLS. |
+| `--relay-idle-timeout` | `120` | Seconds without traffic in either direction before a relayed session (or a listener control stream) is closed. Range `30..3600`. |
+| `--relay-session-bytes` | `0` | Close a relayed session after this many forwarded bytes (`0` = no per-session cap; the byte rate stays the primary bound). |
+| `--relay-bandwidth` | `8192` | Aggregate relay throughput cap in KiB/s (`0` = unlimited). Excess traffic is throttled by backpressure, never dropped. |
 | `--ttl` | `60` | Record TTL in seconds (1–3600). Peers refresh every 30 s by default, so 60 s leaves one refresh of headroom. It must stay **above** the clients' refresh interval (`HSYNC_BOOTNODE_REFRESH_INTERVAL`, 30 s by default): a shorter TTL expires live records between two refreshes. Lower it only when the clients refresh more often (tests). |
 | `--debug` | *(disabled flag)* | Emit the full operation log to stderr (opt-in): connections, frames, decisions, record changes and TTL sweeps, **including the peer identity** (CID, bucket, IP, port). Every line is timestamped and self-identifying (`2026-09-30T10:30:45.123Z - hsync-bootnode[1234] debug: …`). Stderr only — never written to disk; without it no peer data leaves memory. Environment variable form: `HSYNC_BOOTNODE_DEBUG=1`. |
 | `--ready-file` | *(none)* | Write the process PID to this path once the listener is bound (readiness seam, contains no peer data). Environment variable form: `HSYNC_BOOTNODE_READY_FILE`. An unwritable path fails fast with exit code 4. |
@@ -384,11 +388,15 @@ can rely on.
   response hands each peer the `ip:port`/`cert_fp` of the peers it returns. Hiding
   your IP from the node or from your peers is out of scope; nothing here is
   Tor-like.
-- **Not a relay, a storage node or a control plane** — file data always flows
-  directly between peers and the node never sees its content.
+- **Not a storage node and not a control plane** — it stores no file and orders
+  nothing. With `--relay` it forwards the peers' **opaque TLS** for peers that no
+  inbound NAT mapping reaches: it never terminates or inspects that TLS, so it
+  sees no content, file name or credential. What it does see is the pairing
+  (`cid` ↔ `cid`) and the byte volume. Without `--relay`, file data flows only
+  between directly reachable peers.
 - **A private node is authentication, not a VPN** — it gates who may use the node as
-  a rendezvous point; the sync traffic is encrypted by the peers' own HTTPS/WSS
-  session.
+  a rendezvous point (and as a relay); the sync traffic is encrypted by the peers'
+  own HTTPS/WSS session.
 
 ## TLS identity & pinning
 

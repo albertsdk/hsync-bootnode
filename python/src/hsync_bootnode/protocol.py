@@ -28,6 +28,10 @@ __all__ = [
     "BOOT_ACK_ADAPTER",
     "BOOT_FRAME_ADAPTER",
     "BOOT_PEER_ADAPTER",
+    "BOOT_RELAY_ERROR_ADAPTER",
+    "BOOT_RELAY_INCOMING_ADAPTER",
+    "BOOT_RELAY_LISTENING_ADAPTER",
+    "BOOT_RELAY_OK_ADAPTER",
     "BOOT_RESPONSE_ADAPTER",
     "BUCKET_TOKEN_LEN",
     "CAPACITY_MAX",
@@ -44,11 +48,20 @@ __all__ = [
     "BootQuery",
     "BootRefresh",
     "BootRegister",
+    "BootRelayAttach",
+    "BootRelayConnect",
+    "BootRelayError",
+    "BootRelayIncoming",
+    "BootRelayListen",
+    "BootRelayListening",
+    "BootRelayOk",
+    "BootRelayPing",
     "BootResponse",
     "BucketName",
     "BucketProto",
     "Endpoint",
     "ObservedEndpoint",
+    "RelayId",
     "SyncDirection",
 ]
 
@@ -73,11 +86,13 @@ CAPACITY_MAX = 32
 # peer ranks exactly like a LAN-discovered one.
 SyncDirection = Literal["bidirectional", "upload-only", "download-only"]
 
-# Uniform refusal codes on a ``response``: ``token_required`` (authorization),
-# ``rate_limited`` (per-IP/per-(IP,bucket) rate limit — ``retry_after`` is the
-# bucket refill) and ``overloaded`` (the node is at its host-derived routing-table
-# ceiling; backpressure, not a client abuse signal — ``retry_after`` is advisory).
-BootError = Literal["token_required", "rate_limited", "overloaded"]
+# Uniform refusal codes on a ``response``/``relay_error``: ``token_required``
+# (authorization), ``rate_limited`` (per-IP/per-(IP,bucket) rate limit —
+# ``retry_after`` is the bucket refill), ``overloaded`` (the node is at its
+# host-derived ceiling; backpressure, not a client abuse signal) and
+# ``relay_unavailable`` (no data relay: disabled on this node, no listener for
+# the target CID, or the listener did not attach in time).
+BootError = Literal["token_required", "rate_limited", "overloaded", "relay_unavailable"]
 
 # Upper bound for the advisory ``connected`` count, like ``startup_time`` kept
 # inside the exactly-representable integer range of a JSON number: a wire value
@@ -171,6 +186,12 @@ def _validate_cert_fp(value: str) -> str:
 
 # Canonical certificate-fingerprint field type for ``cert_fp``.
 CertificateFingerprint = Annotated[str, AfterValidator(_validate_cert_fp)]
+
+
+# Data-relay session identifier handed out by the node per pairing: 16 random
+# bytes as lowercase hex. Only the two paired peers ever see it, and a value that
+# does not match a live pending session attaches to nothing.
+RelayId = Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
 
 
 class Endpoint(BaseModel):
@@ -332,11 +353,108 @@ class BootResponse(_BootFrame):
     retry_after: int | None = Field(default=None, ge=1)
 
 
+class BootRelayListen(_BootFrame):
+    """A serving peer registers a data-relay listener (``relay_listen``).
+
+    The stream that carried this frame becomes the listener's **control**
+    stream: the node answers ``relay_listening`` and pushes one
+    ``relay_incoming`` per requester (the peer may answer with ``relay_ping``
+    lines). The node accepts it only from the current owner of the
+    ``(cid, bucket, group)`` record, so a peer cannot open a relay under
+    another peer's identity.
+    """
+
+    type: Literal["relay_listen"]
+    cid: str = Field(pattern=CID_PATTERN)
+    bucket: BucketName
+    group: str | None = Field(default=None, max_length=128)
+    bucket_token: BucketToken | None = None
+
+
+class BootRelayPing(_BootFrame):
+    """Keepalive on a listener control stream (``relay_ping``, no reply)."""
+
+    type: Literal["relay_ping"]
+    cid: str = Field(pattern=CID_PATTERN)
+    bucket: BucketName
+
+
+class BootRelayConnect(_BootFrame):
+    """A requester asks to be paired with a listening peer (``relay_connect``).
+
+    Sent on a fresh stream: the node answers ``relay_ok`` (the rest of the
+    stream is then opaque TLS) or ``relay_error`` followed by a close.
+    """
+
+    type: Literal["relay_connect"]
+    cid: str = Field(pattern=CID_PATTERN)
+    bucket: BucketName
+    target_cid: str = Field(pattern=CID_PATTERN)
+    group: str | None = Field(default=None, max_length=128)
+    bucket_token: BucketToken | None = None
+
+
+class BootRelayAttach(_BootFrame):
+    """A listener attaches the stream of one relayed session (``relay_attach``).
+
+    First (and only framed) line of a fresh stream; every following byte is
+    opaque TLS in both directions.
+    """
+
+    type: Literal["relay_attach"]
+    cid: str = Field(pattern=CID_PATTERN)
+    bucket: BucketName
+    relay_id: RelayId
+    bucket_token: BucketToken | None = None
+
+
+class BootRelayListening(_BootFrame):
+    """Server→listener: the relay listener is registered."""
+
+    type: Literal["relay_listening"]
+    ttl: int = Field(ge=1, le=3600)
+
+
+class BootRelayIncoming(_BootFrame):
+    """Server→listener: a requester wants one session.
+
+    ``cid`` is the requester's CID (the listener bounds per-peer concurrency),
+    ``expires_in`` the seconds left to attach before the node drops it.
+    """
+
+    type: Literal["relay_incoming"]
+    relay_id: RelayId
+    cid: str = Field(pattern=CID_PATTERN)
+    expires_in: int = Field(ge=1, le=3600)
+
+
+class BootRelayOk(_BootFrame):
+    """Server→requester: the pairing exists and the stream is now opaque."""
+
+    type: Literal["relay_ok"]
+    relay_id: RelayId
+
+
+class BootRelayError(_BootFrame):
+    """Server→client: a relay request was refused."""
+
+    type: Literal["relay_error"]
+    error: BootError
+    retry_after: int | None = Field(default=None, ge=1)
+
+
 # Client→server frames, dispatched on ``type``. ``BootResponse``/``BootAck``/
-# ``BootPeer`` are server→client and deliberately excluded: they are never
-# validated in the input path.
+# ``BootPeer`` and the ``relay_*`` server replies are server→client and
+# deliberately excluded: they are never validated in the input path.
 BootFrame = Annotated[
-    BootRegister | BootRefresh | BootLeave | BootQuery,
+    BootRegister
+    | BootRefresh
+    | BootLeave
+    | BootQuery
+    | BootRelayListen
+    | BootRelayPing
+    | BootRelayConnect
+    | BootRelayAttach,
     Field(discriminator="type"),
 ]
 BOOT_FRAME_ADAPTER: TypeAdapter[BootFrame] = TypeAdapter(BootFrame)
@@ -348,6 +466,10 @@ BOOT_FRAME_ADAPTER: TypeAdapter[BootFrame] = TypeAdapter(BootFrame)
 BOOT_ACK_ADAPTER: TypeAdapter[BootAck] = TypeAdapter(BootAck)
 BOOT_PEER_ADAPTER: TypeAdapter[BootPeer] = TypeAdapter(BootPeer)
 BOOT_RESPONSE_ADAPTER: TypeAdapter[BootResponse] = TypeAdapter(BootResponse)
+BOOT_RELAY_LISTENING_ADAPTER: TypeAdapter[BootRelayListening] = TypeAdapter(BootRelayListening)
+BOOT_RELAY_INCOMING_ADAPTER: TypeAdapter[BootRelayIncoming] = TypeAdapter(BootRelayIncoming)
+BOOT_RELAY_OK_ADAPTER: TypeAdapter[BootRelayOk] = TypeAdapter(BootRelayOk)
+BOOT_RELAY_ERROR_ADAPTER: TypeAdapter[BootRelayError] = TypeAdapter(BootRelayError)
 
 
 assert is_valid_bucket_token("a" * BUCKET_TOKEN_LEN)

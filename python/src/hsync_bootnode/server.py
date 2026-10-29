@@ -41,6 +41,7 @@ from hsync_common import ssl_utils
 from hsync_bootnode.diagnostics import debug_enabled, debug_event, error_event, warn_event
 from hsync_bootnode.handler import BootHandler
 from hsync_bootnode.ratelimit import TokenBucketLimiter
+from hsync_bootnode.relay import PrefixedReader, RelayHandoff
 from hsync_bootnode.stats import NodeStats
 
 __all__ = [
@@ -50,7 +51,9 @@ __all__ = [
     "HANDSHAKE_BURST_PER_IP",
     "HANDSHAKE_RATE_PER_SECOND",
     "MAX_FRAME_BYTES",
+    "MAX_RELAY_STREAMS_PER_CONNECTION",
     "MAX_SESSIONS_PER_CONNECTION",
+    "MAX_STREAMS_PER_CONNECTION",
     "BootQuicProtocol",
     "ConnectionGuard",
     "IdentityError",
@@ -93,6 +96,11 @@ CONNECTION_ACTIVE_MAX_PER_IP = 256
 # (and 128x the per-connection memory budget) with streams it never closes.
 # See BootQuicProtocol._spawn_stream.
 MAX_SESSIONS_PER_CONNECTION = 4
+# Streams one connection may additionally hold for data-relay sessions: the
+# listener keeps one control stream plus one stream per relayed peer, so the
+# bound has to cover them without letting a connection pin unbounded tasks.
+MAX_RELAY_STREAMS_PER_CONNECTION = 32
+MAX_STREAMS_PER_CONNECTION = MAX_SESSIONS_PER_CONNECTION + MAX_RELAY_STREAMS_PER_CONNECTION
 
 # HSYNC service identities are always ECDSA P-256 (ADR-0037).
 PrivateKey = ec.EllipticCurvePrivateKey
@@ -588,6 +596,10 @@ class BootQuicProtocol(QuicConnectionProtocol):
         # surfaces ConnectionTerminated twice).
         self.admitted_on_guard = False
         self.peer_addr: tuple[str, int] | None = None
+        # Relay streams currently bridged on this connection. Tracked separately
+        # from the discovery sessions so the relay headroom never raises the
+        # per-connection budget a plain ``boot/1`` client may pin.
+        self._relay_streams = 0
         # Strong references to the per-session tasks: aioquic does not await the
         # stream handler, so without this the loop could garbage-collect a
         # running session.
@@ -648,10 +660,16 @@ class BootQuicProtocol(QuicConnectionProtocol):
 
     def _spawn_stream(self, reader: Any, writer: Any) -> None:
         peer = self._observed_peer()
-        if len(self._stream_tasks) >= MAX_SESSIONS_PER_CONNECTION:
-            # boot/1 uses one stream per exchange: refuse the extra stream instead
-            # of pinning another session task for a connection that is over its
-            # session budget (see MAX_SESSIONS_PER_CONNECTION).
+        discovery_streams = max(0, len(self._stream_tasks) - self._relay_streams)
+        if (
+            discovery_streams >= MAX_SESSIONS_PER_CONNECTION
+            or self._relay_streams >= MAX_RELAY_STREAMS_PER_CONNECTION
+        ):
+            # boot/1 uses one stream per exchange; the relay adds one long-lived
+            # stream per paired session on its own budget. A connection over
+            # either bound gets no further stream instead of pinning another
+            # session task (see MAX_SESSIONS_PER_CONNECTION /
+            # MAX_RELAY_STREAMS_PER_CONNECTION).
             debug_event("stream refused session-cap", peer=f"{peer[0]}:{peer[1]}")
             writer.close()
             return
@@ -662,6 +680,7 @@ class BootQuicProtocol(QuicConnectionProtocol):
 
     async def _serve_stream(self, reader: Any, writer: Any) -> None:
         peer_ip, peer_port = self._observed_peer()
+        relay_stream = False
         try:
             pending = bytearray()
             while True:
@@ -673,6 +692,22 @@ class BootQuicProtocol(QuicConnectionProtocol):
                     peer_ip=peer_ip,
                     peer_port=peer_port,
                 )
+                if isinstance(response, RelayHandoff):
+                    # The relay takes the stream over: from here on the bytes are
+                    # opaque TLS, so the NDJSON loop must never consume them.
+                    # ``pending`` may already hold the first opaque bytes (the
+                    # frame read can pass the handshake newline), so it is handed
+                    # back to the relay instead of being dropped.
+                    self._relay_streams += 1
+                    relay_stream = True
+                    stream_reader = reader
+                    if pending:
+                        stream_reader = PrefixedReader(bytes(pending), reader)
+                        pending.clear()
+                    await self.boot_handler.relay.run(
+                        response, reader=stream_reader, writer=writer, peer_ip=peer_ip
+                    )
+                    return
                 if response is not None:
                     writer.write(response + b"\n")
                     await writer.drain()
@@ -696,6 +731,8 @@ class BootQuicProtocol(QuicConnectionProtocol):
             return
         finally:
             debug_event("session close", peer=f"{peer_ip}:{peer_port}")
+            if relay_stream:
+                self._relay_streams = max(0, self._relay_streams - 1)
             if not writer.is_closing():
                 writer.close()
 

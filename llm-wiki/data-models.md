@@ -24,7 +24,15 @@ guesses the frame kind from the payload shape.
 | `leave` | client → server | `BootLeave` (`python/src/hsync_bootnode/protocol.py::BootLeave`) | `cid`, `bucket`, `bucket_token?` |
 | `query` | client → server | `BootQuery` (`python/src/hsync_bootnode/protocol.py::BootQuery`) | `bucket`, `group?`, `bucket_token?`, `limit` (1–50, default 20) |
 | `ack` | server → client | `BootAck` (`python/src/hsync_bootnode/protocol.py::BootAck`) | `observed_endpoint`, `ttl`, `server_time`, `retry_after?` |
-| `response` | server → client | `BootResponse` (`python/src/hsync_bootnode/protocol.py::BootResponse`) | `peers[]`, `count`, `ttl`, `error?` (`token_required`/`rate_limited`/`overloaded`), `retry_after?` |
+| `response` | server → client | `BootResponse` (`python/src/hsync_bootnode/protocol.py::BootResponse`) | `peers[]`, `count`, `ttl`, `error?` (`token_required`/`rate_limited`/`overloaded`/`relay_unavailable`), `retry_after?` |
+| `relay_listen` | client → server | `BootRelayListen` (`python/src/hsync_bootnode/protocol.py::BootRelayListen`) | `cid`, `bucket`, `group?`, `bucket_token?` |
+| `relay_ping` | client → server | `BootRelayPing` (`python/src/hsync_bootnode/protocol.py::BootRelayPing`) | `cid`, `bucket` |
+| `relay_connect` | client → server | `BootRelayConnect` (`python/src/hsync_bootnode/protocol.py::BootRelayConnect`) | `cid`, `bucket`, `target_cid`, `group?`, `bucket_token?` |
+| `relay_attach` | client → server | `BootRelayAttach` (`python/src/hsync_bootnode/protocol.py::BootRelayAttach`) | `cid`, `bucket`, `relay_id`, `bucket_token?` |
+| `relay_listening` | server → client | `BootRelayListening` (`python/src/hsync_bootnode/protocol.py::BootRelayListening`) | `ttl` |
+| `relay_incoming` | server → client | `BootRelayIncoming` (`python/src/hsync_bootnode/protocol.py::BootRelayIncoming`) | `relay_id`, `cid`, `expires_in` |
+| `relay_ok` | server → client | `BootRelayOk` (`python/src/hsync_bootnode/protocol.py::BootRelayOk`) | `relay_id` |
+| `relay_error` | server → client | `BootRelayError` (`python/src/hsync_bootnode/protocol.py::BootRelayError`) | `error`, `retry_after?` |
 
 `capacity` (domain `0..32`, default `0`; `CAPACITY_MAX` at `python/src/hsync_bootnode/protocol.py::CAPACITY_MAX`) is the
 **advisory service-capacity hint**: the number of concurrent peer-download reads the
@@ -68,6 +76,7 @@ The relayed list is advisory and unauthenticated, like the other peer fields.
 |---|---|---|
 | `Endpoint` (`python/src/hsync_bootnode/protocol.py::Endpoint`) | `BootRegister.endpoints[]` | `proto` (`tcp`/`udp`), `host`, `port` |
 | `ObservedEndpoint` (`python/src/hsync_bootnode/protocol.py::ObservedEndpoint`) | `BootAck.observed_endpoint` | `proto`, `ip`, `port` (STUN-echo of the source) |
+| `RelayId` (`python/src/hsync_bootnode/protocol.py::RelayId`) | `BootRelayAttach.relay_id`, `BootRelayIncoming.relay_id`, `BootRelayOk.relay_id` | 32 lowercase hex characters (16 random bytes, minted per pairing) |
 | `BootPeer` (`python/src/hsync_bootnode/protocol.py::BootPeer`) | `BootResponse.peers[]` | `cid`, `endpoints[]`, `cert_fp`, `bucket`, `group?`, `version`, `capacity`, `reachable`, `server_ready`, `prefer_master`, `never_master`, `startup_time`, `sync_direction` |
 
 The client→server frames are dispatched in one pass by the discriminated union

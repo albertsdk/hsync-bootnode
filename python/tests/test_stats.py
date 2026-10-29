@@ -65,7 +65,8 @@ def test_status_text_is_one_short_line() -> None:
     stats = NodeStats()
     stats.connections_changed(3, opened=True)
     stats.peers_changed(12, written=True)
-    assert stats.status_text() == "conn=3/3 peers=12/12"
+    stats.relay_session_opened()
+    assert stats.status_text() == "conn=3/3 peers=12/12 relay=1/1"
     assert "\n" not in stats.status_text()
 
 
@@ -78,8 +79,9 @@ def test_exposition_has_a_fixed_cardinality_and_valid_types() -> None:
 
     samples = [line for line in body.splitlines() if line and not line.startswith("#")]
     # 6 connection/peer gauges + 1 counter + 4 more gauges/counters per family +
-    # one line per closed outcome: pinned so a new label or series cannot slip in.
-    assert len(samples) == 12 + len(METRICS_OUTCOMES)
+    # the 5 aggregate relay series + one line per closed outcome: pinned so a new
+    # label or series cannot slip in.
+    assert len(samples) == 17 + len(METRICS_OUTCOMES)
     for line in samples:
         assert _SAMPLE_RE.fullmatch(line), line
     for line in body.splitlines():

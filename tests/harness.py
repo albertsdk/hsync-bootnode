@@ -504,6 +504,14 @@ class BootClient:
         finally:
             writer.close()
 
+    async def open_stream(self) -> tuple[object, object]:
+        """Open a raw bidirectional stream (the caller owns and closes it).
+
+        Needed by the relay tests: after the single framed line such a stream
+        becomes an opaque byte pipe, which ``exchange`` cannot model.
+        """
+        return await self._protocol.create_stream()  # type: ignore[union-attr]
+
     async def pipeline(self, frames: Sequence[dict], timeout: float = 5.0) -> list[dict]:
         """Send several frames on one stream; each gets its own reply, in order."""
         reader, writer = await self._protocol.create_stream()  # type: ignore[union-attr]

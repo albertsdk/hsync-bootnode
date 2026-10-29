@@ -168,4 +168,4 @@ def test_the_aggregate_counters_never_write(read_only_fs: pytest.MonkeyPatch) ->
     handler.prune(time.monotonic())
     body = stats.render_prometheus()
     assert "hsync_bootnode_peers_current 1" in body
-    assert stats.status_text() == "conn=0/0 peers=1/1"
+    assert stats.status_text() == "conn=0/0 peers=1/1 relay=0/0"

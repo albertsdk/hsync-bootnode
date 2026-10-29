@@ -142,13 +142,16 @@ uses `--bootnode-tofu` instead. Pin it explicitly with
 `--bootnode-fingerprint` when the identity must be *stable* and verified out of
 band.
 
-## A client keeps logging "Waiting for peers to join" instead of exiting
+## A client keeps logging "Waiting for peers to join"
 
-If the trigger was the trust failure above, the client now **exits** with a fatal
-exit code instead of waiting forever (the discovery lease loop stops on a pin
-mismatch). If the client still waits, it means the node is reachable but no peer
-is registered in the bucket yet — nothing is wrong: see the client's
+The node is reachable but no peer is registered in the bucket yet — nothing is
+wrong: see the client's
 [FAQ — p2p Mode](https://github.com/albertsdk/hsync-client/blob/main/docs/faq-p2p.md).
+
+A trust failure never produces that wait: the client disables the bootnode source,
+keeps syncing on the local network and never contacts the node again until the
+fingerprint is pinned, so only the cross-network peers are missing while the local
+ones keep working.
 
 ## Some clients cannot reach my node even though it is up
 

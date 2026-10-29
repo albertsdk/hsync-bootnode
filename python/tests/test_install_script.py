@@ -64,6 +64,7 @@ def _run(
     tmp_path: Path,
     *args: str,
     cosign_exit: int | None = 0,
+    cosign_version: str = "v3.1.4",
     with_cosign: bool = True,
     with_curl: bool = False,
     snap_docker: bool = False,
@@ -75,6 +76,7 @@ def _run(
     compose_v1: bool = False,
     daemon_message: str | None = None,
     start_server: bool = False,
+    uname_stub: tuple[str, str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
     """Run ``install.sh`` (``--no-start`` by default) with stubbed tools."""
     bindir = tmp_path / "bin"
@@ -115,12 +117,30 @@ def _run(
     cosign.write_text(
         "#!/usr/bin/env bash\n"
         f'printf "%s\\n" "$*" >> "{cosign_log}"\n'
+        'if [[ "$1" == "version" ]]; then\n'
+        f'  printf "GitVersion:    {cosign_version}\\n"\n'
+        "  exit 0\n"
+        "fi\n"
         f"exit {cosign_exit if cosign_exit is not None else 0}\n",
         encoding="utf-8",
     )
     cosign.chmod(0o755)
     if not with_cosign:
         cosign.unlink()
+
+    if uname_stub is not None:
+        uname_os, uname_arch = uname_stub
+        uname = bindir / "uname"
+        uname.write_text(
+            "#!/usr/bin/env bash\n"
+            'case "$1" in\n'
+            f'  -s) printf "%s\\n" "{uname_os}" ;;\n'
+            f'  -m) printf "%s\\n" "{uname_arch}" ;;\n'
+            '  *) printf "unknown\\n" ;;\n'
+            "esac\n",
+            encoding="utf-8",
+        )
+        uname.chmod(0o755)
 
     if with_curl:
         curl = bindir / "curl"
@@ -184,10 +204,45 @@ def test_missing_cosign_fails_closed(tmp_path: Path) -> None:
     assert "cosign" in proc.stderr
 
 
+def test_missing_cosign_hint_is_actionable_and_writes_nothing(tmp_path: Path) -> None:
+    """The hint names a real install command and the exact --no-verify re-run,
+    and the missing verifier is detected before any file is written."""
+    proc, state, _log = _run(tmp_path, with_cosign=False, uname_stub=("Linux", "x86_64"))
+    assert proc.returncode != 0
+    assert "cosign-linux-amd64" in proc.stderr
+    assert "bash -s -- --no-verify" in proc.stderr
+    # The documented final error line stays last (decision #73).
+    assert proc.stderr.rstrip().endswith("Error: required command not found: cosign")
+    assert not state.exists()
+
+
+def test_missing_cosign_hint_follows_the_platform(tmp_path: Path) -> None:
+    proc, _state, _log = _run(tmp_path, with_cosign=False, uname_stub=("Darwin", "arm64"))
+    assert proc.returncode != 0
+    assert "brew install cosign" in proc.stderr
+    assert "cosign-linux-" not in proc.stderr
+
+
 def test_failed_verification_fails_closed(tmp_path: Path) -> None:
-    proc, _state, _log = _run(tmp_path, cosign_exit=1)
+    proc, state, _log = _run(tmp_path, cosign_exit=1)
     assert proc.returncode != 0
     assert "signature verification failed" in proc.stderr
+    assert not state.exists()
+
+
+def test_failed_verification_with_an_old_cosign_points_at_the_upgrade(tmp_path: Path) -> None:
+    """A v2 cosign cannot read the v3 bundle signature of current releases, so
+    that failure mode must name the upgrade instead of looking like tampering."""
+    proc, state, _log = _run(tmp_path, cosign_exit=1, cosign_version="v2.4.1")
+    assert proc.returncode != 0
+    assert "cosign 2.x cannot verify the v3 bundle signature" in proc.stderr
+    assert not state.exists()
+
+
+def test_failed_verification_with_a_current_cosign_has_no_upgrade_hint(tmp_path: Path) -> None:
+    proc, _state, _log = _run(tmp_path, cosign_exit=1, cosign_version="v3.1.4")
+    assert proc.returncode != 0
+    assert "cannot verify the v3 bundle signature" not in proc.stderr
 
 
 def test_no_verify_skips_verification(tmp_path: Path) -> None:

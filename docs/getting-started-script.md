@@ -9,7 +9,9 @@ host directory, and starts the node with Docker Compose.
 - <img src="assets/os/linux.svg" alt="Linux" width="16" height="16"> <img src="assets/os/apple.svg" alt="macOS" width="16" height="16"> Linux or macOS with Docker Engine or Docker Desktop running
 - Docker Compose v2 (`docker compose version`)
 - `cosign` on `PATH` — the installer verifies the container image's Sigstore
-  signature before starting it (pass `--no-verify` to install without it)
+  signature before starting it. When it is missing, the installer prints the
+  install command for your platform and stops before writing any file; see
+  [Install cosign](#install-cosign). `--no-verify` skips the check.
 - A UDP port reachable from the Internet (443 by default)
 
 Docker must already be installed. If it is missing — or the Compose v2 plugin is
@@ -67,15 +69,57 @@ matching line in `SHA256SUMS`.
 
 Before starting the node, the installer verifies the released image's
 **Sigstore (cosign) signature** — keyless, signed by the release workflow — and
-refuses to start an image whose signature does not match. This needs `cosign`
-on `PATH`. To pin an exact image instead of a mutable tag:
+refuses to start an image whose signature does not match. The check runs before
+any file is written, so a missing `cosign` leaves no partial installation
+behind. To pin an exact image instead of a mutable tag:
 
 ```bash
 ./install.sh --image-digest sha256:<64-hex-digest>
 ```
 
+#### Install cosign
+
+Releases are signed with the **cosign v3** bundle format: use the latest
+`cosign`, because a v2 binary reports that the image carries no signature.
+
+The official prebuilt binary works on any Linux distribution. The asset name
+ends with the CPU: `amd64` on x86-64, `arm64` on ARM64, `arm` on 32-bit ARM.
+
+```bash
+curl -fsSLo /tmp/cosign \
+  "https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64"
+sudo install -m 0755 /tmp/cosign /usr/local/bin/cosign
+cosign version
+```
+
+Arch Linux and Alpine ship `cosign` as a package:
+
+```bash
+sudo pacman -S cosign
+```
+
+```bash
+sudo apk add cosign
+```
+
+On macOS, install it with Homebrew:
+
+```bash
+brew install cosign
+```
+
+#### Skip the verification
+
 If you cannot install `cosign`, `--no-verify` skips the check (the image is then
-trusted on the registry reference alone):
+trusted on the registry reference alone). With the one-line install the option
+goes after `bash -s --`:
+
+```bash
+curl -fsSL https://github.com/albertsdk/hsync-bootnode/releases/latest/download/install.sh \
+  | bash -s -- --no-verify
+```
+
+With a downloaded copy of the script, pass the flag directly:
 
 ```bash
 ./install.sh --no-verify

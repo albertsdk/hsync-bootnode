@@ -263,3 +263,27 @@ Prefer not to run Docker? Use the Debian package
 ([getting-started-deb.md](getting-started-deb.md)) or run from source
 ([getting-started-source.md](getting-started-source.md)). See also
 [Getting Started — Prerequisites](getting-started-script.md#prerequisites).
+
+## Why does the installer stop with "required command not found: cosign"?
+
+```text
+Error: required command not found: cosign
+```
+
+The installer verifies the released image's Sigstore signature before starting
+the node, and that check needs `cosign`. It prints the install command for your
+platform (Homebrew, pacman, apk, or the official prebuilt binary) and stops
+**before writing any file**, so nothing is left half-created.
+
+Install the latest `cosign` and re-run the same command. Releases are signed
+with cosign v3 bundles, so a v2 binary reports that the image carries no
+signature even when the release is intact. See
+[Getting Started — Install cosign](getting-started-script.md#install-cosign).
+
+To install without the check (the image is then trusted on the registry
+reference alone), forward `--no-verify` through the pipe:
+
+```bash
+curl -fsSL https://github.com/albertsdk/hsync-bootnode/releases/latest/download/install.sh \
+  | bash -s -- --no-verify
+```

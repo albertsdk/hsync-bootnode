@@ -53,7 +53,9 @@ Options:
 
 By default the installer verifies the container image's Sigstore signature
 before starting the node (keyless, signed by the release workflow). This needs
-the 'cosign' tool on PATH; pass --no-verify to install without it.
+the 'cosign' tool on PATH: when it is missing, the installer prints the install
+command for your platform and stops before writing any file. Pass --no-verify
+to install without the check.
 
 The installer never installs Docker, invokes sudo, opens firewall ports, or
 overwrites an existing partial installation. Re-running it updates the selected
@@ -267,16 +269,73 @@ print_package_hint() {
     esac
 }
 
+# amd64 | arm64 | arm, or empty when sigstore publishes no build for this CPU.
+detect_cosign_arch() {
+    case "$(uname -m)" in
+        x86_64 | amd64) printf 'amd64' ;;
+        aarch64 | arm64) printf 'arm64' ;;
+        armv6l | armv7l | armv8l) printf 'arm' ;;
+        *) printf '' ;;
+    esac
+}
+
+print_cosign_hint() {
+    local os family arch
+    os="$(detect_platform_os)"
+    family="$(detect_linux_family)"
+    arch="$(detect_cosign_arch)"
+
+    printf '\nThe installer verifies the released image signature (Sigstore, keyless)\n' >&2
+    printf 'before starting the node, which needs "cosign" on PATH.\n' >&2
+    printf 'Install it:\n' >&2
+    case "${os}" in
+        macos)
+            printf '  brew install cosign\n' >&2
+            ;;
+        windows-shell)
+            printf '  Download cosign-windows-amd64.exe from\n' >&2
+            printf '  https://github.com/sigstore/cosign/releases/latest\n' >&2
+            ;;
+        linux)
+            case "${family}" in
+                arch) printf '  sudo pacman -S cosign\n' >&2 ;;
+                alpine) printf '  sudo apk add cosign\n' >&2 ;;
+                *)
+                    if [[ -n "${arch}" ]]; then
+                        printf '  curl -fsSLo /tmp/cosign \\\n' >&2
+                        printf '    "https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-%s"\n' \
+                            "${arch}" >&2
+                        printf '  sudo install -m 0755 /tmp/cosign /usr/local/bin/cosign\n' >&2
+                    else
+                        printf '  Download the build for your CPU from\n' >&2
+                        printf '  https://github.com/sigstore/cosign/releases/latest\n' >&2
+                    fi
+                    ;;
+            esac
+            ;;
+        *)
+            printf '  Download it from https://github.com/sigstore/cosign/releases/latest\n' >&2
+            ;;
+    esac
+    printf '  Docs: https://docs.sigstore.dev/cosign/system_config/installation/\n' >&2
+    # Releases are signed with cosign v3 bundles, which a v2 cosign cannot read.
+    printf 'Install the latest cosign: releases use cosign v3 bundles, and an older\n' >&2
+    printf 'cosign reports that the image carries no signature.\n' >&2
+    printf '\nOr install without verification (the image is then trusted on the\n' >&2
+    printf 'registry reference alone):\n' >&2
+    printf '  curl -fsSL "https://github.com/%s/releases/latest/download/install.sh" \\\n' \
+        "${REPO}" >&2
+    printf '    | bash -s -- --no-verify\n' >&2
+    printf '  # already downloaded: ./install.sh --no-verify\n' >&2
+}
+
 print_tool_hint() {
     local tool="$1"
     case "${tool}" in
-        cosign)
-            printf '\ncosign verifies the container image signature (or pass --no-verify to skip it).\n' >&2
-            printf '  Docs: https://docs.sigstore.dev/cosign/system_config/installation/\n' >&2
-            ;;
-        openssl | tar | curl)
-            printf '\nInstall "%s".\n' "${tool}" >&2
-            print_package_hint "${tool}"
+        cosign) print_cosign_hint ;;
+        curl)
+            printf '\nThe installer resolves the release metadata with "curl".\n' >&2
+            print_package_hint "curl"
             ;;
         *)
             printf '\nInstall "%s" with your package manager.\n' "${tool}" >&2
@@ -313,6 +372,13 @@ require_docker_daemon() {
     fi
     print_docker_daemon_hint "${info_output}"
     fail "cannot connect to the Docker daemon"
+}
+
+# The image is verified before anything is written, so a missing verifier or a
+# refused signature cannot leave a half-created installation behind.
+require_cosign() {
+    [[ "${VERIFY}" == true ]] || return 0
+    require_command cosign
 }
 
 validate_version() {
@@ -408,19 +474,38 @@ image_reference() {
     fi
 }
 
+# Major version of the cosign on PATH, or empty when it cannot be read.
+cosign_major_version() {
+    cosign version 2>/dev/null |
+        sed -n 's/.*GitVersion:[[:space:]]*v\{0,1\}\([0-9]\{1,\}\).*/\1/p' |
+        head -n 1 || true
+}
+
 verify_image() {
     local image_ref="$1"
+    local output major
+
     if [[ "${VERIFY}" != true ]]; then
         printf 'WARNING: image signature verification is disabled (--no-verify); the image is trusted on the registry reference alone.\n' >&2
         return 0
     fi
-    require_command cosign
     printf 'Verifying the container image signature (Sigstore keyless)...\n'
-    cosign verify \
-        --certificate-identity-regexp "${COSIGN_IDENTITY_REGEXP}" \
-        --certificate-oidc-issuer "${COSIGN_OIDC_ISSUER}" \
-        "${image_ref}" >/dev/null ||
-        fail "image signature verification failed for ${image_ref}; refusing to start an unverified node (use --no-verify to override)"
+    # Capture cosign's diagnostics for the failure report, without its JSON payload.
+    if output="$(cosign verify \
+            --certificate-identity-regexp "${COSIGN_IDENTITY_REGEXP}" \
+            --certificate-oidc-issuer "${COSIGN_OIDC_ISSUER}" \
+            "${image_ref}" 2>&1 >/dev/null)"; then
+        return 0
+    fi
+    if [[ -n "${output}" ]]; then
+        printf '%s\n' "${output}" >&2
+    fi
+    major="$(cosign_major_version)"
+    if [[ -n "${major}" ]] && ((major < 3)); then
+        printf '\ncosign %s.x cannot verify the v3 bundle signature of current releases;\n' "${major}" >&2
+        printf 'upgrade to the latest cosign and re-run the installer.\n' >&2
+    fi
+    fail "image signature verification failed for ${image_ref}; refusing to start an unverified node (use --no-verify to override)"
 }
 
 parse_args() {
@@ -659,15 +744,18 @@ or install Docker Engine from https://docs.docker.com/engine/install/ instead of
 
     require_docker_command
     require_docker_compose_v2
+    require_cosign
     # The daemon is only needed to start containers; --no-start stays client-side.
     if [[ "${START_SERVER}" == true ]]; then
         require_docker_daemon
     fi
 
+    # Read-only registry check: a refused image must leave no files behind.
+    verify_image "${IMAGE_REF}"
+
     umask 077
     install_files
     validate_compose_config
-    verify_image "${IMAGE_REF}"
 
     data_dir="$(read_env_value HSYNC_BOOTNODE_DATA_DIR)"
     ready_file="${data_dir}/ready.pid"

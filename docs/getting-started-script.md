@@ -71,10 +71,12 @@ Before starting the node, the installer verifies the released image's
 **Sigstore (cosign) signature** — keyless, signed by the release workflow — and
 refuses to start an image whose signature does not match. The check runs before
 any file is written, so a missing `cosign` leaves no partial installation
-behind. To pin an exact image instead of a mutable tag:
+behind. To pin an exact image instead of a mutable tag, pass the digest the
+release was signed at, quoted — the validator expects exactly 64 lowercase hex
+characters:
 
 ```bash
-./install.sh --image-digest sha256:<64-hex-digest>
+./install.sh --image-digest "sha256:DIGEST_HEX64"
 ```
 
 #### Install cosign

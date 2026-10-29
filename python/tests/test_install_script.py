@@ -209,7 +209,13 @@ def test_missing_cosign_hint_is_actionable_and_writes_nothing(tmp_path: Path) ->
     and the missing verifier is detected before any file is written."""
     proc, state, _log = _run(tmp_path, with_cosign=False, uname_stub=("Linux", "x86_64"))
     assert proc.returncode != 0
-    assert "cosign-linux-amd64" in proc.stderr
+    # The concrete command follows the host distro family (debian/rhel/suse print
+    # the official binary, Arch/Alpine their package), so accept any of them.
+    assert (
+        "cosign-linux-amd64" in proc.stderr
+        or "sudo pacman -S cosign" in proc.stderr
+        or "sudo apk add cosign" in proc.stderr
+    )
     assert "bash -s -- --no-verify" in proc.stderr
     # The documented final error line stays last (decision #73).
     assert proc.stderr.rstrip().endswith("Error: required command not found: cosign")

@@ -20,10 +20,10 @@ import signal
 import stat
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import NoReturn
+from typing import Any, NoReturn
 
 import typer
 from hsync_common import ssl_utils
@@ -502,7 +502,10 @@ def run(
 
     if no_rate_limit:
         warn_event("rate limiting disabled", reason="--no-rate-limit")
-    _install_uvloop()
+    # uvloop.run() is process-local and replaces the deprecated ``install()``
+    # + ``asyncio.run()`` pattern (the global event-loop-policy swap is slated
+    # for removal in Python 3.16). ``None`` keeps the stdlib loop.
+    loop_runner = _uvloop_runner() or asyncio.run
     _install_shutdown_handlers()
 
     if node_identity is not None:
@@ -547,7 +550,7 @@ def run(
                 reason=_near_expiry_reason(days_left, identity_path_display),
             )
     try:
-        asyncio.run(
+        loop_runner(
             _async_main(
                 resolved_host,
                 resolved_ports,
@@ -1240,15 +1243,21 @@ def _fd_readable_before(fd: int, deadline: float) -> bool:
     return bool(readable)
 
 
-def _install_uvloop() -> None:
-    """Use uvloop where available; the stdlib asyncio loop otherwise (Windows)."""
+def _uvloop_runner() -> Callable[..., Any] | None:
+    """Return ``uvloop.run`` when uvloop is usable, else ``None`` (stdlib loop).
+
+    ``uvloop.install()`` swapped the process-wide asyncio event-loop policy, a
+    pattern deprecated on Python 3.12+ (``asyncio.set_event_loop_policy`` is
+    slated for removal in Python 3.16).  The ``run`` loop therefore uses the
+    process-local ``uvloop.run()`` runner; Windows has no uvloop.
+    """
     if sys.platform == "win32":
-        return
+        return None
     try:
         import uvloop
     except ImportError:
-        return
-    uvloop.install()
+        return None
+    return uvloop.run
 
 
 def _install_shutdown_handlers() -> None:

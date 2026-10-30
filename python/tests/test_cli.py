@@ -366,14 +366,15 @@ def _combined(result) -> str:
 
 
 def _patch_run_no_side_effects(monkeypatch, start_servers) -> None:
-    """Stub the listener start and the two process-global installers.
+    """Stub the listener start and the loop/shutdown seams.
 
-    ``run`` reaches ``_install_uvloop``/``_install_shutdown_handlers`` before the
-    bind; stubbing them keeps the test process free of a global event-loop policy
-    swap and shutdown-signal handlers.
+    ``run`` resolves the loop runner (``_uvloop_runner``; the stdlib loop keeps
+    the test process free of a global event-loop policy swap) and installs the
+    shutdown-signal handlers before the bind; stubbing them keeps the tests
+    deterministic.
     """
     monkeypatch.setattr("hsync_rendezvous.cli.start_servers", start_servers)
-    monkeypatch.setattr("hsync_rendezvous.cli._install_uvloop", lambda: None)
+    monkeypatch.setattr("hsync_rendezvous.cli._uvloop_runner", lambda: None)
     monkeypatch.setattr("hsync_rendezvous.cli._install_shutdown_handlers", lambda: None)
 
 

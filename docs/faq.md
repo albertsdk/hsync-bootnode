@@ -172,21 +172,24 @@ With a packaged install, set the same option through a unit/Compose override
 
 Two peers behind carrier-grade NAT have no inbound address at all: rendezvous and
 the master election work, then the slave keeps logging `No reachable endpoint for
-master …`. Start the node with `--relay` and it also carries the data plane,
-forwarding the peers' TLS verbatim (it never sees content, names or credentials;
-it does see which devices are paired and how many bytes they exchanged):
+master …`. The relay is **on by default**, so the node already carries the data
+plane — this symptom appears only when it was started with `--no-relay`. Remove
+that flag and the node forwards the peers' TLS verbatim (it never sees content,
+names or credentials; it does see which devices are paired and how many bytes
+they exchanged):
 
 ```bash
-hsync-rendezvous run --relay
+hsync-rendezvous run
 ```
 
 The client then logs `[RELAY]` on both sides and the sync proceeds through the
-node. Relaying spends the node's uplink, so it is opt-in and capped: set the
-aggregate rate with `--relay-bandwidth` (KiB/s, default 8192), the per-session
-ceiling with `--relay-session-bytes` and the idle window with
-`--relay-idle-timeout` (default 120 s). Without `--relay` the node answers every
-relay frame with `relay_unavailable` and only directly reachable peers connect.
-See [usage.md](usage.md#run-options) and the wire contract in
+node. The relay is bounded by default: set the aggregate rate with
+`--relay-bandwidth` (KiB/s, default 8192), the per-session ceiling with
+`--relay-session-bytes` and the idle window with `--relay-idle-timeout` (default
+120 s). To keep a node discovery-only, start it with `--no-relay` (or
+`HSYNC_RENDEZVOUS_RELAY=0`): it answers every relay frame with
+`relay_unavailable` and only directly reachable peers connect. See
+[usage.md](usage.md#run-options) and the wire contract in
 [`protocol-spec/rdv-1.md`](../protocol-spec/rdv-1.md) (§Data relay).
 
 ## Where can I read the pin the client stored?

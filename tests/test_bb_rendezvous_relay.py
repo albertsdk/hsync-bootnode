@@ -50,8 +50,8 @@ def _write(writer, frame: dict) -> None:
 
 @pytest.mark.asyncio
 async def test_a_relayed_session_carries_bytes_both_ways(rendezvous_factory, bucket, rng) -> None:
-    # Given: a node with the relay enabled and a registered listener
-    handle = rendezvous_factory(args=("--relay",))
+    # Given: a node with the relay on by default and a registered listener
+    handle = rendezvous_factory()
     listener_cid = random_cid(rng)
     requester_cid = random_cid(rng)
     async with RdvClient(handle.port) as listener:
@@ -94,11 +94,11 @@ async def test_a_relayed_session_carries_bytes_both_ways(rendezvous_factory, buc
 
 
 @pytest.mark.asyncio
-async def test_a_node_without_the_relay_refuses_the_session(
+async def test_a_node_with_the_relay_disabled_refuses_the_session(
     rendezvous_factory, bucket, rng
 ) -> None:
-    # Given: a node started without --relay
-    handle = rendezvous_factory()
+    # Given: a node started with --no-relay
+    handle = rendezvous_factory(args=("--no-relay",))
     cid = random_cid(rng)
     target = random_cid(rng)
     async with RdvClient(handle.port) as client:
@@ -114,8 +114,9 @@ async def test_a_node_without_the_relay_refuses_the_session(
 async def test_a_listener_is_required_before_a_session_can_start(
     rendezvous_factory, bucket, rng
 ) -> None:
-    # Given: a relay-enabled node and a peer that never opened a listener
-    handle = rendezvous_factory(args=("--relay",))
+    # Given: a node with the relay on by default and a peer that never opened a
+    # listener
+    handle = rendezvous_factory()
     cid = random_cid(rng)
     target = random_cid(rng)
     async with RdvClient(handle.port) as client:

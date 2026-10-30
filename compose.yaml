@@ -9,7 +9,8 @@ services:
     user: "${HSYNC_UID:-1000}:${HSYNC_GID:-1000}"
     # The container binds the unprivileged UDP port 8443 (the image runs as a
     # non-root user); the host's public QUIC port is mapped to it. Clients use
-    # RENDEZVOUS_HOST_UDP_PORT (default 443) on the host.
+    # RENDEZVOUS_HOST_UDP_PORT (default 443) on the host. The data relay is on by
+    # default (add --no-relay to make this a discovery-only node).
     command: ["run", "--listen-host", "0.0.0.0", "--listen-port", "8443"]
     ports:
       - "${RENDEZVOUS_HOST_UDP_PORT:-443}:8443/udp"

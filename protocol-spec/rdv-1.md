@@ -107,7 +107,8 @@ credentials remain invisible to it, and the peers keep authenticating each other
 by certificate pinning. What the node necessarily observes is the pairing
 (`cid` ↔ `cid`) and the volume.
 
-- **Opt-in per node**: without `--relay` every relay frame is answered
+- **On by default**: every node accepts relay frames. Start one with `--no-relay`
+  to make it discovery-only: every relay frame is then answered
   `relay_error{error:"relay_unavailable"}` (uniform, like every other refusal) and
   no relay state is ever created.
 - **Listener** (the peer that serves — the p2p master): opens one stream, sends

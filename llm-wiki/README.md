@@ -42,7 +42,7 @@ Internal, agent-optimized knowledge base for the `hsync-rendezvous` project
    prune every 15 s, client refresh every 30 s. The data relay keeps the same
    promise: its listener/session state lives in
    `python/src/hsync_rendezvous/relay.py`, RAM only, and only aggregate counters
-   exist (`--relay` opt-in, ADR-0047).
+   exist (`--no-relay` makes the node discovery-only; ADR-0047).
 3. **Rigid schema**: every `rdv/1` frame model uses pydantic
    `extra="forbid"` — unknown/targeted fields make the frame invalid and it is
    silently dropped. The field domains are enforced too: `bucket_token` must be

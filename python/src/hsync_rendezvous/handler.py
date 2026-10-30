@@ -141,7 +141,7 @@ class RendezvousHandler:
         enforce_rate_limits: bool = True,
         limits: ResourceLimits | None = None,
         stats: NodeStats | None = None,
-        relay_enabled: bool = False,
+        relay_enabled: bool = True,
         relay_idle_timeout: float = 120.0,
         relay_session_bytes: int = 0,
         relay_bytes_per_second: int = 0,
@@ -226,8 +226,9 @@ class RendezvousHandler:
         self._relay_listen_pair = TokenBucketLimiter(
             RELAY_LISTEN_BURST, RELAY_LISTEN_LIMIT, WINDOW_SECONDS, max_keys=max_keys
         )
-        # The relay is opt-in per node: without ``--relay`` every relay frame is
-        # answered ``relay_unavailable`` and no state is ever created.
+        # The relay is on by default: only a node started with ``--no-relay``
+        # answers every relay frame with ``relay_unavailable`` and creates no
+        # relay state.
         self.relay = RelayRegistry(
             enabled=relay_enabled,
             quotas=RelayQuotas(

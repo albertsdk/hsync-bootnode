@@ -90,8 +90,9 @@ _DEFAULT_DEBUG_ENV = "HSYNC_RENDEZVOUS_DEBUG"
 _DEFAULT_READY_FILE_ENV = "HSYNC_RENDEZVOUS_READY_FILE"
 # Node-wide private mode: require a valid bucket_token on every frame.
 _DEFAULT_PRIVATE_ENV = "HSYNC_RENDEZVOUS_PRIVATE"
-# Data relay (opt-in). One switch plus the bounds that keep a public node from
-# becoming a free CDN: idle timeout, per-session byte cap and global byte rate.
+# Data relay (on by default). One switch plus the bounds that keep a public
+# node from becoming a free CDN: idle timeout, per-session byte cap and global
+# byte rate.
 _DEFAULT_RELAY_ENV = "HSYNC_RENDEZVOUS_RELAY"
 _DEFAULT_RELAY_IDLE_TIMEOUT_ENV = "HSYNC_RENDEZVOUS_RELAY_IDLE_TIMEOUT"
 _DEFAULT_RELAY_SESSION_BYTES_ENV = "HSYNC_RENDEZVOUS_RELAY_SESSION_BYTES"
@@ -295,15 +296,15 @@ def run(
         help="Map every bound QUIC/UDP port with UPnP (opt-in; off by default).",
     ),
     relay: bool = typer.Option(
-        False,
-        "--relay",
+        True,
+        "--relay/--no-relay",
         envvar=_DEFAULT_RELAY_ENV,
         help=(
-            "Relay peers' opaque TLS through this node (opt-in; off by default). "
-            "Two peers that no inbound NAT mapping reaches (mobile CGNAT, a "
-            "hotspot behind a carrier) then still run the p2p data plane; the "
-            "node never sees content and never terminates the peers' TLS. "
-            "Env: HSYNC_RENDEZVOUS_RELAY=1."
+            "Relay peers' opaque TLS through this node (on by default; disable "
+            "with --no-relay). Two peers that no inbound NAT mapping reaches "
+            "(mobile CGNAT, a hotspot behind a carrier) then still run the p2p "
+            "data plane; the node never sees content and never terminates the "
+            "peers' TLS. Env: HSYNC_RENDEZVOUS_RELAY=0."
         ),
     ),
     relay_idle_timeout: int = typer.Option(

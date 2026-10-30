@@ -850,6 +850,20 @@ def test_the_metrics_flags_are_documented_in_help() -> None:
         assert flag in output
 
 
+def test_the_relay_flags_are_documented_in_help() -> None:
+    """The relay is on by default: help exposes both the switch and the opt-out."""
+    output = _run_help()
+    for flag in (
+        "--relay",
+        "--no-relay",
+        "--relay-bandwidth",
+        "--relay-idle-timeout",
+        "--relay-session-bytes",
+    ):
+        assert flag in output
+    assert "HSYNC_RENDEZVOUS_RELAY" in output
+
+
 def test_a_metrics_port_without_a_token_fails_fast() -> None:
     """Configuration is checked before any listener is bound."""
     result = runner.invoke(

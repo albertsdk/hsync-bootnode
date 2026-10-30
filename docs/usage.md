@@ -31,7 +31,7 @@ hsync-rendezvous --version
 | `--keys-file` | *(none)* | File carrying the group keys (same `bucket=<hex-key>` format); read once at startup and never written. Portable alternative to `--keys-fd` for service managers that cannot pass a descriptor (Windows/WinSW); the two are mutually exclusive. A missing/non-regular file or a symlink is a configuration error (exit code 2); on POSIX a group-writable or world-accessible file is reported on the always-on warning channel (0640 group-read is accepted). Environment variable form: `HSYNC_RENDEZVOUS_KEYS_FILE`. |
 | `--private` | *(disabled flag)* | Private node: every frame must carry a valid `bucket_token`, for **every** bucket (not only `--protected-bucket`). Starting it with no group key fails fast (exit code 2). Environment variable form: `HSYNC_RENDEZVOUS_PRIVATE=1`. |
 | `--upnp` | *(disabled flag)* | Map the QUIC/UDP listener port(s) with UPnP (opt-in; off by default). With `--listen-ports`, every bound port is mapped, so each offered door is also reachable from the WAN side. |
-| `--relay` | *(disabled flag)* | Relay the peers' opaque TLS (`rdv/1` relay frames), so two peers that no inbound NAT mapping reaches can still run their data plane through this node. Off by default: relaying spends the node's uplink, so the operator opts in. The node never terminates or inspects the relayed TLS. |
+| `--relay` / `--no-relay` | *(enabled)* | Relay the peers' opaque TLS (`rdv/1` relay frames), so two peers that no inbound NAT mapping reaches can still run their data plane through this node. **On by default**; `--no-relay` disables it. Without the relay the node answers every relay frame with `relay_unavailable` and only directly reachable peers connect. Relaying spends the node's uplink, which is why the aggregate rate and the other bounds below stay in force. The node never terminates or inspects the relayed TLS. Environment variable form: `HSYNC_RENDEZVOUS_RELAY=0` disables, `=1` forces. |
 | `--relay-idle-timeout` | `120` | Seconds without traffic in either direction before a relayed session (or a listener control stream) is closed. Range `30..3600`. |
 | `--relay-session-bytes` | `0` | Close a relayed session after this many forwarded bytes (`0` = no per-session cap; the byte rate stays the primary bound). |
 | `--relay-bandwidth` | `8192` | Aggregate relay throughput cap in KiB/s (`0` = unlimited). Excess traffic is throttled by backpressure, never dropped. |
@@ -389,10 +389,10 @@ can rely on.
   your IP from the node or from your peers is out of scope; nothing here is
   Tor-like.
 - **Not a storage node and not a control plane** — it stores no file and orders
-  nothing. With `--relay` it forwards the peers' **opaque TLS** for peers that no
-  inbound NAT mapping reaches: it never terminates or inspects that TLS, so it
-  sees no content, file name or credential. What it does see is the pairing
-  (`cid` ↔ `cid`) and the byte volume. Without `--relay`, file data flows only
+  nothing. It forwards the peers' **opaque TLS** for peers that no inbound NAT
+  mapping reaches: it never terminates or inspects that TLS, so it sees no
+  content, file name or credential. What it does see is the pairing
+  (`cid` ↔ `cid`) and the byte volume. With `--no-relay`, file data flows only
   between directly reachable peers.
 - **A private node is authentication, not a VPN** — it gates who may use the node as
   a rendezvous point (and as a relay); the sync traffic is encrypted by the peers'

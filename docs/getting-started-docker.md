@@ -25,6 +25,8 @@ HSYNC_RENDEZVOUS_IDENTITY=/var/lib/hsync-rendezvous/identity.pem
 #HSYNC_RENDEZVOUS_KEYS_PATH=/secure/path/group-keys
 #HSYNC_RENDEZVOUS_KEYS_FILE=/keys
 #HSYNC_RENDEZVOUS_PRIVATE=1
+# The data relay is on by default; uncomment for a discovery-only node:
+#HSYNC_RENDEZVOUS_RELAY=0
 ```
 
 The container binds the unprivileged UDP port `8443`; the host maps

@@ -214,7 +214,7 @@ async def test_an_attach_from_another_source_is_closed() -> None:
 
 
 async def test_a_disabled_relay_refuses_every_frame() -> None:
-    """Without ``--relay`` no state is created and the answer is uniform."""
+    """A node started with ``--no-relay`` creates no state; the answer is uniform."""
     registry = _registry(enabled=False)
     dialer = Side()
     await registry.run(_connect(), reader=dialer.to_server, writer=dialer.writer, peer_ip=DIALER_IP)

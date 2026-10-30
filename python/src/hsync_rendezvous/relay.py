@@ -6,8 +6,8 @@ accept no inbound connection (mobile CGNAT, a hotspot behind a carrier, hotel
 Wi-Fi). The relay carries the peers' own TLS session **verbatim**: the node
 never terminates it, never sees file names or content, and the two peers still
 authenticate each other by certificate pinning. What the node does see is the
-pairing (CID ↔ CID) and the byte volume, which is why the relay is opt-in per
-node (``--relay``) and bounded by quotas.
+pairing (CID ↔ CID) and the byte volume, which is why the relay is disabled
+only when the operator opts out (``--no-relay``) and is bounded by quotas.
 
 Streams
 -------
@@ -26,8 +26,8 @@ timeout per direction and a per-session byte cap. Every counter kept here is an
 aggregate — no CID, bucket, IP or port leaves this module.
 
 Consumers: ``hsync_rendezvous.server`` (stream handoff), ``hsync_rendezvous.handler``
-(validation/authorization), ``hsync_rendezvous.cli`` (opt-in + quotas) and the
-white-box tests.
+(validation/authorization), ``hsync_rendezvous.cli`` (the switch + quotas) and
+the white-box tests.
 """
 
 from __future__ import annotations

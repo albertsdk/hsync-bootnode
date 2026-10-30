@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# HSYNC Bootnode - Python Build Script
+# HSYNC Rendezvous - Python Build Script
 #
-# Builds the hsync-bootnode standalone executable from the Python sources
+# Builds the hsync-rendezvous standalone executable from the Python sources
 # using PyInstaller. Binaries only: the Debian/Ubuntu .deb packaging lives in
 # the repository root (../compile.sh), which selects the implementation
 # language (python or c) and assembles the package. A script placed
@@ -33,9 +33,9 @@
 #     found on PATH is accepted as fallback.
 #
 # Output:
-#   native:  dist/<os>-<arch>/hsync-bootnode[.exe]
-#            e.g. dist/linux-amd64/hsync-bootnode
-#   onedir:  <output-dir>/hsync-bootnode/  (main binary inside the bundle)
+#   native:  dist/<os>-<arch>/hsync-rendezvous[.exe]
+#            e.g. dist/linux-amd64/hsync-rendezvous
+#   onedir:  <output-dir>/hsync-rendezvous/  (main binary inside the bundle)
 #
 # Author: Alberto Basso
 # =============================================================================
@@ -69,8 +69,8 @@ esac
 
 readonly PLATFORM="${OS_NAME}-${ARCH_NAME}"
 
-readonly APP_NAME="hsync-bootnode"
-readonly ENTRY_POINT="src/hsync_bootnode/__main__.py"
+readonly APP_NAME="hsync-rendezvous"
+readonly ENTRY_POINT="src/hsync_rendezvous/__main__.py"
 readonly MODULE_PATHS="src"
 readonly PYPROJECT="pyproject.toml"
 readonly BIN_EXT="$([[ "${OS_NAME}" == "windows" ]] && echo ".exe" || echo "")"
@@ -113,7 +113,7 @@ log_step() { echo -e "${CYAN}>${RESET} ${BOLD}$*${RESET}"; }
 
 show_help() {
     cat << EOF
-${BOLD}HSYNC Bootnode - Python Build Script${RESET}
+${BOLD}HSYNC Rendezvous - Python Build Script${RESET}
 
 ${BOLD}Usage:${RESET}
     ./compile.sh [options]
@@ -219,9 +219,9 @@ _pyi_flags() {
     flags+=" --name ${APP_NAME}"
     flags+=" --log-level ERROR"
     # The package is a src-layout: static analysis needs src on the module
-    # path to resolve hsync_bootnode/hsync_common imports.
+    # path to resolve hsync_rendezvous/hsync_common imports.
     flags+=" --paths ${MODULE_PATHS}"
-    flags+=" --collect-submodules hsync_bootnode"
+    flags+=" --collect-submodules hsync_rendezvous"
     flags+=" --collect-submodules hsync_common"
     flags+=" --collect-submodules aioquic"
     flags+=" --exclude-module pytest --exclude-module pytest_asyncio"
@@ -345,7 +345,7 @@ main() {
 
     cd "${SCRIPT_DIR}"
 
-    echo -e "${BOLD}HSYNC Bootnode - Python Build${RESET}"
+    echo -e "${BOLD}HSYNC Rendezvous - Python Build${RESET}"
     echo -e "${DIM}────────────────────────${RESET}"
     echo
 

@@ -1,8 +1,8 @@
-"""White-box tests for the ``boot/1`` data relay (pairing, pump, quotas).
+"""White-box tests for the ``rdv/1`` data relay (pairing, pump, quotas).
 
 The registry is driven directly with in-memory stream pairs: the real wire is
 covered by the language-neutral black-box suite
-(``tests/test_bb_bootnode_relay.py``), so these tests stay fast and deterministic
+(``tests/test_bb_rendezvous_relay.py``), so these tests stay fast and deterministic
 while pinning the semantics that are hard to observe from outside (quota
 accounting, attach ownership, teardown).
 """
@@ -12,14 +12,14 @@ from __future__ import annotations
 import asyncio
 import json
 
-from hsync_bootnode.protocol import (
-    BootRelayAttach,
-    BootRelayConnect,
-    BootRelayListen,
-    BootRelayPing,
+from hsync_rendezvous.protocol import (
+    RdvRelayAttach,
+    RdvRelayConnect,
+    RdvRelayListen,
+    RdvRelayPing,
 )
-from hsync_bootnode.relay import PrefixedReader, RelayHandoff, RelayQuotas, RelayRegistry
-from hsync_bootnode.stats import NodeStats
+from hsync_rendezvous.relay import PrefixedReader, RelayHandoff, RelayQuotas, RelayRegistry
+from hsync_rendezvous.stats import NodeStats
 
 CID = "A1b2C3d4E5f6G7h8I9j0K"
 PEER_CID = "L0m1N2o3P4q5R6s7T8u9V"
@@ -79,14 +79,14 @@ def _registry(**kwargs) -> RelayRegistry:
 
 def _listen(cid: str = CID) -> RelayHandoff:
     return RelayHandoff(
-        BootRelayListen(protocol_version="boot/1", type="relay_listen", cid=cid, bucket=BUCKET)
+        RdvRelayListen(protocol_version="rdv/1", type="relay_listen", cid=cid, bucket=BUCKET)
     )
 
 
 def _connect(target_cid: str = CID) -> RelayHandoff:
     return RelayHandoff(
-        BootRelayConnect(
-            protocol_version="boot/1",
+        RdvRelayConnect(
+            protocol_version="rdv/1",
             type="relay_connect",
             cid=PEER_CID,
             bucket=BUCKET,
@@ -97,8 +97,8 @@ def _connect(target_cid: str = CID) -> RelayHandoff:
 
 def _attach(cid: str, relay_id: str) -> RelayHandoff:
     return RelayHandoff(
-        BootRelayAttach(
-            protocol_version="boot/1",
+        RdvRelayAttach(
+            protocol_version="rdv/1",
             type="relay_attach",
             cid=cid,
             bucket=BUCKET,
@@ -228,7 +228,7 @@ async def test_a_ping_keeps_the_listener_and_eof_drops_it() -> None:
     listener, listener_task = await _open_listener(registry)
     listener.to_server.feed_data(
         json.dumps(
-            {"protocol_version": "boot/1", "type": "relay_ping", "cid": CID, "bucket": BUCKET}
+            {"protocol_version": "rdv/1", "type": "relay_ping", "cid": CID, "bucket": BUCKET}
         ).encode()
         + b"\n"
     )
@@ -253,8 +253,8 @@ async def test_an_unknown_relay_id_attaches_to_nothing() -> None:
 
 def test_the_ping_model_carries_no_optional_fields() -> None:
     """``relay_ping`` stays a bare keepalive (nothing to smuggle on it)."""
-    assert set(BootRelayPing.__annotations__) == {"type", "cid", "bucket"}
-    assert "bucket_token" not in BootRelayPing.model_fields
+    assert set(RdvRelayPing.__annotations__) == {"type", "cid", "bucket"}
+    assert "bucket_token" not in RdvRelayPing.model_fields
 
 
 async def test_a_pipelined_prefix_is_not_lost() -> None:

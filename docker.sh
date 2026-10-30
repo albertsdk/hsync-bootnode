@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# HSYNC Bootnode - Docker Management Script
+# HSYNC Rendezvous - Docker Management Script
 # Unified script for Docker operations: build, start, stop, restart, logs, etc.
 #
 # Usage: ./docker.sh <command> [options]
@@ -15,16 +15,16 @@ set -euo pipefail
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Repository root: build context must include the sibling ../hsync-common package
 readonly REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-readonly IMAGE_NAME="hsync-bootnode"
+readonly IMAGE_NAME="hsync-rendezvous"
 readonly IMAGE_TAG="${HSYNC_VERSION:-1.0.0}"
-readonly CONTAINER_NAME="hsync-bootnode"
+readonly CONTAINER_NAME="hsync-rendezvous"
 # The container always binds this unprivileged UDP port (the image runs as a
 # non-root user); the host's public QUIC port is mapped to it.
 readonly CONTAINER_PORT="8443"
 # Host UDP port clients connect to.
-BOOTNODE_HOST_UDP_PORT="${BOOTNODE_HOST_UDP_PORT:-443}"
+RENDEZVOUS_HOST_UDP_PORT="${RENDEZVOUS_HOST_UDP_PORT:-443}"
 # Host directory holding the persistent TLS identity and the readiness PID.
-_DATA_DIR_RAW="${HSYNC_BOOTNODE_DATA_DIR:-${SCRIPT_DIR}/hsync-data}"
+_DATA_DIR_RAW="${HSYNC_RENDEZVOUS_DATA_DIR:-${SCRIPT_DIR}/hsync-data}"
 if [[ "${_DATA_DIR_RAW}" = /* ]]; then
     readonly DATA_DIR="${_DATA_DIR_RAW%/}"
 else
@@ -34,11 +34,11 @@ unset _DATA_DIR_RAW
 readonly READY_FILE="${DATA_DIR}/ready.pid"
 # Optional protected-bucket group keys file on the HOST (mounted read-only at
 # /keys and opened there as fd 3; never copied into the image). The
-# in-container descriptor source is the separate HSYNC_BOOTNODE_KEYS_FILE=/keys,
+# in-container descriptor source is the separate HSYNC_RENDEZVOUS_KEYS_FILE=/keys,
 # matching compose.yaml / install.sh.
-HSYNC_BOOTNODE_KEYS_PATH="${HSYNC_BOOTNODE_KEYS_PATH:-}"
+HSYNC_RENDEZVOUS_KEYS_PATH="${HSYNC_RENDEZVOUS_KEYS_PATH:-}"
 # Seconds to wait for the readiness PID file before declaring the start failed.
-STARTUP_READY_TIMEOUT="${HSYNC_BOOTNODE_STARTUP_TIMEOUT:-30}"
+STARTUP_READY_TIMEOUT="${HSYNC_RENDEZVOUS_STARTUP_TIMEOUT:-30}"
 
 # -----------------------------------------------------------------------------
 # Colors (disabled if not a terminal)
@@ -63,7 +63,7 @@ log_step()  { printf '%s\n' "${CYAN}→${RESET} ${BOLD}$*${RESET}"; }
 
 show_help() {
     cat << EOF
-${BOLD}HSYNC Bootnode - Docker Management${RESET}
+${BOLD}HSYNC Rendezvous - Docker Management${RESET}
 
 ${BOLD}Usage:${RESET} ./docker.sh <command> [options]
 
@@ -82,21 +82,21 @@ ${BOLD}Options:${RESET}
     -h, --help      Show this help message
 
 ${BOLD}Environment Variables:${RESET}
-    BOOTNODE_HOST_UDP_PORT          Host UDP port clients connect to (default: 443)
-    HSYNC_BOOTNODE_PRIVATE       Set to 1 for a private node (every frame needs a token)
-    HSYNC_BOOTNODE_KEYS_PATH     Host path of the group-keys file (mounted at /keys, opened as fd 3)
-    HSYNC_BOOTNODE_DEBUG         Set to 1 for the full operation log (peer identity included)
-    HSYNC_BOOTNODE_DATA_DIR      Host identity directory (default: ./hsync-data)
+    RENDEZVOUS_HOST_UDP_PORT          Host UDP port clients connect to (default: 443)
+    HSYNC_RENDEZVOUS_PRIVATE       Set to 1 for a private node (every frame needs a token)
+    HSYNC_RENDEZVOUS_KEYS_PATH     Host path of the group-keys file (mounted at /keys, opened as fd 3)
+    HSYNC_RENDEZVOUS_DEBUG         Set to 1 for the full operation log (peer identity included)
+    HSYNC_RENDEZVOUS_DATA_DIR      Host identity directory (default: ./hsync-data)
     HSYNC_VERSION                Image tag version (default: 1.0.0)
 
 ${BOLD}Examples:${RESET}
     ./docker.sh build
     ./docker.sh start
-    HSYNC_BOOTNODE_PRIVATE=1 HSYNC_BOOTNODE_KEYS_PATH=./group-keys ./docker.sh start
+    HSYNC_RENDEZVOUS_PRIVATE=1 HSYNC_RENDEZVOUS_KEYS_PATH=./group-keys ./docker.sh start
     ./docker.sh logs -f
 
 The container binds UDP ${CONTAINER_PORT} internally; the host maps
-BOOTNODE_HOST_UDP_PORT to it. The persistent TLS identity lives on the host under
+RENDEZVOUS_HOST_UDP_PORT to it. The persistent TLS identity lives on the host under
 ${DATA_DIR}; back it up to keep the certificate fingerprint stable across hosts.
 EOF
 }
@@ -141,27 +141,27 @@ cmd_start() {
         --restart unless-stopped
         --read-only
         --tmpfs /tmp
-        -p "${BOOTNODE_HOST_UDP_PORT}:${CONTAINER_PORT}/udp"
+        -p "${RENDEZVOUS_HOST_UDP_PORT}:${CONTAINER_PORT}/udp"
         # Run under the invoking user's ids so the bind-mounted identity
         # directory stays writable (created above as the same user).
         --user "${HSYNC_UID:-$(id -u)}:${HSYNC_GID:-$(id -g)}"
-        -v "${DATA_DIR}:/var/lib/hsync-bootnode"
+        -v "${DATA_DIR}:/var/lib/hsync-rendezvous"
     )
 
-    if [[ -n "${HSYNC_BOOTNODE_PRIVATE:-}" ]]; then
-        docker_args+=(-e "HSYNC_BOOTNODE_PRIVATE=${HSYNC_BOOTNODE_PRIVATE}")
+    if [[ -n "${HSYNC_RENDEZVOUS_PRIVATE:-}" ]]; then
+        docker_args+=(-e "HSYNC_RENDEZVOUS_PRIVATE=${HSYNC_RENDEZVOUS_PRIVATE}")
     fi
-    if [[ -n "${HSYNC_BOOTNODE_DEBUG:-}" ]]; then
-        docker_args+=(-e "HSYNC_BOOTNODE_DEBUG=${HSYNC_BOOTNODE_DEBUG}")
+    if [[ -n "${HSYNC_RENDEZVOUS_DEBUG:-}" ]]; then
+        docker_args+=(-e "HSYNC_RENDEZVOUS_DEBUG=${HSYNC_RENDEZVOUS_DEBUG}")
     fi
-    if [[ -n "${HSYNC_BOOTNODE_KEYS_PATH}" ]]; then
-        if [[ ! -f "${HSYNC_BOOTNODE_KEYS_PATH}" ]]; then
-            log_error "Group keys file not found: ${HSYNC_BOOTNODE_KEYS_PATH}"
+    if [[ -n "${HSYNC_RENDEZVOUS_KEYS_PATH}" ]]; then
+        if [[ ! -f "${HSYNC_RENDEZVOUS_KEYS_PATH}" ]]; then
+            log_error "Group keys file not found: ${HSYNC_RENDEZVOUS_KEYS_PATH}"
             exit 1
         fi
         docker_args+=(
-            -v "${HSYNC_BOOTNODE_KEYS_PATH}:/keys:ro"
-            -e "HSYNC_BOOTNODE_KEYS_FILE=/keys"
+            -v "${HSYNC_RENDEZVOUS_KEYS_PATH}:/keys:ro"
+            -e "HSYNC_RENDEZVOUS_KEYS_FILE=/keys"
         )
     fi
 
@@ -169,7 +169,7 @@ cmd_start() {
     docker "${docker_args[@]}" "${IMAGE_NAME}:${IMAGE_TAG}" \
         run --listen-host 0.0.0.0 --listen-port "${CONTAINER_PORT}"
 
-    log_info "Host port: ${BOOTNODE_HOST_UDP_PORT}/udp → container ${CONTAINER_PORT}/udp"
+    log_info "Host port: ${RENDEZVOUS_HOST_UDP_PORT}/udp → container ${CONTAINER_PORT}/udp"
     log_info "Identity:  ${DATA_DIR}"
 
     if [[ "${STARTUP_READY_TIMEOUT}" =~ ^[0-9]+$ ]] && (( STARTUP_READY_TIMEOUT > 0 )); then
@@ -180,11 +180,11 @@ cmd_start() {
             docker logs --tail 30 "${CONTAINER_NAME}" >&2 || true
             exit 1
         fi
-        log_ok "HSYNC bootnode is live → udp/${BOOTNODE_HOST_UDP_PORT}"
+        log_ok "HSYNC rendezvous is live → udp/${RENDEZVOUS_HOST_UDP_PORT}"
     else
-        log_info "Readiness check skipped (HSYNC_BOOTNODE_STARTUP_TIMEOUT=0)"
+        log_info "Readiness check skipped (HSYNC_RENDEZVOUS_STARTUP_TIMEOUT=0)"
     fi
-    if [[ "${HSYNC_BOOTNODE_PRIVATE:-}" == "1" ]]; then
+    if [[ "${HSYNC_RENDEZVOUS_PRIVATE:-}" == "1" ]]; then
         log_warn "Private node: every frame requires a valid bucket_token"
     fi
 }

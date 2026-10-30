@@ -1,0 +1,19 @@
+{
+  "protocol_version": "rdv/1",
+  "type": "register",
+  "cid": "A1b2C3d4E5f6G7h8I9j0K",
+  "bucket": "shared",
+  "group": "home",
+  "cert_fp": "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99",
+  "version": "1.0.0",
+  "capacity": 20,
+  "endpoints": [
+    {"proto": "tcp", "host": "198.51.100.7", "port": 443}
+  ],
+  "connected": 3,
+  "server_ready": true,
+  "prefer_master": false,
+  "never_master": false,
+  "startup_time": 1760000000.0,
+  "sync_direction": "bidirectional"
+}

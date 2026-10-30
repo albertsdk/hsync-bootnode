@@ -16,8 +16,8 @@ from collections.abc import AsyncIterator
 import pytest
 from pydantic import SecretStr
 
-from hsync_bootnode.metrics import PROMETHEUS_CONTENT_TYPE, MetricsEndpoint, MetricsServer
-from hsync_bootnode.stats import NodeStats
+from hsync_rendezvous.metrics import PROMETHEUS_CONTENT_TYPE, MetricsEndpoint, MetricsServer
+from hsync_rendezvous.stats import NodeStats
 
 TOKEN = "0f" * 32
 _AUTH = f"Authorization: Bearer {TOKEN}"
@@ -63,8 +63,8 @@ async def test_authorized_scrape_returns_the_prometheus_body() -> None:
         response = await _roundtrip(port, f"GET /metrics HTTP/1.1\r\n{_AUTH}\r\n\r\n")
     assert _status(response) == 200
     assert f"Content-Type: {PROMETHEUS_CONTENT_TYPE}" in response
-    assert "# TYPE hsync_bootnode_peers_current gauge" in _body(response)
-    assert 'hsync_bootnode_metrics_requests_total{outcome="ok"} 1' in _body(response)
+    assert "# TYPE hsync_rendezvous_peers_current gauge" in _body(response)
+    assert 'hsync_rendezvous_metrics_requests_total{outcome="ok"} 1' in _body(response)
     assert stats.metrics_requests["ok"] == 1
 
 
@@ -83,7 +83,7 @@ async def test_every_authentication_failure_is_the_same_401(raw_request: str) ->
         response = await _roundtrip(port, raw_request)
     assert _status(response) == 401
     assert "WWW-Authenticate: Bearer" in response
-    assert "hsync_bootnode_peers_current" not in _body(response)
+    assert "hsync_rendezvous_peers_current" not in _body(response)
     assert stats.metrics_requests["unauthorized"] == 1
 
 
@@ -124,7 +124,7 @@ async def test_an_oversized_header_block_is_431() -> None:
 
 
 async def test_a_silent_client_is_cut_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("hsync_bootnode.metrics._READ_TIMEOUT_SECONDS", 0.1)
+    monkeypatch.setattr("hsync_rendezvous.metrics._READ_TIMEOUT_SECONDS", 0.1)
     async with _running() as (_, port, _):
         reader, writer = await asyncio.open_connection("127.0.0.1", port)
         try:
@@ -148,7 +148,7 @@ async def test_a_request_burst_is_rate_limited() -> None:
 
 
 async def test_the_concurrency_cap_answers_503(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("hsync_bootnode.metrics._MAX_CONCURRENT", 1)
+    monkeypatch.setattr("hsync_rendezvous.metrics._MAX_CONCURRENT", 1)
     async with _running() as (_, port, stats):
         # Given: one client that connected and never finished its request
         idle_reader, idle_writer = await asyncio.open_connection("127.0.0.1", port)

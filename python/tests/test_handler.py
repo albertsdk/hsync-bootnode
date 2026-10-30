@@ -1,4 +1,4 @@
-"""BootHandler behavioural tests: routing, protected buckets, rate limits,
+"""RendezvousHandler behavioural tests: routing, protected buckets, rate limits,
 STUN-echo and frame rejection. Pure logic — no sockets involved.
 """
 
@@ -12,8 +12,8 @@ from unittest.mock import patch
 import pytest
 from pydantic import SecretStr
 
-from hsync_bootnode.handler import BootConfigError, BootHandler
-from hsync_bootnode.tokens import derive_bucket_token
+from hsync_rendezvous.handler import RendezvousConfigError, RendezvousHandler
+from hsync_rendezvous.tokens import derive_bucket_token
 
 CID = "A1b2C3d4E5f6G7h8I9j0K"
 CID2 = "abcdefghijklmnopqrstu"
@@ -26,7 +26,7 @@ def decoded(raw: bytes | None) -> dict | None:
     return json.loads(raw) if raw is not None else None
 
 
-def send(h: BootHandler, frame: object, *, peer_ip: str, peer_port: int) -> bytes | None:
+def send(h: RendezvousHandler, frame: object, *, peer_ip: str, peer_port: int) -> bytes | None:
     """Feed a frame dict through the raw-bytes handle() contract."""
     return h.handle(json.dumps(frame), peer_ip=peer_ip, peer_port=peer_port)
 
@@ -36,11 +36,11 @@ def make_handler(
     *,
     private: bool = False,
     keys: dict[str, str] | None = None,
-) -> BootHandler:
+) -> RendezvousHandler:
     """Build a handler; ``keys`` defaults to a ``k<bucket>`` secret per bucket."""
     if keys is None:
         keys = {bucket: "k" + bucket for bucket in protected}
-    return BootHandler(
+    return RendezvousHandler(
         protected_buckets=protected,
         private=private,
         group_keys={bucket: SecretStr(key) for bucket, key in keys.items()},
@@ -57,8 +57,8 @@ def frozen_clock(now: float) -> Iterator[None]:
     host uptime (a freshly booted runner sees ``now`` in the future).
     """
     with (
-        patch("hsync_bootnode.routing.time.monotonic", return_value=now),
-        patch("hsync_bootnode.handler.time.monotonic", return_value=now),
+        patch("hsync_rendezvous.routing.time.monotonic", return_value=now),
+        patch("hsync_rendezvous.handler.time.monotonic", return_value=now),
     ):
         yield
 
@@ -74,7 +74,7 @@ def register_frame(
     **extra: object,
 ) -> dict:
     frame: dict = {
-        "protocol_version": "boot/1",
+        "protocol_version": "rdv/1",
         "type": "register",
         "cid": cid,
         "bucket": bucket,
@@ -98,7 +98,7 @@ def query_frame(
     limit: int = 20,
 ) -> dict:
     frame: dict = {
-        "protocol_version": "boot/1",
+        "protocol_version": "rdv/1",
         "type": "query",
         "bucket": bucket,
         "limit": limit,
@@ -115,7 +115,7 @@ def leave_frame(
     bucket: str = "shared",
     token: str | None = None,
 ) -> dict:
-    frame: dict = {"protocol_version": "boot/1", "type": "leave", "cid": cid, "bucket": bucket}
+    frame: dict = {"protocol_version": "rdv/1", "type": "leave", "cid": cid, "bucket": bucket}
     if token is not None:
         frame["bucket_token"] = token
     return frame
@@ -128,7 +128,7 @@ def refresh_frame(
     token: str | None = None,
     connected: int | None = None,
 ) -> dict:
-    frame: dict = {"protocol_version": "boot/1", "type": "refresh", "cid": cid, "bucket": bucket}
+    frame: dict = {"protocol_version": "rdv/1", "type": "refresh", "cid": cid, "bucket": bucket}
     if group is not None:
         frame["group"] = group
     if token is not None:
@@ -246,7 +246,7 @@ def test_capacity_defaults_to_zero_and_survives_refresh() -> None:
     send(
         h,
         {
-            "protocol_version": "boot/1",
+            "protocol_version": "rdv/1",
             "type": "refresh",
             "cid": CID,
             "bucket": "shared",
@@ -347,7 +347,7 @@ def test_election_advertisement_defaults_and_survives_refresh() -> None:
     send(
         h,
         {
-            "protocol_version": "boot/1",
+            "protocol_version": "rdv/1",
             "type": "refresh",
             "cid": CID,
             "bucket": "shared",
@@ -383,7 +383,7 @@ def test_reachable_is_derived_from_endpoints() -> None:
     send(
         h,
         {
-            "protocol_version": "boot/1",
+            "protocol_version": "rdv/1",
             "type": "refresh",
             "cid": CID2,
             "bucket": "shared",
@@ -544,7 +544,7 @@ def test_private_leave_on_unkeyed_bucket_is_dropped() -> None:
 
 
 def test_private_node_without_keys_fails_fast() -> None:
-    with pytest.raises(BootConfigError, match="private node without any group key"):
+    with pytest.raises(RendezvousConfigError, match="private node without any group key"):
         make_handler(private=True)
     # one key is enough to serve the node
     assert make_handler(private=True, keys={"shared": "kshared"}) is not None
@@ -626,7 +626,7 @@ def test_leave_from_a_foreign_source_is_ignored() -> None:
 
     This is the regression test for the spoofable-departure vector: the frame
     alone (``cid`` + ``bucket`` are plain wire data) must not be able to break
-    someone else's discovery entry, and the node exposes nothing back (the spec
+    someone else's rendezvous entry, and the node exposes nothing back (the spec
     carries no leave response, so the refusal is a silent drop).
     """
     h = make_handler()
@@ -720,7 +720,7 @@ def test_refresh_renews_ttl_but_never_creates() -> None:
             send(
                 h,
                 {
-                    "protocol_version": "boot/1",
+                    "protocol_version": "rdv/1",
                     "type": "refresh",
                     "cid": CID,
                     "bucket": "shared",
@@ -745,7 +745,7 @@ def test_refresh_renews_ttl_but_never_creates() -> None:
         dropped = send(
             h,
             {
-                "protocol_version": "boot/1",
+                "protocol_version": "rdv/1",
                 "type": "refresh",
                 "cid": CID2,
                 "bucket": "shared",
@@ -766,9 +766,9 @@ def test_unknown_and_malformed_frames_are_dropped() -> None:
     assert h.handle(b'"not a dict"', peer_ip="10.0.0.1", peer_port=1) is None
     assert h.handle(b"[1,2]", peer_ip="10.0.0.1", peer_port=1) is None
     # Missing / unknown discriminator: dropped by the rigid schema.
-    assert h.handle(b'{"protocol_version":"boot/1"}', peer_ip="10.0.0.1", peer_port=1) is None
+    assert h.handle(b'{"protocol_version":"rdv/1"}', peer_ip="10.0.0.1", peer_port=1) is None
     assert (
-        h.handle(b'{"protocol_version":"boot/1","type":"pwn"}', peer_ip="10.0.0.1", peer_port=1)
+        h.handle(b'{"protocol_version":"rdv/1","type":"pwn"}', peer_ip="10.0.0.1", peer_port=1)
         is None
     )
     # named targeted fields are rejected by the rigid schema
@@ -784,7 +784,7 @@ def test_malformed_frames_have_their_own_budget() -> None:
     starts from its own fresh budget.
     """
     h = make_handler()
-    from hsync_bootnode.handler import PARSE_IP_BURST
+    from hsync_rendezvous.handler import PARSE_IP_BURST
 
     for _ in range(PARSE_IP_BURST):
         assert h.handle(b"{oops", peer_ip="10.0.0.9", peer_port=1) is None
@@ -799,7 +799,7 @@ def test_malformed_frames_have_their_own_budget() -> None:
 
 def test_generic_per_ip_admission_cap() -> None:
     h = make_handler()
-    from hsync_bootnode.handler import OP_IP_BURST
+    from hsync_rendezvous.handler import OP_IP_BURST
 
     for _ in range(OP_IP_BURST):
         send(h, register_frame(cid=CID2), peer_ip="9.9.9.9", peer_port=1)
@@ -810,15 +810,15 @@ def test_generic_per_ip_admission_cap() -> None:
 
 def test_protected_bucket_without_key_fails_fast() -> None:
     try:
-        BootHandler(protected_buckets=("shared",), group_keys={})
-    except BootConfigError:
+        RendezvousHandler(protected_buckets=("shared",), group_keys={})
+    except RendezvousConfigError:
         pass
     else:  # pragma: no cover - expected to raise
         raise AssertionError("protected bucket without a key must fail at startup")
 
 
 def test_prune_removes_expired_records() -> None:
-    from hsync_bootnode.routing import PeerRecord
+    from hsync_rendezvous.routing import PeerRecord
 
     h = make_handler()
     h.routing.upsert(
@@ -846,7 +846,7 @@ def test_handle_prunes_periodically() -> None:
     records would linger until the next real frame arrived, so a quiet bucket
     kept stale peers in memory (and the soak failed its convergence check).
     """
-    from hsync_bootnode.routing import PeerRecord
+    from hsync_rendezvous.routing import PeerRecord
 
     h = make_handler()
 
@@ -869,7 +869,7 @@ def test_handle_prunes_periodically() -> None:
     # An already-expired record must be swept by the FIRST handle() (the
     # last_prune is None, so the first call always sweeps).
     add_expired("expired-first", 1000.0, "10.0.0.1")
-    with patch("hsync_bootnode.handler.time.monotonic", return_value=2000.0):
+    with patch("hsync_rendezvous.handler.time.monotonic", return_value=2000.0):
         send(h, register_frame(cid=CID2), peer_ip="10.0.0.1", peer_port=1)
         assert h.routing.count() == 1  # "expired-first" swept, CID2 live
         # A second call within the same 15 s window must NOT re-sweep.
@@ -881,7 +881,7 @@ def test_handle_prunes_periodically() -> None:
     # which targets a different CID).
     add_expired("expired-between", 2010.0, "10.0.0.3")
     assert h.routing.count() == 3
-    with patch("hsync_bootnode.handler.time.monotonic", return_value=2020.0):
+    with patch("hsync_rendezvous.handler.time.monotonic", return_value=2020.0):
         send(h, register_frame(cid=CID), peer_ip="10.0.0.4", peer_port=1)
     # "expired-between" swept by the interval prune; CID2 + CID remain.
     assert h.routing.count() == 2
@@ -918,7 +918,7 @@ def test_wire_serialization_is_compact_and_spec_ordered() -> None:
     hp = make_handler(protected=("shared",))
     refusal = send(hp, query_frame(token=None), peer_ip="10.0.0.2", peer_port=2)
     assert refusal == (
-        b'{"protocol_version":"boot/1","type":"response","peers":[],"count":0,'
+        b'{"protocol_version":"rdv/1","type":"response","peers":[],"count":0,'
         b'"ttl":60,"error":"token_required","retry_after":null}'
     )
 
@@ -965,20 +965,20 @@ def test_response_bytes_match_the_pydantic_serializer() -> None:
     """The hand-assembled response must stay byte-identical to the pydantic dump.
 
     ``_response`` concatenates cached peer fragments around a server-controlled
-    envelope; this pins that envelope against ``BOOT_RESPONSE_ADAPTER`` so the
+    envelope; this pins that envelope against ``RDV_RESPONSE_ADAPTER`` so the
     wire format cannot drift from the SSOT model.
     """
     from pydantic import TypeAdapter
 
-    from hsync_bootnode.protocol import (
-        BOOT_RESPONSE_ADAPTER,
-        BootPeer,
-        BootResponse,
+    from hsync_rendezvous.protocol import (
+        RDV_RESPONSE_ADAPTER,
         Endpoint,
+        RdvPeer,
+        RdvResponse,
     )
 
     peers = [
-        BootPeer(
+        RdvPeer(
             cid=CID,
             endpoints=[Endpoint(proto="tcp", host="198.51.100.7", port=443)],
             cert_fp=FP,
@@ -989,10 +989,10 @@ def test_response_bytes_match_the_pydantic_serializer() -> None:
             connected=2,
         )
     ]
-    fragments = [TypeAdapter(BootPeer).dump_json(peer) for peer in peers]
+    fragments = [TypeAdapter(RdvPeer).dump_json(peer) for peer in peers]
     h = make_handler()
-    expected = BOOT_RESPONSE_ADAPTER.dump_json(
-        BootResponse(protocol_version="boot/1", type="response", peers=peers, count=1, ttl=60)
+    expected = RDV_RESPONSE_ADAPTER.dump_json(
+        RdvResponse(protocol_version="rdv/1", type="response", peers=peers, count=1, ttl=60)
     )
     assert h._response(peers=fragments, error=None, retry_after=None) == expected
 
@@ -1000,12 +1000,12 @@ def test_response_bytes_match_the_pydantic_serializer() -> None:
 def test_peer_record_keeps_endpoints_compact_and_caches_wire_bytes() -> None:
     """Records store primitive endpoints and cache the serialized wire fragment.
 
-    Memory invariant: no pydantic ``Endpoint``/``BootPeer`` instance is retained
+    Memory invariant: no pydantic ``Endpoint``/``RdvPeer`` instance is retained
     per record (they cost ~3x the tuple); ``_to_peer`` returns the cached
     ``bytes`` fragment unchanged on the second call (no per-query rebuild).
     """
-    from hsync_bootnode.handler import BootHandler
-    from hsync_bootnode.protocol import BootQuery
+    from hsync_rendezvous.handler import RendezvousHandler
+    from hsync_rendezvous.protocol import RdvQuery
 
     h = make_handler()
     send(h, register_frame(), peer_ip="198.51.100.7", peer_port=54321)
@@ -1013,11 +1013,11 @@ def test_peer_record_keeps_endpoints_compact_and_caches_wire_bytes() -> None:
     assert record is not None
     assert record.endpoints == (("tcp", "198.51.100.7", 443),)
 
-    query = BootQuery(protocol_version="boot/1", type="query", bucket="shared", group="home")
-    first = BootHandler._to_peer(record, query)
+    query = RdvQuery(protocol_version="rdv/1", type="query", bucket="shared", group="home")
+    first = RendezvousHandler._to_peer(record, query)
     assert isinstance(first, bytes)
     assert record.wire is first
-    assert BootHandler._to_peer(record, query) is first
+    assert RendezvousHandler._to_peer(record, query) is first
 
 
 # --- source-IP ownership (anti-hijack), per-IP isolation and bounded table ---
@@ -1028,7 +1028,7 @@ def test_foreign_source_cannot_hijack_a_registration() -> None:
 
     Regression for the registration-hijack vector: an attacker who learns a
     ``(cid, bucket, group)`` (e.g. from an anonymous query) can no longer point
-    the victim's discovery record at its own endpoints.
+    the victim's rendezvous record at its own endpoints.
     """
     h = make_handler()
     ack = decoded(send(h, register_frame(host="10.0.0.1"), peer_ip="10.0.0.1", peer_port=1))
@@ -1087,7 +1087,7 @@ def test_register_limit_is_isolated_per_source_ip() -> None:
 
 def test_query_ip_cap_is_isolated_per_source() -> None:
     """The aggregate per-IP query cap throttles an enumerator, not its neighbours."""
-    from hsync_bootnode.handler import QUERY_IP_BURST
+    from hsync_rendezvous.handler import QUERY_IP_BURST
 
     h = make_handler()
     # Distinct buckets so the per-(IP, bucket) limiter never triggers first: the
@@ -1102,7 +1102,7 @@ def test_query_ip_cap_is_isolated_per_source() -> None:
 
 def test_routing_table_cap_applies_backpressure() -> None:
     """The host-derived record cap refuses new keys instead of growing RAM."""
-    from hsync_bootnode.resources import ResourceLimits
+    from hsync_rendezvous.resources import ResourceLimits
 
     limits = ResourceLimits(
         max_peer_records=2,
@@ -1112,7 +1112,7 @@ def test_routing_table_cap_applies_backpressure() -> None:
         max_records_per_group=2,
         max_records_per_bucket=10,
     )
-    h = BootHandler(limits=limits)
+    h = RendezvousHandler(limits=limits)
     assert decoded(send(h, register_frame(cid=CID), peer_ip="1.1.1.1", peer_port=1)) is not None
     assert decoded(send(h, register_frame(cid=CID2), peer_ip="1.1.1.1", peer_port=1)) is not None
     # a third key in the same group is refused by the per-group ceiling...
@@ -1167,7 +1167,7 @@ def test_refresh_never_revives_an_expired_record() -> None:
 
 def test_the_bucket_ceiling_cannot_be_rotated_around_with_group_names() -> None:
     """``group`` is registrant-chosen, so the per-bucket ceiling is the binding one."""
-    from hsync_bootnode.resources import ResourceLimits
+    from hsync_rendezvous.resources import ResourceLimits
 
     limits = ResourceLimits(
         max_peer_records=10,
@@ -1177,7 +1177,7 @@ def test_the_bucket_ceiling_cannot_be_rotated_around_with_group_names() -> None:
         max_records_per_group=10,
         max_records_per_bucket=2,
     )
-    h = BootHandler(limits=limits, enforce_rate_limits=False)
+    h = RendezvousHandler(limits=limits, enforce_rate_limits=False)
     replies = [
         decoded(
             send(
@@ -1196,7 +1196,7 @@ def test_the_bucket_ceiling_cannot_be_rotated_around_with_group_names() -> None:
 
 def test_pruning_releases_the_bucket_accounting_on_both_paths() -> None:
     """Both sweep paths (incremental and bulk rebuild) keep ``_per_bucket`` exact."""
-    from hsync_bootnode.routing import PeerRecord, RoutingTable
+    from hsync_rendezvous.routing import PeerRecord, RoutingTable
 
     def record(cid: str, expires_at: float) -> PeerRecord:
         return PeerRecord(
@@ -1230,7 +1230,7 @@ def test_pruning_releases_the_bucket_accounting_on_both_paths() -> None:
 
 def test_relayed_peer_endpoints_are_capped() -> None:
     """A register may advertise 16 candidates; the relay carries the first four."""
-    from hsync_bootnode.protocol import MAX_RELAY_ENDPOINTS
+    from hsync_rendezvous.protocol import MAX_RELAY_ENDPOINTS
 
     h = make_handler()
     endpoints = [
@@ -1247,7 +1247,7 @@ def test_relayed_peer_endpoints_are_capped() -> None:
 
 def test_a_response_stays_within_the_byte_budget() -> None:
     """Endpoint-heavy registrants cannot make one query emit an unbounded reply."""
-    from hsync_bootnode.protocol import MAX_RESPONSE_BYTES
+    from hsync_rendezvous.protocol import MAX_RESPONSE_BYTES
 
     h = make_handler()
     host = ".".join(["a" * 63] * 3)  # 191-char dialable DNS name

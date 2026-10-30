@@ -13,7 +13,7 @@ the two halves separately (wall time and client CPU), so the recoverable margin
 is explicit.
 
 Usage:
-    cd hsync-bootnode && python/.venv/bin/python bench/profile_handshake.py \\
+    cd hsync-rendezvous && python/.venv/bin/python bench/profile_handshake.py \\
         [--count N] [--cprofile TOP] [--json-out FILE]
 """
 
@@ -37,7 +37,7 @@ from common import (  # noqa: E402
     maybe_write_json,
     print_table,
 )
-from harness import client_config, start_bootnode, terminate  # noqa: E402
+from harness import client_config, start_rendezvous, terminate  # noqa: E402
 
 # Kept <= 28 chars so print_table's column alignment holds.
 _HANDSHAKE = "handshake(enter)"
@@ -110,7 +110,7 @@ async def _cprofile(port: int, count: int, top: int) -> None:
 
 def _report(results: list[BenchResult], cpu: dict[str, float]) -> None:
     handshake, teardown, total = results
-    print("Handshake profiling (client-side; server = spawned bootnode binary)")
+    print("Handshake profiling (client-side; server = spawned rendezvous binary)")
     print("  enter = TLS 1.3 + QUIC handshake | exit = close() + wait_closed() drain")
     print_table(results)
     print("\nClient CPU per phase (time.process_time):")
@@ -147,8 +147,8 @@ def main() -> None:
     add_json_out(parser)
     args = parser.parse_args()
 
-    with tempfile.TemporaryDirectory(prefix="bootnode-prof-") as tmp:
-        handle = start_bootnode(Path(tmp), no_rate_limit=True)
+    with tempfile.TemporaryDirectory(prefix="rendezvous-prof-") as tmp:
+        handle = start_rendezvous(Path(tmp), no_rate_limit=True)
         try:
             results, cpu = asyncio.run(_phase(handle.port, args.count))
             _report(results, cpu)

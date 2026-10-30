@@ -1,8 +1,8 @@
-# HSYNC Bootnode — Getting Started
+# HSYNC Rendezvous — Getting Started
 
-`hsync-bootnode` is the Internet discovery node of the HSYNC sync network: it
+`hsync-rendezvous` is the Internet rendezvous node of the HSYNC sync network: it
 tells P2P clients which peers are currently online without storing anything. It
-speaks the `boot/1` protocol over QUIC (UDP, port 443 by default).
+speaks the `rdv/1` protocol over QUIC (UDP, port 443 by default).
 
 Pick **one** installation method below and follow it to a running node. The
 methods are ordered from the simplest and most immediate to the most involved.
@@ -44,6 +44,6 @@ gone.
 
 - Run it as-is for a **public** rendezvous point, or with `--private` for the
   closed rendezvous point of a community — see
-  [usage.md](usage.md#private-node-authenticated-bootstrap).
-- Point clients at it with the `hsync p2p` bootnode argument (`hsync p2p <host>`)
-  ([client p2p bootnode guide](https://github.com/albertsdk/hsync-client/blob/main/docs/p2p-bootnode.md)).
+  [usage.md](usage.md#private-node-authenticated-rendezvous).
+- Point clients at it with the `hsync p2p` rendezvous argument (`hsync p2p <host>`)
+  ([client p2p rendezvous guide](https://github.com/albertsdk/hsync-client/blob/main/docs/p2p-rendezvous.md)).

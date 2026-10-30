@@ -7,7 +7,7 @@ though Poetry had installed it: ``release.yml`` runs ``poetry install`` then the
 build script without activating the venv, so the PATH fallback misses too.
 ``run.sh`` hardcoded the same ``bin/`` layout for the console script.
 
-Consumers: hsync-bootnode maintainers (regression guard; the root build script
+Consumers: hsync-rendezvous maintainers (regression guard; the root build script
 is covered separately by ``test_compile_script.py``).
 """
 
@@ -38,7 +38,7 @@ def test_run_script_console_path_is_windows_aware() -> None:
     script = _RUN.read_text(encoding="utf-8")
     assert 'VENV_BIN_DIR="Scripts"' in script
     assert 'BIN_EXT=".exe"' in script
-    assert 'readonly BIN="${PY_DIR}/.venv/${VENV_BIN_DIR}/hsync-bootnode${BIN_EXT}"' in script
+    assert 'readonly BIN="${PY_DIR}/.venv/${VENV_BIN_DIR}/hsync-rendezvous${BIN_EXT}"' in script
 
 
 _WINDOWS = _ROOT / "packaging" / "windows"
@@ -46,25 +46,25 @@ _WINDOWS = _ROOT / "packaging" / "windows"
 
 def test_frozen_service_passes_the_keys_file() -> None:
     """WinSW cannot inherit a descriptor: the installed service uses the file."""
-    xml = (_WINDOWS / "hsync-bootnode-service-frozen.xml").read_text(encoding="utf-8")
-    assert "--keys-file %ProgramData%\\hsync-bootnode\\group-keys" in xml
+    xml = (_WINDOWS / "hsync-rendezvous-service-frozen.xml").read_text(encoding="utf-8")
+    assert "--keys-file %ProgramData%\\hsync-rendezvous\\group-keys" in xml
 
 
 def test_source_service_documents_the_keys_file() -> None:
-    xml = (_WINDOWS / "hsync-bootnode-service.xml").read_text(encoding="utf-8")
-    assert "HSYNC_BOOTNODE_KEYS_FILE" in xml
-    assert "HSYNC_BOOTNODE_PRIVATE" in xml
+    xml = (_WINDOWS / "hsync-rendezvous-service.xml").read_text(encoding="utf-8")
+    assert "HSYNC_RENDEZVOUS_KEYS_FILE" in xml
+    assert "HSYNC_RENDEZVOUS_PRIVATE" in xml
 
 
 def test_windows_service_xml_is_well_formed() -> None:
     """Comments must not contain ``--``: WinSW would refuse a malformed XML."""
-    for name in ("hsync-bootnode-service.xml", "hsync-bootnode-service-frozen.xml"):
+    for name in ("hsync-rendezvous-service.xml", "hsync-rendezvous-service-frozen.xml"):
         ET.parse(_WINDOWS / name)
 
 
 def test_windows_installer_provisions_and_protects_the_keys_file() -> None:
     """The frozen service needs the file present, read-only for LocalService."""
-    script = (_WINDOWS / "hsync-bootnode.iss").read_text(encoding="utf-8")
+    script = (_WINDOWS / "hsync-rendezvous.iss").read_text(encoding="utf-8")
     assert "group-keys" in script
     assert "CurStepChanged" in script
     assert "ssPostInstall" in script

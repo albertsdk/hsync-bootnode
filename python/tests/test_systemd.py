@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from hsync_bootnode.systemd import (
+from hsync_rendezvous.systemd import (
     notify_available,
     notify_ready,
     notify_status,
@@ -75,7 +75,7 @@ def test_an_unreachable_socket_never_raises(tmp_path: Path, monkeypatch) -> None
 
 def test_the_abstract_namespace_is_supported(monkeypatch) -> None:
     """systemd reports an abstract address as ``@name``; nothing may raise on it."""
-    monkeypatch.setenv("NOTIFY_SOCKET", "@hsync-bootnode-does-not-exist")
+    monkeypatch.setenv("NOTIFY_SOCKET", "@hsync-rendezvous-does-not-exist")
     assert notify_ready() is False
 
 

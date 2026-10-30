@@ -1,7 +1,7 @@
 """L2 — QUIC loopback load benchmark (real transport, language-neutral).
 
-Spawns the bootnode binary (``HSYNC_BOOTNODE_BIN``, default Python build) and
-drives it with a real aioquic client over the ``boot/1`` wire protocol. This
+Spawns the rendezvous binary (``HSYNC_RENDEZVOUS_BIN``, default Python build) and
+drives it with a real aioquic client over the ``rdv/1`` wire protocol. This
 benchmark is independent of the implementation language: it measures the QUIC
 handshake cost separately from per-frame cost on an established connection,
 plus end-to-end register/query throughput, against whatever binary is selected.
@@ -10,7 +10,7 @@ Loopback numbers are comparative (v1 vs future ports), not production SLAs:
 localhost removes real network latency but keeps the full TLS 1.3 + QUIC stack.
 
 Usage:
-    cd hsync-bootnode && python/.venv/bin/python bench/bench_quic.py \
+    cd hsync-rendezvous && python/.venv/bin/python bench/bench_quic.py \
         [--connections N] [--frames N] [--concurrency C] [--peers P] \
         [--json-out FILE]
 """
@@ -36,11 +36,11 @@ from common import (  # noqa: E402
     timed_query,
 )
 from harness import (  # noqa: E402
-    BootClient,
+    RdvClient,
     client_config,
     query_frame,
     register_frame,
-    start_bootnode,
+    start_rendezvous,
     terminate,
 )
 
@@ -74,7 +74,7 @@ async def _bench_frames_on_one_connection(port: int, frames: int, peers: int) ->
     cids = make_cids(peers, start=5_000_000)
     query = query_frame("shared", limit=20)
     samples: list[float] = []
-    async with BootClient(port) as client:
+    async with RdvClient(port) as client:
         for cid in cids:
             await client.exchange(register_frame(cid, "shared"), timeout=5.0)
         for _ in range(10):
@@ -90,7 +90,7 @@ async def _bench_concurrent_queries(port: int, connections: int, per_conn: int) 
     async def worker() -> list[float]:
         query = query_frame("shared", limit=20)
         samples: list[float] = []
-        async with BootClient(port) as client:
+        async with RdvClient(port) as client:
             for _ in range(per_conn):
                 samples.append(await timed_query(client, query))
         return samples
@@ -123,8 +123,8 @@ def main() -> None:
     add_json_out(parser)
     args = parser.parse_args()
 
-    with tempfile.TemporaryDirectory(prefix="bootnode-bench-") as tmp:
-        handle = start_bootnode(Path(tmp), no_rate_limit=True)
+    with tempfile.TemporaryDirectory(prefix="rendezvous-bench-") as tmp:
+        handle = start_rendezvous(Path(tmp), no_rate_limit=True)
         try:
             results = asyncio.run(_amain(args, handle.port))
         finally:

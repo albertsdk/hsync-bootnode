@@ -27,7 +27,7 @@ days and to keep you informed of remediation progress.
 
 - **No peer-data persistence** — the routing table is RAM-only and the process
   never writes peer data (IPs, CIDs, timestamps) to disk (no-log invariant).
-- **Discovery, not data** — the bootnode only helps peers find each other; file
+- **Rendezvous, not data** — the rendezvous only helps peers find each other; file
   data never passes through it.
 - **Uniform refusals** — protected buckets return a uniform `token_required`
   refusal that never reveals whether a bucket exists; group keys are read once
@@ -53,7 +53,7 @@ days and to keep you informed of remediation progress.
 
 ## Trust model (what the node can and cannot vouch for)
 
-The bootnode is an **unauthenticated matchmaker**, by design: it relays what a
+The rendezvous is an **unauthenticated matchmaker**, by design: it relays what a
 peer declares and never becomes an identity authority.
 
 - On an **open** bucket any source may claim a `(cid, bucket, group)` that is

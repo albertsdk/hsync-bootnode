@@ -19,10 +19,10 @@ always flagged (a removed scenario must never go unnoticed).
 
 The exit code is 1 when at least one regression is flagged, 0 otherwise, so the
 tool can gate a CI/PR check without being collected by pytest (it is dev
-tooling, not a test). It never imports ``hsync_bootnode`` (language-neutral).
+tooling, not a test). It never imports ``hsync_rendezvous`` (language-neutral).
 
 Usage:
-    cd hsync-bootnode
+    cd hsync-rendezvous
 
     # L1 handler A/B (or L2/L3 with the same flags)
     python/.venv/bin/python bench/bench_handler.py --count 2000 --json-out /tmp/h1.json
@@ -31,7 +31,7 @@ Usage:
     python/.venv/bin/python bench/compare.py /tmp/h1.json /tmp/h2.json
 
     # Python build vs a different implementation (C), same tier + count
-    HSYNC_BOOTNODE_BIN=/path/to/c/binary \\
+    HSYNC_RENDEZVOUS_BIN=/path/to/c/binary \\
         python/.venv/bin/python bench/bench_quic.py --json-out /tmp/c.json
     python/.venv/bin/python bench/compare.py /tmp/py.json /tmp/c.json --threshold 1.15
 """

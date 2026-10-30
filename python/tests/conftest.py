@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import pytest
 
-from hsync_bootnode import diagnostics
+from hsync_rendezvous import diagnostics
 
 
 def _reset_diagnostics() -> None:

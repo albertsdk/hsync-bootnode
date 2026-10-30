@@ -1,4 +1,4 @@
-# Usage reference — hsync-bootnode
+# Usage reference — hsync-rendezvous
 
 Reference for the CLI, the environment variables, the group-keys contract and
 the OS service units. Installation and the open-mode quick start are on the
@@ -10,10 +10,10 @@ The commands are `run`, `identity show`, and `identity rotate` (plus the
 top-level `--version` flag):
 
 ```text
-hsync-bootnode run [OPTIONS]
-hsync-bootnode identity show [--identity PATH] [--pem]
-hsync-bootnode identity rotate [--identity PATH] [--public-host NAME]...
-hsync-bootnode --version
+hsync-rendezvous run [OPTIONS]
+hsync-rendezvous identity show [--identity PATH] [--pem]
+hsync-rendezvous identity rotate [--identity PATH] [--public-host NAME]...
+hsync-rendezvous --version
 ```
 
 ### `run` options
@@ -22,29 +22,29 @@ hsync-bootnode --version
 |---|---|---|
 | `--listen-host` | `0.0.0.0` | Address to bind the QUIC/UDP listener to. Accepts an optional port (`HOST[:PORT]`, e.g. `0.0.0.0:443` or `[::1]:443`). |
 | `--listen-port` | `443` | UDP port (1–65535). 443 is the QUIC/HTTP3 default; ports below 1024 need root or `CAP_NET_BIND_SERVICE` (the systemd unit grants it). Mutually exclusive with a port in `--listen-host HOST:PORT`. |
-| `--listen-ports` | *(none)* | Comma-separated UDP ports to listen on in **one process** (multi-port). The listeners share one in-memory routing table, so a peer registered via one port is visible to a query on another. The point is to offer several inbound doors because a **client's egress firewall** may block UDP 443 while allowing another UDP port. Recommended reachability set: `443,53` (`BOOT_PORT_SET`); 53 is the most permissive UDP port but is usually held by the local resolver — free it or omit it. Binding is **best-effort**: a port that cannot bind is skipped with a warning and the node keeps serving the rest (it fails only if none bind). Mutually exclusive with `--listen-port` and a port in `--listen-host HOST:PORT`. |
-| `--identity` | XDG state path | Path of the persistent TLS identity (key+cert). Created on first run and reused afterwards, so the certificate fingerprint is stable across restarts and can be pinned by clients. Default: `$HSYNC_BOOTNODE_IDENTITY`, else `$HSYNC_STATE_DIR/bootnode/identity.pem`, else `$XDG_STATE_HOME/hsync/bootnode/identity.pem` (`~/.local/state/…`). |
-| `--ephemeral` | *(disabled flag)* | Keep the TLS identity in memory and write no identity file (read-only filesystems, throwaway nodes); the fingerprint changes on every restart, so clients cannot pin it. Mutually exclusive with `--identity`. Environment variable form: `HSYNC_BOOTNODE_EPHEMERAL=1`. |
+| `--listen-ports` | *(none)* | Comma-separated UDP ports to listen on in **one process** (multi-port). The listeners share one in-memory routing table, so a peer registered via one port is visible to a query on another. The point is to offer several inbound doors because a **client's egress firewall** may block UDP 443 while allowing another UDP port. Recommended reachability set: `443,53` (`RDV_PORT_SET`); 53 is the most permissive UDP port but is usually held by the local resolver — free it or omit it. Binding is **best-effort**: a port that cannot bind is skipped with a warning and the node keeps serving the rest (it fails only if none bind). Mutually exclusive with `--listen-port` and a port in `--listen-host HOST:PORT`. |
+| `--identity` | XDG state path | Path of the persistent TLS identity (key+cert). Created on first run and reused afterwards, so the certificate fingerprint is stable across restarts and can be pinned by clients. Default: `$HSYNC_RENDEZVOUS_IDENTITY`, else `$HSYNC_STATE_DIR/rendezvous/identity.pem`, else `$XDG_STATE_HOME/hsync/rendezvous/identity.pem` (`~/.local/state/…`). |
+| `--ephemeral` | *(disabled flag)* | Keep the TLS identity in memory and write no identity file (read-only filesystems, throwaway nodes); the fingerprint changes on every restart, so clients cannot pin it. Mutually exclusive with `--identity`. Environment variable form: `HSYNC_RENDEZVOUS_EPHEMERAL=1`. |
 | `--public-host` | *(none)* | Public hostname or IP to add to the certificate SAN (repeatable). |
 | `--protected-bucket` | *(none)* | Bucket that requires a valid `bucket_token`. Repeatable. Declaring a protected bucket without provisioning its key fails fast at startup (exit code 2). |
-| `--keys-fd` | *(none)* | File descriptor carrying the group keys (see below). Environment variable form: `HSYNC_BOOTNODE_KEYS_FD`. |
-| `--keys-file` | *(none)* | File carrying the group keys (same `bucket=<hex-key>` format); read once at startup and never written. Portable alternative to `--keys-fd` for service managers that cannot pass a descriptor (Windows/WinSW); the two are mutually exclusive. A missing/non-regular file or a symlink is a configuration error (exit code 2); on POSIX a group-writable or world-accessible file is reported on the always-on warning channel (0640 group-read is accepted). Environment variable form: `HSYNC_BOOTNODE_KEYS_FILE`. |
-| `--private` | *(disabled flag)* | Private node: every frame must carry a valid `bucket_token`, for **every** bucket (not only `--protected-bucket`). Starting it with no group key fails fast (exit code 2). Environment variable form: `HSYNC_BOOTNODE_PRIVATE=1`. |
+| `--keys-fd` | *(none)* | File descriptor carrying the group keys (see below). Environment variable form: `HSYNC_RENDEZVOUS_KEYS_FD`. |
+| `--keys-file` | *(none)* | File carrying the group keys (same `bucket=<hex-key>` format); read once at startup and never written. Portable alternative to `--keys-fd` for service managers that cannot pass a descriptor (Windows/WinSW); the two are mutually exclusive. A missing/non-regular file or a symlink is a configuration error (exit code 2); on POSIX a group-writable or world-accessible file is reported on the always-on warning channel (0640 group-read is accepted). Environment variable form: `HSYNC_RENDEZVOUS_KEYS_FILE`. |
+| `--private` | *(disabled flag)* | Private node: every frame must carry a valid `bucket_token`, for **every** bucket (not only `--protected-bucket`). Starting it with no group key fails fast (exit code 2). Environment variable form: `HSYNC_RENDEZVOUS_PRIVATE=1`. |
 | `--upnp` | *(disabled flag)* | Map the QUIC/UDP listener port(s) with UPnP (opt-in; off by default). With `--listen-ports`, every bound port is mapped, so each offered door is also reachable from the WAN side. |
-| `--relay` | *(disabled flag)* | Relay the peers' opaque TLS (`boot/1` relay frames), so two peers that no inbound NAT mapping reaches can still run their data plane through this node. Off by default: relaying spends the node's uplink, so the operator opts in. The node never terminates or inspects the relayed TLS. |
+| `--relay` | *(disabled flag)* | Relay the peers' opaque TLS (`rdv/1` relay frames), so two peers that no inbound NAT mapping reaches can still run their data plane through this node. Off by default: relaying spends the node's uplink, so the operator opts in. The node never terminates or inspects the relayed TLS. |
 | `--relay-idle-timeout` | `120` | Seconds without traffic in either direction before a relayed session (or a listener control stream) is closed. Range `30..3600`. |
 | `--relay-session-bytes` | `0` | Close a relayed session after this many forwarded bytes (`0` = no per-session cap; the byte rate stays the primary bound). |
 | `--relay-bandwidth` | `8192` | Aggregate relay throughput cap in KiB/s (`0` = unlimited). Excess traffic is throttled by backpressure, never dropped. |
-| `--ttl` | `60` | Record TTL in seconds (1–3600). Peers refresh every 30 s by default, so 60 s leaves one refresh of headroom. It must stay **above** the clients' refresh interval (`HSYNC_BOOTNODE_REFRESH_INTERVAL`, 30 s by default): a shorter TTL expires live records between two refreshes. Lower it only when the clients refresh more often (tests). |
-| `--debug` | *(disabled flag)* | Emit the full operation log to stderr (opt-in): connections, frames, decisions, record changes and TTL sweeps, **including the peer identity** (CID, bucket, IP, port). Every line is timestamped and self-identifying (`2026-09-30T10:30:45.123Z - hsync-bootnode[1234] debug: …`). Stderr only — never written to disk; without it no peer data leaves memory. Environment variable form: `HSYNC_BOOTNODE_DEBUG=1`. |
-| `--ready-file` | *(none)* | Write the process PID to this path once the listener is bound (readiness seam, contains no peer data). Environment variable form: `HSYNC_BOOTNODE_READY_FILE`. An unwritable path fails fast with exit code 4. |
-| `--metrics-host` | `127.0.0.1` | Loopback address for the `/metrics` endpoint. Only `127.0.0.1`, `::1` (any loopback literal) or `localhost` is accepted: the endpoint serves plain HTTP and is never bound to a public interface. Environment variable form: `HSYNC_BOOTNODE_METRICS_HOST`. |
-| `--metrics-port` | *(disabled)* | Serve aggregate metrics on `--metrics-host:PORT` (loopback TCP). Requires a bearer token; see [Metrics](#metrics). Environment variable form: `HSYNC_BOOTNODE_METRICS_PORT`. |
-| `--metrics-token-fd` | *(none)* | File descriptor carrying the metrics bearer token (one line, at least 32 characters). The preferred form on POSIX service managers. Environment variable form: `HSYNC_BOOTNODE_METRICS_TOKEN_FD`. |
-| `--metrics-token-file` | *(none)* | File carrying the metrics bearer token; portable alternative to `--metrics-token-fd` (the two are mutually exclusive). Environment variable form: `HSYNC_BOOTNODE_METRICS_TOKEN_FILE`. |
-| `--stats-file` | *(none)* | Write the aggregate counters to this path in Prometheus text format, replacing it atomically every `--stats-interval` seconds (node_exporter textfile collector). Environment variable form: `HSYNC_BOOTNODE_STATS_FILE`. |
-| `--stats-interval` | `15` | Seconds between two publications (`STATUS=` on the service manager and the `--stats-file`). 1–3600. Environment variable form: `HSYNC_BOOTNODE_STATS_INTERVAL`. |
-| `--no-rate-limit` | *(disabled flag)* | Disable rate limiting entirely (benchmark/test seam). **CLI-only**: there is deliberately no environment-variable form, so a stale `.env` or unit setting cannot silently unthrottle a node. Never enable in production — it removes the anti-abuse limits the spec requires. The transport guard is not created in this mode, so the `hsync_bootnode_quic_connections_*` gauges stay at 0 (the peer gauges are unaffected). |
+| `--ttl` | `60` | Record TTL in seconds (1–3600). Peers refresh every 30 s by default, so 60 s leaves one refresh of headroom. It must stay **above** the clients' refresh interval (`HSYNC_RENDEZVOUS_REFRESH_INTERVAL`, 30 s by default): a shorter TTL expires live records between two refreshes. Lower it only when the clients refresh more often (tests). |
+| `--debug` | *(disabled flag)* | Emit the full operation log to stderr (opt-in): connections, frames, decisions, record changes and TTL sweeps, **including the peer identity** (CID, bucket, IP, port). Every line is timestamped and self-identifying (`2026-09-30T10:30:45.123Z - hsync-rendezvous[1234] debug: …`). Stderr only — never written to disk; without it no peer data leaves memory. Environment variable form: `HSYNC_RENDEZVOUS_DEBUG=1`. |
+| `--ready-file` | *(none)* | Write the process PID to this path once the listener is bound (readiness seam, contains no peer data). Environment variable form: `HSYNC_RENDEZVOUS_READY_FILE`. An unwritable path fails fast with exit code 4. |
+| `--metrics-host` | `127.0.0.1` | Loopback address for the `/metrics` endpoint. Only `127.0.0.1`, `::1` (any loopback literal) or `localhost` is accepted: the endpoint serves plain HTTP and is never bound to a public interface. Environment variable form: `HSYNC_RENDEZVOUS_METRICS_HOST`. |
+| `--metrics-port` | *(disabled)* | Serve aggregate metrics on `--metrics-host:PORT` (loopback TCP). Requires a bearer token; see [Metrics](#metrics). Environment variable form: `HSYNC_RENDEZVOUS_METRICS_PORT`. |
+| `--metrics-token-fd` | *(none)* | File descriptor carrying the metrics bearer token (one line, at least 32 characters). The preferred form on POSIX service managers. Environment variable form: `HSYNC_RENDEZVOUS_METRICS_TOKEN_FD`. |
+| `--metrics-token-file` | *(none)* | File carrying the metrics bearer token; portable alternative to `--metrics-token-fd` (the two are mutually exclusive). Environment variable form: `HSYNC_RENDEZVOUS_METRICS_TOKEN_FILE`. |
+| `--stats-file` | *(none)* | Write the aggregate counters to this path in Prometheus text format, replacing it atomically every `--stats-interval` seconds (node_exporter textfile collector). Environment variable form: `HSYNC_RENDEZVOUS_STATS_FILE`. |
+| `--stats-interval` | `15` | Seconds between two publications (`STATUS=` on the service manager and the `--stats-file`). 1–3600. Environment variable form: `HSYNC_RENDEZVOUS_STATS_INTERVAL`. |
+| `--no-rate-limit` | *(disabled flag)* | Disable rate limiting entirely (benchmark/test seam). **CLI-only**: there is deliberately no environment-variable form, so a stale `.env` or unit setting cannot silently unthrottle a node. Never enable in production — it removes the anti-abuse limits the spec requires. The transport guard is not created in this mode, so the `hsync_rendezvous_quic_connections_*` gauges stay at 0 (the peer gauges are unaffected). |
 
 ### `identity show`
 
@@ -53,7 +53,7 @@ certificate). `--identity PATH` is optional and defaults to the standard state
 path; the private key is never printed.
 
 ```bash
-hsync-bootnode identity show
+hsync-rendezvous identity show
 # → sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
 
@@ -63,27 +63,27 @@ Regenerates the persisted key+cert and prints the new fingerprint, which the
 operator distributes to clients. `--identity PATH` is optional and defaults to
 the standard state path; a POSIX service that uses an explicit `--identity` must
 repeat that flag here. Give clients both the old and the new fingerprint
-(`--bootnode-fingerprint` is repeatable) during the rotation window; the node
+(`--rendezvous-fingerprint` is repeatable) during the rotation window; the node
 itself keeps only the new certificate. Rotation keeps every existing DNS/IP
 SAN, so hostname-validating clients keep working; pass `--public-host` only for
 new names. The command re-reads and verifies the pair it wrote, then **you must
 restart the node** to serve it (the identity is loaded at startup) and verify
 the certificate clients actually see with
-`hsync trust discovery-server fingerprint <host:port>` — `identity show` prints the persisted
+`hsync trust rendezvous-server fingerprint <host:port>` — `identity show` prints the persisted
 file, not the served certificate. Rotation is also the
 recovery for a corrupted identity whose key no longer matches its certificate;
 a file that is not a valid PEM identity at all is refused (delete it and restart
 to regenerate).
 
 ```bash
-hsync-bootnode identity rotate --identity /var/lib/hsync-bootnode/identity.pem \
+hsync-rendezvous identity rotate --identity /var/lib/hsync-rendezvous/identity.pem \
     --public-host boot.example.com
 ```
 
 ### `--version`
 
 Prints the version and the protocol, e.g.
-`hsync-bootnode 1.0.0 (boot/1, Python v1)`, then exits.
+`hsync-rendezvous 1.0.0 (rdv/1, Python v1)`, then exits.
 
 ## Exit codes
 
@@ -98,20 +98,20 @@ Prints the version and the protocol, e.g.
 
 | Variable | Meaning |
 |---|---|
-| `HSYNC_BOOTNODE_KEYS_FD` | Same as `--keys-fd`; the env-var form is what service wrappers set. |
-| `HSYNC_BOOTNODE_KEYS_FILE` | Same as `--keys-file`; the portable source for service managers that cannot pass a descriptor (Windows/WinSW). |
-| `HSYNC_BOOTNODE_IDENTITY` | Same as `--identity`; overrides the default state path of the persistent TLS identity. |
-| `HSYNC_STATE_DIR` | Installation state directory; the default identity lives under its `bootnode/` subdirectory. |
-| `HSYNC_BOOTNODE_EPHEMERAL` | Same as `--ephemeral`; set to `1` to keep the identity in memory (no identity file). |
-| `HSYNC_BOOTNODE_PRIVATE` | Same as `--private`; set to `1` to require a valid `bucket_token` on every frame. |
-| `HSYNC_BOOTNODE_DEBUG` | Same as `--debug`; set to `1` for the full opt-in operation log (peer identity included; stderr only). |
-| `HSYNC_BOOTNODE_READY_FILE` | Same as `--ready-file`; the readiness PID path used by tests/orchestrators. |
-| `HSYNC_BOOTNODE_METRICS_HOST` | Same as `--metrics-host`. |
-| `HSYNC_BOOTNODE_METRICS_PORT` | Same as `--metrics-port`. |
-| `HSYNC_BOOTNODE_METRICS_TOKEN_FD` | Same as `--metrics-token-fd`. |
-| `HSYNC_BOOTNODE_METRICS_TOKEN_FILE` | Same as `--metrics-token-file`. |
-| `HSYNC_BOOTNODE_STATS_FILE` | Same as `--stats-file`. |
-| `HSYNC_BOOTNODE_STATS_INTERVAL` | Same as `--stats-interval`. |
+| `HSYNC_RENDEZVOUS_KEYS_FD` | Same as `--keys-fd`; the env-var form is what service wrappers set. |
+| `HSYNC_RENDEZVOUS_KEYS_FILE` | Same as `--keys-file`; the portable source for service managers that cannot pass a descriptor (Windows/WinSW). |
+| `HSYNC_RENDEZVOUS_IDENTITY` | Same as `--identity`; overrides the default state path of the persistent TLS identity. |
+| `HSYNC_STATE_DIR` | Installation state directory; the default identity lives under its `rendezvous/` subdirectory. |
+| `HSYNC_RENDEZVOUS_EPHEMERAL` | Same as `--ephemeral`; set to `1` to keep the identity in memory (no identity file). |
+| `HSYNC_RENDEZVOUS_PRIVATE` | Same as `--private`; set to `1` to require a valid `bucket_token` on every frame. |
+| `HSYNC_RENDEZVOUS_DEBUG` | Same as `--debug`; set to `1` for the full opt-in operation log (peer identity included; stderr only). |
+| `HSYNC_RENDEZVOUS_READY_FILE` | Same as `--ready-file`; the readiness PID path used by tests/orchestrators. |
+| `HSYNC_RENDEZVOUS_METRICS_HOST` | Same as `--metrics-host`. |
+| `HSYNC_RENDEZVOUS_METRICS_PORT` | Same as `--metrics-port`. |
+| `HSYNC_RENDEZVOUS_METRICS_TOKEN_FD` | Same as `--metrics-token-fd`. |
+| `HSYNC_RENDEZVOUS_METRICS_TOKEN_FILE` | Same as `--metrics-token-file`. |
+| `HSYNC_RENDEZVOUS_STATS_FILE` | Same as `--stats-file`. |
+| `HSYNC_RENDEZVOUS_STATS_INTERVAL` | Same as `--stats-interval`. |
 
 ## Group keys (`--keys-fd` / `--keys-file`)
 
@@ -146,37 +146,37 @@ a silent last-wins override.
 Example with a systemd credential (fd 5):
 
 ```bash
-hsync-bootnode run --protected-bucket shared --keys-fd 5 \
-    5< /etc/hsync-bootnode/group-keys
+hsync-rendezvous run --protected-bucket shared --keys-fd 5 \
+    5< /etc/hsync-rendezvous/group-keys
 ```
 
 The portable file form (same payload, used by the Windows service):
 
 ```bash
-hsync-bootnode run --protected-bucket shared \
-    --keys-file /etc/hsync-bootnode/group-keys
+hsync-rendezvous run --protected-bucket shared \
+    --keys-file /etc/hsync-rendezvous/group-keys
 ```
 
 Notes:
 
 - Clients derive the same `bucket_token` from the group key with
-  `HMAC-SHA256(key, "boot/1" || bucket)[:32]` and send only the derived token
+  `HMAC-SHA256(key, "rdv/1" || bucket)[:32]` and send only the derived token
   (64 lowercase hex chars) on `register`/`refresh`/`query`.
 - Wrong or missing tokens are answered uniformly with `token_required` and
   rate-limited (5/min per IP → `rate_limited` with `retry_after`); the node
   never reveals whether a bucket exists.
 
-## Private node (authenticated bootstrap)
+## Private node (authenticated rendezvous)
 
 An **open** node serves every bucket, gating only the ones declared with
 `--protected-bucket`. A **private** node gates *all* of them: that is the mode
-for a bootstrap node that acts as the rendezvous point of one community instead
+for a rendezvous node that acts as the rendezvous point of one community instead
 of a public service.
 
 ```bash
 # every bucket needs a key; without any key the node refuses to start (exit 2)
-hsync-bootnode run --private \
-    --keys-fd 5 5< /etc/hsync-bootnode/group-keys
+hsync-rendezvous run --private \
+    --keys-fd 5 5< /etc/hsync-rendezvous/group-keys
 ```
 
 What `--private` changes:
@@ -196,7 +196,7 @@ Notes:
   new protocol version and no client-side mode switch.
 - Refusals stay uniform (`token_required`, then `rate_limited` with
   `retry_after`): a client cannot tell which buckets exist or are provisioned.
-- Deployment: uncomment the `HSYNC_BOOTNODE_PRIVATE=1` example in the unit or
+- Deployment: uncomment the `HSYNC_RENDEZVOUS_PRIVATE=1` example in the unit or
   service XML shipped with your OS (see "Deploying as a service"); the env-var
   form is exactly equivalent to the flag. On Windows the keys file is passed
   with `--keys-file` (the installer creates it empty and grants LocalService
@@ -210,15 +210,15 @@ Notes:
    instead use `HSYNC_P2P_PASSPHRASE` (at least 12 characters), which it derives
    to the same 64-hex key.
 2. Write one `bucket=<key>` line per bucket to
-   `/etc/hsync-bootnode/group-keys` (0640, root-owned) and pass it to the node
+   `/etc/hsync-rendezvous/group-keys` (0640, root-owned) and pass it to the node
    with `--keys-fd 5` (the packaged systemd/launchd units) or
-   `--keys-file /etc/hsync-bootnode/group-keys` (Windows and simple setups).
+   `--keys-file /etc/hsync-rendezvous/group-keys` (Windows and simple setups).
    An **empty** file means no protected buckets (open mode); a standard service
    install ships it empty, so the node starts open until you provision keys.
    `--private` with an empty file is a configuration error (exit 2): provision
    at least one key before enabling private mode.
 3. Distribute the same key to the clients allowed in that bucket: they derive
-   `HMAC-SHA256(key, "boot/1" || bucket)[:32]` and send only the derived token.
+   `HMAC-SHA256(key, "rdv/1" || bucket)[:32]` and send only the derived token.
 
 **Revocation is key rotation** — there is no per-peer account to disable.
 Replace the key in the group-keys file, restart the node and redistribute the new
@@ -293,7 +293,7 @@ becoming master, or giving the role up) is published with a new `register`;
 
 ## Privacy and anonymity model
 
-A bootnode is what turns a group of devices into a **private P2P network over the
+A rendezvous is what turns a group of devices into a **private P2P network over the
 Internet**: they find each other through the node, while the file data keeps
 flowing only between peers. These are the properties an operator or a community
 can rely on.
@@ -322,13 +322,13 @@ can rely on.
   a client cannot tell which buckets exist, which are provisioned, or that a
   private node gates everything.
 - **Records are owned by their source** — creating, replacing or renewing a
-  discovery record is honoured only from the source address it was registered
+  rendezvous record is honoured only from the source address it was registered
   from (or with a valid token on a protected bucket). A peer that learns another
   peer's `(cid, bucket, group)` cannot redirect its record, keep a hijacked one
   alive, or evict it.
 - **Silent about peers by default** — output goes to the console only and the
   shipped service units route stderr to the system log (`journalctl -u
-  hsync-bootnode`, a launchd file, the WinSW log). That always-on channel carries
+  hsync-rendezvous`, a launchd file, the WinSW log). That always-on channel carries
   the node's **own** operational state (a UPnP mapping that could not be created,
   an unwritable readiness file, an unexpected session failure) and is **peer-free
   by construction**: it accepts only non-identifying fields, so no CID, bucket or
@@ -369,12 +369,12 @@ can rely on.
   registrant cannot rotate around, because `group` is chosen by the peer. A
   `query` response is bounded too (at most four endpoints per peer, 32 KiB per
   frame), so a registrant cannot turn a small query into a large reply. Every
-  `boot/1` frame rejects unknown fields, and the deployed units are
+  `rdv/1` frame rejects unknown fields, and the deployed units are
   sandboxed (systemd `DynamicUser`, syscall filter).
 - **UPnP is opt-in and hardened**: off by default (`--upnp` enables it). SSDP
   replies must originate from a private
   LAN address and their `LOCATION` must be `http(s)://<private-IP-literal>/…`
-  (no hostnames, no external hosts, no redirects) — the device discovery cannot
+  (no hostnames, no external hosts, no redirects) — the device rendezvous cannot
   be steered into fetching arbitrary internal/external URLs. On a node with no
   LAN (a public VPS) SSDP simply finds nothing and the node runs stateless, as
   always; nothing about the mapping workflow changes on a LAN. The mapping
@@ -405,12 +405,12 @@ first run and reused afterwards, so its fingerprint is stable across restarts an
 clients can pin it. Its key+cert is the node's only **persistent** artifact
 (never peer data; with `--ready-file` an ephemeral PID file is also written and
 removed on graceful shutdown). By default it lives at
-`$XDG_STATE_HOME/hsync/bootnode/identity.pem` (`~/.local/state/…`); set an
+`$XDG_STATE_HOME/hsync/rendezvous/identity.pem` (`~/.local/state/…`); set an
 explicit path (e.g. a service directory) with `--identity`:
 
 ```bash
 # create (first run) and reuse (subsequent runs) the identity:
-hsync-bootnode run --identity /var/lib/hsync-bootnode/identity.pem \
+hsync-rendezvous run --identity /var/lib/hsync-rendezvous/identity.pem \
     --public-host boot.example.com
 ```
 
@@ -422,25 +422,25 @@ refusing a mismatched or corrupted file instead of failing later in the TLS
 handshake. Read the fingerprint and distribute it to clients out of band:
 
 ```bash
-hsync-bootnode identity show --identity /var/lib/hsync-bootnode/identity.pem
+hsync-rendezvous identity show --identity /var/lib/hsync-rendezvous/identity.pem
 ```
 
 `--ephemeral` writes no identity file: the fingerprint then changes on every
 restart and clients cannot pin it — use it on a read-only filesystem or for a
 throwaway node. Clients authenticate the node by fingerprint: a terminal confirms
 the first contact at the prompt, an unattended client pins it with
-`--bootnode-fingerprint` (or trusts the first sighting with `--bootnode-tofu`);
-see the client `p2p-bootnode` documentation. To rotate the key
+`--rendezvous-fingerprint` (or trusts the first sighting with `--rendezvous-tofu`);
+see the client `p2p-rendezvous` documentation. To rotate the key
 (e.g. after a suspected compromise), regenerate it, give clients both the old
-and the new fingerprint (`--bootnode-fingerprint` is repeatable) during the
+and the new fingerprint (`--rendezvous-fingerprint` is repeatable) during the
 rotation window, then move them to the new one. Rotation **preserves every
 existing DNS/IP SAN** and adds any new `--public-host`; pass `--public-host`
 only for names the node did not already carry. **Restart the node** to serve the
 new identity (it is loaded at startup), then verify the served certificate from
-a client with `hsync trust discovery-server fingerprint <host:port>`.
+a client with `hsync trust rendezvous-server fingerprint <host:port>`.
 
 ```bash
-hsync-bootnode identity rotate --identity /var/lib/hsync-bootnode/identity.pem \
+hsync-rendezvous identity rotate --identity /var/lib/hsync-rendezvous/identity.pem \
     --public-host boot.example.com
 ```
 
@@ -450,8 +450,8 @@ The node emits two kinds of line on stderr, in the same format — a UTC ISO 860
 timestamp, the emitting process, the level and the message:
 
 ```text
-2026-09-30T10:30:45.123Z - hsync-bootnode[1234] warn: upnp no igd on lan port=443
-2026-09-30T10:30:45.130Z - hsync-bootnode[1234] debug: register ack cid=A1b2C3d4E5f6G7h8I9j0K bucket=shared
+2026-09-30T10:30:45.123Z - hsync-rendezvous[1234] warn: upnp no igd on lan port=443
+2026-09-30T10:30:45.130Z - hsync-rendezvous[1234] debug: register ack cid=A1b2C3d4E5f6G7h8I9j0K bucket=shared
 ```
 
 **Always on — node health (`warn` / `error`).** Operational events the operator
@@ -465,7 +465,7 @@ Repeated identical errors are throttled and reported as `suppressed=<n>`, so a
 failing path cannot flood the log.
 
 **Opt-in — the full operation log (`debug`).** `--debug` (or
-`HSYNC_BOOTNODE_DEBUG=1`) adds the whole request life cycle on stderr —
+`HSYNC_RENDEZVOUS_DEBUG=1`) adds the whole request life cycle on stderr —
 connections opened/closed, frames received, the decision taken, records
 created/refreshed/removed, TTL sweeps and refusals — **including the peer
 identity** (CID, bucket, IP, port) that makes the log usable for analysis. When
@@ -476,13 +476,13 @@ Neither channel ever writes to disk from the process: without `--debug` no peer
 data leaves memory. `--debug` is a **troubleshooting switch, never a deployment
 setting**: the lines it emits carry peer identity (CID, bucket, IP, port), and
 the shipped units hand stderr to a log the operating system persists (the
-journal, a file — `/var/log/hsync-bootnode.err` on macOS, the WinSW log on
+journal, a file — `/var/log/hsync-rendezvous.err` on macOS, the WinSW log on
 Windows), which would turn that into an on-disk record of peer activity. Enable
 it for the session you are diagnosing, then remove it; bound the log retention
 there too (`/etc/systemd/journald.conf`: `SystemMaxUse=`, `MaxRetentionSec=`,
-then `journalctl -u hsync-bootnode`; rotate the launchd file with `newsyslog`).
+then `journalctl -u hsync-rendezvous`; rotate the launchd file with `newsyslog`).
 
-The `--ready-file`/`HSYNC_BOOTNODE_READY_FILE` seam writes the process PID to
+The `--ready-file`/`HSYNC_RENDEZVOUS_READY_FILE` seam writes the process PID to
 the given path once the QUIC listener is bound (and removes it on graceful
 shutdown). It carries no peer data and exists so tests and orchestrators can
 await readiness deterministically. A path the node cannot write (missing
@@ -543,19 +543,19 @@ Two populations are reported, and they are **not** the same number.
 
 | Metric | Type | Meaning |
 |---|---|---|
-| `hsync_bootnode_peers_current` | gauge | **Clients registered right now** (TTL-bounded) |
-| `hsync_bootnode_peers_peak` | gauge | Highest registered population since the process started |
-| `hsync_bootnode_peers_peak_timestamp_seconds` | gauge | When that peak was reached |
-| `hsync_bootnode_peers_updates_total` | counter | Accepted `register`/`refresh` writes |
-| `hsync_bootnode_peers_expired_total` | counter | Records dropped by the TTL sweep |
-| `hsync_bootnode_quic_connections_current` | gauge | QUIC connections open right now |
-| `hsync_bootnode_quic_connections_peak` | gauge | Highest open-connection level since start |
-| `hsync_bootnode_quic_connections_peak_timestamp_seconds` | gauge | When that peak was reached |
-| `hsync_bootnode_quic_connections_total` | counter | Connections admitted since start |
-| `hsync_bootnode_metrics_requests_total{outcome}` | counter | Requests answered by `/metrics` (`ok`, `unauthorized`, `not_found`, `method_not_allowed`, `rate_limited`, `unavailable`) |
-| `hsync_bootnode_stats_write_errors_total` | counter | Failed stats-file writes |
-| `hsync_bootnode_build_info{version,protocol}` | gauge | Always `1`; identifies the running build |
-| `hsync_bootnode_start_time_seconds` | gauge | Unix time the process started |
+| `hsync_rendezvous_peers_current` | gauge | **Clients registered right now** (TTL-bounded) |
+| `hsync_rendezvous_peers_peak` | gauge | Highest registered population since the process started |
+| `hsync_rendezvous_peers_peak_timestamp_seconds` | gauge | When that peak was reached |
+| `hsync_rendezvous_peers_updates_total` | counter | Accepted `register`/`refresh` writes |
+| `hsync_rendezvous_peers_expired_total` | counter | Records dropped by the TTL sweep |
+| `hsync_rendezvous_quic_connections_current` | gauge | QUIC connections open right now |
+| `hsync_rendezvous_quic_connections_peak` | gauge | Highest open-connection level since start |
+| `hsync_rendezvous_quic_connections_peak_timestamp_seconds` | gauge | When that peak was reached |
+| `hsync_rendezvous_quic_connections_total` | counter | Connections admitted since start |
+| `hsync_rendezvous_metrics_requests_total{outcome}` | counter | Requests answered by `/metrics` (`ok`, `unauthorized`, `not_found`, `method_not_allowed`, `rate_limited`, `unavailable`) |
+| `hsync_rendezvous_stats_write_errors_total` | counter | Failed stats-file writes |
+| `hsync_rendezvous_build_info{version,protocol}` | gauge | Always `1`; identifies the running build |
+| `hsync_rendezvous_start_time_seconds` | gauge | Unix time the process started |
 
 `peers` is the count of clients online. `quic_connections` measures handshake
 concurrency instead, because a client opens **one connection per exchange**
@@ -588,9 +588,9 @@ Ready-made units are in `packaging/`:
 
 | OS | Unit | Install |
 |---|---|---|
-| <img src="assets/os/linux.svg" alt="Linux" width="16" height="16"> Linux | `packaging/systemd/hsync-bootnode.service` | `sudo cp … /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now hsync-bootnode` — hardened (DynamicUser, syscall filter); group keys are read from a systemd credential. |
-| <img src="assets/os/apple.svg" alt="macOS" width="16" height="16"> macOS | `packaging/launchd/it.hsync.bootnode.plist` | `sudo cp … /Library/LaunchDaemons/ && sudo launchctl bootstrap system …` — group keys are exposed as fd 3 by the embedded shell wrapper. |
-| <img src="assets/os/windows.svg" alt="Windows" width="16" height="16"> Windows | `packaging/windows/hsync-bootnode-service.xml` | WinSW v2: rename `WinSW-x64.exe` to `hsync-bootnode-service.exe` next to the XML, adjust the venv path, then `.\hsync-bootnode-service.exe install` + `start`. |
+| <img src="assets/os/linux.svg" alt="Linux" width="16" height="16"> Linux | `packaging/systemd/hsync-rendezvous.service` | `sudo cp … /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now hsync-rendezvous` — hardened (DynamicUser, syscall filter); group keys are read from a systemd credential. |
+| <img src="assets/os/apple.svg" alt="macOS" width="16" height="16"> macOS | `packaging/launchd/it.hsync.rendezvous.plist` | `sudo cp … /Library/LaunchDaemons/ && sudo launchctl rendezvous system …` — group keys are exposed as fd 3 by the embedded shell wrapper. |
+| <img src="assets/os/windows.svg" alt="Windows" width="16" height="16"> Windows | `packaging/windows/hsync-rendezvous-service.xml` | WinSW v2: rename `WinSW-x64.exe` to `hsync-rendezvous-service.exe` next to the XML, adjust the venv path, then `.\hsync-rendezvous-service.exe install` + `start`. |
 
 Edit the executable paths inside each unit to the location of your venv.
 
@@ -598,19 +598,19 @@ Edit the executable paths inside each unit to the location of your venv.
 
 | Symptom | Cause / fix |
 |---|---|
-| `configuration error: protected bucket(s) without a group key …` | You declared `--protected-bucket` without provisioning its key: pass `--keys-fd`/`HSYNC_BOOTNODE_KEYS_FD` or `--keys-file`/`HSYNC_BOOTNODE_KEYS_FILE` with a matching `bucket=<key>` line. |
-| `configuration error: private node without any group key …` | You started a private node (`--private` / `HSYNC_BOOTNODE_PRIVATE=1`) without provisioning a key: pass a keys source with at least one `bucket=<key>` line. |
+| `configuration error: protected bucket(s) without a group key …` | You declared `--protected-bucket` without provisioning its key: pass `--keys-fd`/`HSYNC_RENDEZVOUS_KEYS_FD` or `--keys-file`/`HSYNC_RENDEZVOUS_KEYS_FILE` with a matching `bucket=<key>` line. |
+| `configuration error: private node without any group key …` | You started a private node (`--private` / `HSYNC_RENDEZVOUS_PRIVATE=1`) without provisioning a key: pass a keys source with at least one `bucket=<key>` line. |
 | `configuration error: cannot open group keys file …` | `--keys-file` points at a missing or unreadable path: create the file and grant read access to the service account (`LocalService` on Windows). |
 | `configuration error: --keys-fd and --keys-file are mutually exclusive` | Pass one key source only. |
 | `configuration error: duplicate group key for bucket …` | The keys source lists the same bucket twice: keep exactly one line per bucket. |
 | `warn: group keys file permissions are too open` | The `--keys-file` file is group-writable or world-accessible: restrict it to `0600`/`0640` (the node keeps serving). |
-| `error: cannot bind the QUIC/UDP listener … — permission denied` | You bound a privileged port (< 1024, e.g. the 443 default) without root: use `--listen-port 8443` (any port ≥ 1024), run as root, or grant the capability (`sudo setcap cap_net_bind_service=+ep <hsync-bootnode>`). The systemd unit already grants it. |
+| `error: cannot bind the QUIC/UDP listener … — permission denied` | You bound a privileged port (< 1024, e.g. the 443 default) without root: use `--listen-port 8443` (any port ≥ 1024), run as root, or grant the capability (`sudo setcap cap_net_bind_service=+ep <hsync-rendezvous>`). The systemd unit already grants it. |
 | `error: cannot bind the QUIC/UDP listener … — address already in use` | Another process (or another node instance) is using that UDP port: stop it, or pick a free port with `--listen-port`. |
 | `error: cannot bind the QUIC/UDP listener … — the address is not available` | `--listen-host` is not a local interface address: use a local IP, or `0.0.0.0` to listen on all of them. |
 | Client gets `token_required` | The bucket is gated (declared `--protected-bucket`, or every bucket on a private node) and the client's derived token is missing/wrong — check the group key on the client side. |
 | Client gets `rate_limited` | A per-source limit was exceeded (per-IP ~10 req/s admission, 5/min failed tokens, 5/min queries per (IP, bucket), 20/min aggregate queries per IP, 10/min registers per (IP, bucket)); wait for `retry_after` seconds — this counts against the source. |
-| Client gets `overloaded` | The node is at its host-derived routing-table ceiling (capacity backpressure, not a client abuse signal); retry after `retry_after` seconds, or prefer another bootnode. It is not counted against the source. |
+| Client gets `overloaded` | The node is at its host-derived routing-table ceiling (capacity backpressure, not a client abuse signal); retry after `retry_after` seconds, or prefer another rendezvous. It is not counted against the source. |
 | No UPnP mapping | UPnP is off by default; with `--upnp` a router without IGD or a refused mapping keeps the node running stateless and reports it once on the always-on channel (`warn: upnp no igd on lan port=…` or `warn: upnp mapping unavailable reason=…`); publish a public UDP endpoint in another way or leave UPnP disabled. |
 | `error: cannot write the readiness file …` (exit code 4) | `--ready-file` points at a path the node cannot create (missing parent directory, no permission, or a stale file that `O_EXCL` refuses to overwrite): create/remove the path or point the flag elsewhere. |
 | `warn: upnp mapping unavailable` / `error: session failed` in the logs | Always-on diagnostics, not peer data: the node degraded (no UPnP mapping) or one session failed unexpectedly and was isolated. Both are emitted without `--debug` and never contain a peer identity. |
-| Need to see what the node is doing | Operational warnings and errors are already on stderr (and in the service log). Start with `--debug` (or `HSYNC_BOOTNODE_DEBUG=1`) to add the full operation log, peer identity included. |
+| Need to see what the node is doing | Operational warnings and errors are already on stderr (and in the service log). Start with `--debug` (or `HSYNC_RENDEZVOUS_DEBUG=1`) to add the full operation log, peer identity included. |

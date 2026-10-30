@@ -41,7 +41,7 @@ def test_fuzz_handle_invariants_are_exercised_by_a_happy_path() -> None:
     register_raw = (
         json.dumps(
             {
-                "protocol_version": "boot/1",
+                "protocol_version": "rdv/1",
                 "type": "register",
                 "cid": fuzz_boot.PROBE_CID,
                 "bucket": "shared",
@@ -63,7 +63,7 @@ def test_fuzz_handle_invariants_are_exercised_by_a_happy_path() -> None:
     query_raw = (
         json.dumps(
             {
-                "protocol_version": "boot/1",
+                "protocol_version": "rdv/1",
                 "type": "query",
                 "bucket": "shared",
                 "group": "home",

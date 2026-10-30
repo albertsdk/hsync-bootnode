@@ -1,0 +1,458 @@
+.TH HSYNC-RENDEZVOUS 1 "2026-10-29" "hsync-rendezvous 1.0.11" "User Commands"
+.SH NAME
+hsync-rendezvous \- HSYNC P2P rendezvous node (no-log, zero-knowledge)
+.SH SYNOPSIS
+.B hsync-rendezvous
+.I COMMAND
+.RI [ OPTIONS ]
+.br
+.B hsync-rendezvous --version
+.SH DESCRIPTION
+.B hsync-rendezvous
+is the Internet rendezvous node of the HSYNC sync network. It tells P2P clients
+which peers are currently online, speaking the
+.B rdv/1
+protocol over QUIC/UDP port 443 (TLS 1.3 inside QUIC, mandatory RETRY and
+address-validation tokens).
+.PP
+The routing table lives exclusively in RAM with a configurable TTL (default
+60 seconds, 1\-3600): nothing peer-related is ever written to disk and no log
+file is produced. The node's TLS identity (a self-signed ECDSA P\-256 key+cert)
+persists by default so its fingerprint is stable across restarts and can be
+pinned by clients;
+.BR "run \-\-ephemeral"
+keeps it in memory instead. Stopping the process erases every trace of the
+network except the node's own key+cert.
+.PP
+Diagnostics go to stderr in two channels: an always\-on, peer\-free operational
+channel (\fBwarn\fP/\fBerror\fP: a UPnP mapping that could not be created, an
+unwritable readiness file, an unexpected session failure) and the opt\-in full
+operation log described under
+.BR "run \-\-debug" ,
+which is the only channel that may contain peer identity.
+.SH COMMANDS
+.TP
+.B run
+Run the rendezvous node: single QUIC/UDP listener (rdv/1).
+.TP
+.B identity show
+Print the persisted identity fingerprint (or its certificate PEM with
+.BR \-\-pem ).
+.TP
+.B identity rotate
+Regenerate the persisted identity and print the new fingerprint. Existing DNS/IP
+SANs are preserved; repeat
+.B \-\-public\-host
+only for new names.
+.SH OPTIONS
+.TP
+.BI run\ \fR--listen-host\fP= HOST [\fI:PORT\fP]
+Address to bind the QUIC/UDP listener to. Accepts an optional port
+.RI ( HOST [: PORT ],
+e.g.
+.IR 0.0.0.0:443
+or
+.IR [::1]:443 ).
+Default:
+.IR 0.0.0.0 .
+.TP
+.BI run\ \fR--listen-port\fP= PORT
+UDP port to listen on (1\-65535). Default: 443 (QUIC/HTTP3). Ports below 1024 need root or
+.BR CAP_NET_BIND_SERVICE .
+Mutually exclusive with a port in
+.BR \-\-listen\-host .
+Use
+.B \-\-listen\-ports
+to listen on several UDP ports at once (client\-egress fallback).
+.TP
+.BI run\ \fR--listen-ports\fP= P1,P2,...
+Comma-separated UDP ports to listen on in one process (multi-port). The
+listeners share one in-memory routing table, so a peer registered via one port
+is visible to a query on another. Use it to offer several inbound doors when a
+client's egress firewall may block UDP 443 but allow another UDP port; the
+recommended set is 443,53. Binding is best-effort: a port that cannot bind is
+skipped with an always-on warning and the node fails only if none bind.
+Mutually exclusive with
+.BR \-\-listen\-port .
+.TP
+.BI run\ \fR--identity\fP= PATH
+Path of the persistent TLS identity (key+cert), created on first run and reused
+afterwards, so the certificate fingerprint is stable across restarts and can be
+pinned by clients. Defaults to
+.B HSYNC_RENDEZVOUS_IDENTITY
+or
+.IR $XDG_STATE_HOME/hsync/rendezvous/identity.pem ,
+and is created on first run. The file is written with 0600 permissions in a 0700
+directory and contains no peer data. On load the key is verified against the
+certificate, so a mismatched or corrupted file is refused instead of failing
+later in the TLS handshake.
+.TP
+.B run\ \fR--ephemeral\fP
+Keep the TLS identity in memory and write no identity file (read-only
+filesystems, throwaway nodes); the fingerprint then changes on every restart, so
+clients cannot pin it. Mutually exclusive with
+.BR \-\-identity .
+Env form:
+.BR HSYNC_RENDEZVOUS_EPHEMERAL=1 .
+.TP
+.BI run\ \fR--public-host\fP= NAME
+Public hostname or IP to add to the certificate SAN; repeatable for multiple
+names.
+.TP
+.BI identity\ rotate\ \fR--public-host\fP= NAME
+Hostname or IP to add to the new certificate SAN when rotating; repeatable.
+Existing DNS/IP SANs are preserved automatically.
+.TP
+.BI run\ \fR--protected-bucket\fP= NAME
+Bucket requiring a valid
+.I bucket_token
+Repeatable for multiple buckets. Declaring a protected bucket without
+provisioning its key fails fast at startup with exit code 2.
+.TP
+.BI run\ \fR--keys-fd\fP= FD
+File descriptor carrying the group keys, one
+.I bucket=<hex\-key>
+line per group; blank lines and
+.I #
+comments are ignored. Read once at startup, never written to disk. On POSIX the
+read is bounded in time, so a descriptor held open without EOF fails fast with a
+configuration error instead of hanging startup.
+.TP
+.BI run\ \fR--keys-file\fP= PATH
+File carrying the group keys in the same format as
+.BR \-\-keys\-fd ,
+read once at startup and never written. Portable alternative for service
+managers that cannot pass a descriptor (Windows/WinSW); mutually exclusive with
+.BR \-\-keys\-fd .
+The path must be a regular file (a symlink is refused); on POSIX a
+group-writable or world\-accessible file is reported on the always\-on warning
+channel (0640 group\-read is accepted).
+Env form:
+.BR HSYNC_RENDEZVOUS_KEYS_FILE .
+.TP
+.B run\ \fR--private\fP
+Private node: every frame must carry a valid
+.I bucket_token
+(applied to the whole node, not only to the buckets declared with
+.BR \-\-protected\-bucket ).
+A bucket without a group key is refused exactly like a wrong token, and
+.I leave
+is gated too (an unauthenticated leave is silently dropped). Starting a private
+node with no group key fails fast with exit code 2. Env form:
+.BR HSYNC_RENDEZVOUS_PRIVATE=1 .
+.TP
+.B run\ \fR--upnp\fP
+Map every bound QUIC/UDP listener port with UPnP (opt\-in; off by default).
+With
+.BR \-\-listen\-ports ,
+each bound port is mapped so every offered door is also reachable from the WAN.
+.TP
+.BI run\ \fR--ttl\fP= SECONDS
+Record TTL in seconds (1\-3600). Default: 60 (peers refresh every 30 s).
+.TP
+.B run\ \fR--debug\fP
+Emit the full operation log to stderr (opt\-in; off by default): connections,
+frames, decisions, record changes and TTL sweeps, including the peer identity
+(CID, bucket, IP, port) needed for analysis. Each line opens with a UTC
+ISO\-8601 timestamp and the emitting process identity
+(\fBts - hsync-rendezvous[pid] debug:\fP), so the stream can be ordered and
+correlated with the logs of the other HSYNC components. Stderr only \- it is
+never written to disk, and without it no peer data leaves memory. The always\-on
+warn/error channel does not depend on this flag. Use it for the session you are
+diagnosing, never as a deployment setting: the peer identity it carries would be
+persisted by the log the service manager keeps. Env form:
+.BR HSYNC_RENDEZVOUS_DEBUG=1 .
+.TP
+.BI run\ \fR--ready-file\fP= PATH
+Write the process PID to
+.I PATH
+once the QUIC listener is bound, and remove it on graceful shutdown (contains
+no peer data). A path that cannot be written (missing directory, permissions, an
+existing stale file) fails fast with exit code 4 and an actionable message. Env
+form:
+.BR HSYNC_RENDEZVOUS_READY_FILE .
+.TP
+.BI run\ \fR--metrics-host\fP= HOST
+Loopback address for the metrics endpoint (default 127.0.0.1). Only a loopback
+literal (127\-..., ::1) or localhost is accepted: the endpoint serves plain HTTP
+and is never bound to a public interface. Env form:
+.BR HSYNC_RENDEZVOUS_METRICS_HOST .
+.TP
+.BI run\ \fR--metrics-port\fP= PORT
+Serve the aggregate Prometheus metrics on the loopback HOST:PORT (1\-65535).
+Requires a bearer token (\-\-metrics\-token\-fd or \-\-metrics\-token\-file);
+no endpoint is opened without both. Env form:
+.BR HSYNC_RENDEZVOUS_METRICS_PORT .
+.TP
+.BI run\ \fR--metrics-token-fd\fP= FD
+Descriptor holding the metrics bearer token: one line, at least 32 characters. It
+is the endpoint's only authorization and is never passed on the command line nor
+echoed. Env form:
+.BR HSYNC_RENDEZVOUS_METRICS_TOKEN_FD .
+.TP
+.BI run\ \fR--metrics-token-file\fP= PATH
+File holding the metrics bearer token; portable alternative to
+\-\-metrics\-token\-fd (the two are mutually exclusive). Env form:
+.BR HSYNC_RENDEZVOUS_METRICS_TOKEN_FILE .
+.TP
+.BI run\ \fR--stats-file\fP= PATH
+Write the aggregate counters to PATH in Prometheus text format, replacing it
+atomically every \-\-stats\-interval seconds (node_exporter textfile
+collector). Env form:
+.BR HSYNC_RENDEZVOUS_STATS_FILE .
+.TP
+.BI run\ \fR--stats-interval\fP= SECONDS
+Seconds between two publications of the aggregates (default 15, 1\-3600). Env
+form:
+.BR HSYNC_RENDEZVOUS_STATS_INTERVAL .
+
+.TP
+.B run\ \fR--no-rate-limit\fP
+Disable rate limiting entirely (benchmark/test seam; never in production \[em] it
+removes the anti\-abuse limits the spec requires). Command\-line only: there is
+deliberately no environment\-variable form, so a stale unit or environment file
+cannot silently unthrottle a public node.
+.TP
+.B \fR--version\fP
+Print the version and the protocol, then exit.
+.SH ENVIRONMENT
+.TP
+.B HSYNC_RENDEZVOUS_IDENTITY
+Path of the persistent TLS identity; same as
+.BR "run \-\-identity" .
+.TP
+.B HSYNC_RENDEZVOUS_EPHEMERAL
+Set to
+.I 1
+to keep the TLS identity in memory (no identity file); same as
+.BR "run \-\-ephemeral" .
+.TP
+.B HSYNC_RENDEZVOUS_KEYS_FD
+Integer file descriptor carrying the group keys; same as
+.BR "run \-\-keys\-fd" .
+.TP
+.B HSYNC_RENDEZVOUS_KEYS_FILE
+Path of the group-keys file; same as
+.BR "run \-\-keys\-file" .
+.TP
+.B HSYNC_RENDEZVOUS_DEBUG
+Set to
+.I 1
+to enable the full operation log on stderr (peer identity included); same as
+.BR "run \-\-debug" .
+.TP
+.B HSYNC_RENDEZVOUS_READY_FILE
+Path for the readiness PID file; same as
+.BR "run \-\-ready\-file" .
+.TP
+.B HSYNC_RENDEZVOUS_PRIVATE
+Set to
+.I 1
+to require a valid
+.I bucket_token
+on every frame (private node); same as
+.BR "run \-\-private" .
+.TP
+.B HSYNC_RENDEZVOUS_METRICS_HOST
+Loopback address for the metrics endpoint; same as
+.BR "run \-\-metrics\-host" .
+.TP
+.B HSYNC_RENDEZVOUS_METRICS_PORT
+Port of the loopback metrics endpoint; same as
+.BR "run \-\-metrics\-port" .
+.TP
+.B HSYNC_RENDEZVOUS_METRICS_TOKEN_FD
+Descriptor holding the metrics bearer token; same as
+.BR "run \-\-metrics\-token\-fd" .
+.TP
+.B HSYNC_RENDEZVOUS_METRICS_TOKEN_FILE
+File holding the metrics bearer token; same as
+.BR "run \-\-metrics\-token\-file" .
+.TP
+.B HSYNC_RENDEZVOUS_STATS_FILE
+Prometheus text file for the aggregates; same as
+.BR "run \-\-stats\-file" .
+.TP
+.B HSYNC_RENDEZVOUS_STATS_INTERVAL
+Seconds between two aggregate publications; same as
+.BR "run \-\-stats\-interval" .
+.TP
+.B HSYNC_VERSION
+Overrides the version used by
+.BR compile.sh (1)
+when building executables and packages (per-language binaries live in
+e.g. python/compile.sh).
+.SH FILES
+.TP
+.I /etc/hsync-rendezvous/group-keys
+Group keys for protected buckets, one
+.I bucket=<hex\-key>
+per line. The package creates it empty on install (an empty file means open
+mode \(em no protected buckets); the administrator provisions the keys over it
+(never part of the package; a root-only 0750 directory holds it). It is exposed
+to the service only through the systemd credential mechanism (see
+.BR HSYNC_RENDEZVOUS_KEYS_FD ).
+pass it with
+.B \-\-keys\-file
+instead when a service manager cannot inherit a descriptor (Windows).
+.TP
+.I /var/lib/hsync-rendezvous/identity.pem
+Example explicit path for the persistent TLS identity (certificate + private
+key, 0600), used with
+.BR "run \-\-identity" ;
+contains no peer data. Rotate it with
+.BR "identity rotate" .
+.B \-\-identity
+accepts any writable path; the packaged systemd unit's StateDirectory gives the
+DynamicUser sandbox a writable
+.IR /var/lib/hsync-rendezvous
+for the identity file, whose default location is
+.IR $XDG_STATE_HOME/hsync/rendezvous/identity.pem .
+.TP
+.I /etc/hsync-rendezvous/metrics-token
+Metrics bearer token (root\-only, 0600), exposed to the service as a systemd
+credential. An empty file keeps the opt\-in endpoint disabled; the token must be
+at least 32 characters.
+.TP
+.I /var/lib/hsync-rendezvous/stats.prom
+Example target for
+.BR "run \-\-stats\-file" :
+inside the unit's StateDirectory, so the sandboxed process may replace it.
+.TP
+.I /usr/lib/systemd/system/hsync-rendezvous.service
+Hardened systemd unit (DynamicUser, ProtectSystem=strict, SystemCallFilter,
+StandardOutput=null, MemoryMax). It is a
+.B Type=notify
+unit with a watchdog: it is considered started only once every QUIC/UDP
+listener is bound, and it is restarted when the event loop stops answering,
+not merely when the process dies. A graceful stop exits 0, so only a failure
+triggers a restart. Its
+.B MemoryMax=
+is also the capacity ceiling: the node sizes its in\-memory limits from the memory
+its cgroup allows. Installed but not enabled: opt in with
+.B systemctl enable --now hsync-rendezvous.service.
+.TP
+.I /usr/bin/hsync-rendezvous
+Standalone executable (symlink to
+.IR /usr/lib/hsync-rendezvous/hsync-rendezvous ).
+.SH EXAMPLES
+.TP
+Private node with the keys read from a file (portable form):
+.B hsync-rendezvous run --private --keys-file /etc/hsync-rendezvous/group-keys
+.TP
+Open mode (no protected buckets):
+.B hsync-rendezvous run --host 0.0.0.0 --port 443
+.TP
+Listen on several UDP ports so clients whose egress firewall blocks UDP 443 can
+reach the node on another port (443 QUIC + 53 DNS; 53 may require freeing the
+local resolver):
+.br
+.B hsync-rendezvous run --ports 443,53
+.TP
+Protected bucket with keys from a file descriptor:
+.br
+.B hsync-rendezvous run --protected-bucket shared --keys-fd 5 5</etc/hsync-rendezvous/group-keys
+.TP
+Private node (every bucket needs a key; no anonymous frames):
+.br
+.B hsync-rendezvous run --private --keys-fd 5 5</etc/hsync-rendezvous/group-keys
+.TP
+Show the certificate fingerprint printed at startup to pin the node on
+clients:
+.br
+.B hsync-rendezvous run --port 443
+.TP
+Read the persisted fingerprint to distribute to clients (the identity is created
+on first run):
+.br
+.B hsync-rendezvous identity show
+.TP
+Run with an explicit identity path and a public SAN, then show the fingerprint:
+.br
+.B hsync-rendezvous run --identity /var/lib/hsync-rendezvous/identity.pem --public-host boot.example.com
+.br
+.B hsync-rendezvous identity show --identity /var/lib/hsync-rendezvous/identity.pem
+.TP
+Run a throwaway node that writes no identity file:
+.br
+.B hsync-rendezvous run --ephemeral
+.TP
+Rotate the identity after a suspected compromise:
+.br
+.B hsync-rendezvous identity rotate --identity /var/lib/hsync-rendezvous/identity.pem
+.TP
+Unprivileged port (no root or capability needed):
+.br
+.B hsync-rendezvous run --port 8443
+.SH EXIT STATUS
+.TP
+.B 0
+Normal termination (Ctrl+C or SIGTERM).
+.TP
+.B 2
+Configuration error (missing/duplicate group key, private node without a key,
+out-of-range value): the node refuses to start.
+.TP
+.B 3
+Listener bind failure: the QUIC/UDP port is privileged, already in use, or
+.B --host
+is not a local address. The message on stderr explains the remediation.
+.TP
+.B 4
+Readiness\-file failure: the path given to
+.B run\ \fR--ready-file\fP
+cannot be created (missing parent directory, no permission, or a stale file the
+exclusive\-create seam refuses to overwrite).
+.SH METRICS
+The node exposes aggregate counters only \- never a CID, bucket, IP or port \- so
+the no\-log invariant holds. Three sinks report the same numbers: the service
+manager's
+.B STATUS=
+line, an optional Prometheus text file and an optional loopback endpoint.
+.PP
+The endpoint answers
+.B GET /metrics
+(and HEAD) on the configured loopback port, requires
+.B Authorization: Bearer
+and returns
+.IR "text/plain; version=1.0.0; charset=utf-8" .
+A missing or wrong token gets a uniform 401, any other path 404, any other method
+405, a burst 429 and a concurrent request above the cap 503. The response carries
+no peer identity and its cardinality is fixed.
+.PP
+The reported populations differ:
+.B hsync_rendezvous_peers_current
+and
+.B hsync_rendezvous_peers_peak
+count the clients registered right now and the highest level reached, while
+.B hsync_rendezvous_quic_connections_current
+and its
+.I _peak
+sibling count open QUIC connections \- handshake concurrency, not clients, because a
+client opens one connection per exchange and lets it idle out after 30 seconds.
+.B hsync_rendezvous_build_info
+identifies the running build. Peaks are observed when the event happens, never
+sampled, and never decrease; a restart resets them.
+.SH SIGNALS
+.TP
+.B SIGINT, SIGTERM
+Graceful shutdown: the transports are closed, the readiness file (if any) is
+removed and the process exits with status 0. This is the stop path of every
+service manager and of Ctrl+C.
+.TP
+.B SIGHUP
+Ignored. A hangup \- a terminal closed, an SSH session dropped, a PTY torn down
+\- is not a stop request, so an unattended node keeps serving. There is no
+configuration reload path: the identity and the group keys are read at startup,
+so a replacement takes a restart.
+.SH SEE ALSO
+.BR systemctl (1),
+.BR systemd.exec (5)
+.P
+.RS
+Project homepage:
+.UR https://github.com/albertsdk/hsync-rendezvous
+.UE
+.RE
+.SH AUTHOR
+Alberto Basso

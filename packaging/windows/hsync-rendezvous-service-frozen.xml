@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- hsync-rendezvous — Windows service definition for the FROZEN .exe (WinSW v2).
+
+     Installed and registered by hsync-rendezvous.iss. WinSW reads the XML whose
+     basename matches the service wrapper executable: the installer installs
+     WinSW as hsync-rendezvous-service.exe, so it reads this file renamed to
+     hsync-rendezvous-service.xml in the same directory.
+
+     %BASE% is the wrapper's own directory (the install dir); %ProgramData% is
+     expanded by WinSW to the machine-wide data directory created by the
+     installer. The node writes its TLS identity there because the install dir
+     under Program Files is not writable by the LocalService account.
+-->
+<service>
+  <id>hsync-rendezvous</id>
+  <name>HSYNC rendezvous</name>
+  <description>HSYNC P2P rendezvous node (rdv/1, QUIC/UDP 443, no-log)</description>
+
+  <executable>%BASE%\hsync-rendezvous.exe</executable>
+  <arguments>run --listen-host 0.0.0.0 --listen-port 443 --identity %ProgramData%\hsync-rendezvous\identity.pem --keys-file %ProgramData%\hsync-rendezvous\group-keys</arguments>
+  <workingdirectory>%BASE%</workingdirectory>
+
+  <startmode>Automatic</startmode>
+  <onfailure action="restart" delay="5000"/>
+
+  <!-- The installer creates group-keys empty (open mode) and grants write
+       access to administrators only, read access to LocalService. Provision
+       one bucket=<hex-group-key> line per protected bucket there, then
+       uncomment this block for a private node (every bucket gated). -->
+  <!--
+  <env name="HSYNC_RENDEZVOUS_PRIVATE" value="1"/>
+  -->
+
+  <serviceaccount>
+    <domain>NT AUTHORITY</domain>
+    <user>LocalService</user>
+  </serviceaccount>
+
+  <!-- Stderr carries the always-on operational channel (warn/error). WinSW
+       writes logs beside the wrapper by default, i.e. under Program Files,
+       where LocalService has no write access; keep them in the writable
+       machine data dir created by the installer instead. -->
+  <logpath>%ProgramData%\hsync-rendezvous\logs</logpath>
+  <log mode="append"/>
+</service>

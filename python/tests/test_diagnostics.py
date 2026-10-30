@@ -3,7 +3,7 @@
 Without ``--debug`` the peer-aware stream is silent (peer data stays in memory
 only); ``warn_event``/``error_event`` are always emitted but can only carry
 non-identifying fields. Every line carries the timestamp and the emitting pid
-(``timestamp - hsync-bootnode[pid] <level>: …``), so the stream can be correlated
+(``timestamp - hsync-rendezvous[pid] <level>: …``), so the stream can be correlated
 with the other HSYNC components.
 """
 
@@ -18,23 +18,23 @@ from datetime import datetime
 
 import pytest
 
-from hsync_bootnode import diagnostics
-from hsync_bootnode.diagnostics import (
+from hsync_rendezvous import diagnostics
+from hsync_rendezvous.diagnostics import (
     configure_debug,
     debug_event,
     debug_log,
     error_event,
     warn_event,
 )
-from hsync_bootnode.handler import BootHandler
+from hsync_rendezvous.handler import RendezvousHandler
 
 CID = "A1b2C3d4E5f6G7h8I9j0K"
 FP = "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
 
-# "2026-09-30T10:30:45.123Z - hsync-bootnode[1234] <level>: <body>"
+# "2026-09-30T10:30:45.123Z - hsync-rendezvous[1234] <level>: <body>"
 _LINE_RE = re.compile(
     r"(?P<timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)"
-    r" - hsync-bootnode\[(?P<pid>\d+)\] (?P<level>debug|warn|error): (?P<body>.+)\n"
+    r" - hsync-rendezvous\[(?P<pid>\d+)\] (?P<level>debug|warn|error): (?P<body>.+)\n"
 )
 
 
@@ -63,7 +63,7 @@ def _restore_sink(monkeypatch):
 def _register(cid: str = CID, bucket: str = "shared") -> bytes:
     return json.dumps(
         {
-            "protocol_version": "boot/1",
+            "protocol_version": "rdv/1",
             "type": "register",
             "cid": cid,
             "bucket": bucket,
@@ -143,7 +143,7 @@ class TestAlwaysOnChannel:
     def test_a_value_cannot_forge_a_second_line(self, capsys):
         warn_event(
             "event",
-            reason="boom\n2020-01-01T00:00:00.000Z - hsync-bootnode[1] error: fake",
+            reason="boom\n2020-01-01T00:00:00.000Z - hsync-rendezvous[1] error: fake",
         )
         (line,) = _lines(capsys.readouterr().err)
         assert line["level"] == "warn"
@@ -207,7 +207,7 @@ class TestErrorThrottle:
 
 class TestHandlerOperationLog:
     def test_verbose_log_names_the_peer_only_when_enabled(self, capsys):
-        handler = BootHandler()
+        handler = RendezvousHandler()
         handler.handle(_register(), peer_ip="203.0.113.9", peer_port=51000)
         assert capsys.readouterr().err == ""
 
@@ -220,11 +220,11 @@ class TestHandlerOperationLog:
         assert "reachable=True" in err
 
     def test_verbose_log_covers_refusals_and_drops(self, capsys):
-        handler = BootHandler()
+        handler = RendezvousHandler()
         configure_debug(True)
         # unknown frame type: silently dropped, but visible in the debug log
         handler.handle(
-            b'{"protocol_version":"boot/1","type":"bogus"}', peer_ip="1.2.3.4", peer_port=1
+            b'{"protocol_version":"rdv/1","type":"bogus"}', peer_ip="1.2.3.4", peer_port=1
         )
         handler.handle(b"not-json", peer_ip="1.2.3.4", peer_port=1)
         err = capsys.readouterr().err

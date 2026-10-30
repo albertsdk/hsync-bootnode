@@ -1,26 +1,26 @@
-name: hsync-bootnode
+name: hsync-rendezvous
 
 services:
-  bootnode:
-    image: ${HSYNC_BOOTNODE_IMAGE:?Set HSYNC_BOOTNODE_IMAGE in .env}
+  rendezvous:
+    image: ${HSYNC_RENDEZVOUS_IMAGE:?Set HSYNC_RENDEZVOUS_IMAGE in .env}
     restart: unless-stopped
     # Run under the invoking user's ids so the bind-mounted identity directory
     # stays writable.
     user: "${HSYNC_UID:-1000}:${HSYNC_GID:-1000}"
     # The container binds the unprivileged UDP port 8443 (the image runs as a
     # non-root user); the host's public QUIC port is mapped to it. Clients use
-    # BOOTNODE_HOST_UDP_PORT (default 443) on the host.
+    # RENDEZVOUS_HOST_UDP_PORT (default 443) on the host.
     command: ["run", "--listen-host", "0.0.0.0", "--listen-port", "8443"]
     ports:
-      - "${BOOTNODE_HOST_UDP_PORT:-443}:8443/udp"
+      - "${RENDEZVOUS_HOST_UDP_PORT:-443}:8443/udp"
     env_file:
       - .env
     volumes:
       # Persistent TLS identity (the only on-disk artifact) and the readiness PID.
-      - ${HSYNC_BOOTNODE_DATA_DIR:-./hsync-data}:/var/lib/hsync-bootnode
+      - ${HSYNC_RENDEZVOUS_DATA_DIR:-./hsync-data}:/var/lib/hsync-rendezvous
       # Optional protected-bucket group keys, mounted read-only; the entrypoint
-      # opens HSYNC_BOOTNODE_KEYS_FILE as fd 3 (see .env).
-      - ${HSYNC_BOOTNODE_KEYS_PATH:-/dev/null}:/keys:ro
+      # opens HSYNC_RENDEZVOUS_KEYS_FILE as fd 3 (see .env).
+      - ${HSYNC_RENDEZVOUS_KEYS_PATH:-/dev/null}:/keys:ro
     # Aggregate metrics are opt-in and loopback-only. To scrape the running node
     # add the flags to `command` and publish the port on the host's loopback:
     #   command: ["run", "--host", "0.0.0.0", "--port", "8443",
@@ -32,7 +32,7 @@ services:
     # is bound (the entrypoint deletes a stale one before exec). With the seam
     # unconfigured there is nothing to assert, so the check passes.
     healthcheck:
-      test: ["CMD-SHELL", "test -z \"$${HSYNC_BOOTNODE_READY_FILE}\" || test -f \"$${HSYNC_BOOTNODE_READY_FILE}\""]
+      test: ["CMD-SHELL", "test -z \"$${HSYNC_RENDEZVOUS_READY_FILE}\" || test -f \"$${HSYNC_RENDEZVOUS_READY_FILE}\""]
       interval: 30s
       timeout: 5s
       retries: 3

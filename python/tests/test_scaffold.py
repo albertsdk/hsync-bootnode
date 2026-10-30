@@ -1,4 +1,4 @@
-"""Boot/1 protocol model + routing + token tests."""
+"""Rdv/1 protocol model + routing + token tests."""
 
 from __future__ import annotations
 
@@ -9,15 +9,15 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from hsync_bootnode.protocol import (
+from hsync_rendezvous.protocol import (
     CAPACITY_MAX,
     CID_PATTERN,
     STARTUP_TIME_MAX,
-    BootAck,
-    BootPeer,
-    BootQuery,
-    BootRegister,
-    BootResponse,
+    RdvAck,
+    RdvPeer,
+    RdvQuery,
+    RdvRegister,
+    RdvResponse,
 )
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
@@ -31,22 +31,22 @@ def _load_fixture(name: str) -> dict:
 
 
 def test_fixtures_match_boot1_models() -> None:
-    """The shared SSOT fixtures must validate against the boot/1 models."""
-    assert BootRegister.model_validate(_load_fixture("bootnode-register.json"))
-    assert BootQuery.model_validate(_load_fixture("bootnode-query.json"))
-    assert BootAck.model_validate(_load_fixture("bootnode-ack.json"))
-    assert BootResponse.model_validate(_load_fixture("bootnode-response.json"))
+    """The shared SSOT fixtures must validate against the rdv/1 models."""
+    assert RdvRegister.model_validate(_load_fixture("rendezvous-register.json"))
+    assert RdvQuery.model_validate(_load_fixture("rendezvous-query.json"))
+    assert RdvAck.model_validate(_load_fixture("rendezvous-ack.json"))
+    assert RdvResponse.model_validate(_load_fixture("rendezvous-response.json"))
 
 
-from hsync_bootnode.ratelimit import TokenBucketLimiter
-from hsync_bootnode.routing import PeerRecord, RoutingTable
-from hsync_bootnode.tokens import derive_bucket_token, verify_bucket_token
+from hsync_rendezvous.ratelimit import TokenBucketLimiter
+from hsync_rendezvous.routing import PeerRecord, RoutingTable
+from hsync_rendezvous.tokens import derive_bucket_token, verify_bucket_token
 
 CID = "A1b2C3d4E5f6G7h8I9j0K"
 
 
 def test_cid_pattern_matches_boot1_spec() -> None:
-    """CID shape is the hsync-common SSOT, pinned to the documented boot/1 value.
+    """CID shape is the hsync-common SSOT, pinned to the documented rdv/1 value.
 
     ``CID_PATTERN`` is imported from ``hsync_common.models.event`` : this
     test fails if an upstream change silently alters the documented wire shape.
@@ -60,26 +60,26 @@ def test_cid_pattern_matches_boot1_spec() -> None:
 def test_bucket_uses_canonical_hsync_name_rule() -> None:
     """``bucket`` accepts the canonical HSYNC name and rejects everything else."""
     register = {
-        "protocol_version": "boot/1",
+        "protocol_version": "rdv/1",
         "type": "register",
         "cid": CID,
         "cert_fp": FP,
         "version": "1.0.0",
     }
     for good in ("shared", "a", "my-bucket_1", "b" * 63):
-        assert BootRegister(**register, bucket=good).bucket == good
+        assert RdvRegister(**register, bucket=good).bucket == good
     for bad in ("", "-lead", "trail-", "has space", "dot.name", "a" * 64):
         with pytest.raises(ValueError):
-            BootRegister(**register, bucket=bad)
+            RdvRegister(**register, bucket=bad)
 
     # query carries the same domain (no cid / cert_fp)
-    assert BootQuery(protocol_version="boot/1", type="query", bucket="shared").bucket == "shared"
+    assert RdvQuery(protocol_version="rdv/1", type="query", bucket="shared").bucket == "shared"
     with pytest.raises(ValueError):
-        BootQuery(protocol_version="boot/1", type="query", bucket="has space")
+        RdvQuery(protocol_version="rdv/1", type="query", bucket="has space")
 
-    # BootPeer is validated on the same rule
+    # RdvPeer is validated on the same rule
     with pytest.raises(ValueError):
-        BootPeer(
+        RdvPeer(
             cid=CID,
             endpoints=[{"proto": "tcp", "host": "198.51.100.7", "port": 443}],
             cert_fp=FP,
@@ -89,8 +89,8 @@ def test_bucket_uses_canonical_hsync_name_rule() -> None:
 
 
 def test_register_accepts_valid_and_rejects_unknown_fields() -> None:
-    ok = BootRegister(
-        protocol_version="boot/1",
+    ok = RdvRegister(
+        protocol_version="rdv/1",
         type="register",
         cid=CID,
         bucket="shared",
@@ -104,8 +104,8 @@ def test_register_accepts_valid_and_rejects_unknown_fields() -> None:
 
     # The schema must reject any targeted/unknown field (agnostic).
     try:
-        BootRegister(
-            protocol_version="boot/1",
+        RdvRegister(
+            protocol_version="rdv/1",
             type="register",
             cid=CID,
             bucket="shared",
@@ -122,17 +122,17 @@ def test_register_accepts_valid_and_rejects_unknown_fields() -> None:
 def test_capacity_hint_domain_bounds() -> None:
     """The advisory capacity hint is 0..32 (0 = not a seeder); 33 is rejected."""
     register = {
-        "protocol_version": "boot/1",
+        "protocol_version": "rdv/1",
         "type": "register",
         "cid": CID,
         "bucket": "shared",
         "cert_fp": FP,
         "version": "1.0.0",
     }
-    assert BootRegister(**register).capacity == 0  # absent → 0
-    assert BootRegister(**register, capacity=CAPACITY_MAX).capacity == CAPACITY_MAX
+    assert RdvRegister(**register).capacity == 0  # absent → 0
+    assert RdvRegister(**register, capacity=CAPACITY_MAX).capacity == CAPACITY_MAX
     with pytest.raises(ValueError):
-        BootRegister(**register, capacity=CAPACITY_MAX + 1)
+        RdvRegister(**register, capacity=CAPACITY_MAX + 1)
 
     peer = {
         "cid": CID,
@@ -141,10 +141,10 @@ def test_capacity_hint_domain_bounds() -> None:
         "bucket": "shared",
         "version": "1.0.0",
     }
-    assert BootPeer(**peer).capacity == 0  # absent → 0
-    assert BootPeer(**peer, capacity=CAPACITY_MAX).capacity == CAPACITY_MAX
+    assert RdvPeer(**peer).capacity == 0  # absent → 0
+    assert RdvPeer(**peer, capacity=CAPACITY_MAX).capacity == CAPACITY_MAX
     with pytest.raises(ValueError):
-        BootPeer(**peer, capacity=CAPACITY_MAX + 1)
+        RdvPeer(**peer, capacity=CAPACITY_MAX + 1)
 
 
 def test_election_advertisement_domain_bounds() -> None:
@@ -156,21 +156,21 @@ def test_election_advertisement_domain_bounds() -> None:
     canonical tokens the client uses.
     """
     register = {
-        "protocol_version": "boot/1",
+        "protocol_version": "rdv/1",
         "type": "register",
         "cid": CID,
         "bucket": "shared",
         "cert_fp": FP,
         "version": "1.0.0",
     }
-    default = BootRegister(**register)
+    default = RdvRegister(**register)
     assert default.server_ready is False
     assert default.prefer_master is False
     assert default.never_master is False
     assert default.startup_time == 0.0
     assert default.sync_direction == "bidirectional"
 
-    advertised = BootRegister(
+    advertised = RdvRegister(
         **register,
         server_ready=True,
         prefer_master=True,
@@ -185,8 +185,8 @@ def test_election_advertisement_domain_bounds() -> None:
     # pydantic's lax mode coerces 1/0 to bool and numeric strings to float; the
     # client mirror is the strict side of the contract (it rejects both before
     # sending), so a value that reaches the node is either valid or rejected.
-    assert BootRegister(**register, server_ready=1).server_ready is True
-    assert BootRegister(**register, startup_time="1760000000").startup_time == 1760000000.0
+    assert RdvRegister(**register, server_ready=1).server_ready is True
+    assert RdvRegister(**register, startup_time="1760000000").startup_time == 1760000000.0
 
     for bad in (
         {"server_ready": None},
@@ -195,7 +195,7 @@ def test_election_advertisement_domain_bounds() -> None:
         {"sync_direction": "sideways"},
     ):
         with pytest.raises(ValueError):
-            BootRegister(**register, **bad)
+            RdvRegister(**register, **bad)
 
     peer = {
         "cid": CID,
@@ -204,12 +204,12 @@ def test_election_advertisement_domain_bounds() -> None:
         "bucket": "shared",
         "version": "1.0.0",
     }
-    assert BootPeer(**peer).never_master is False
-    assert BootPeer(**peer, never_master=True).never_master is True
+    assert RdvPeer(**peer).never_master is False
+    assert RdvPeer(**peer, never_master=True).never_master is True
     with pytest.raises(ValueError):
-        BootPeer(**peer, sync_direction="sideways")
+        RdvPeer(**peer, sync_direction="sideways")
     with pytest.raises(ValueError):
-        BootPeer(**peer, startup_time=-1)
+        RdvPeer(**peer, startup_time=-1)
 
 
 def test_bucket_token_derivation_and_verify() -> None:
@@ -230,7 +230,7 @@ def test_bucket_token_wire_grammar_is_64_lowercase_hex() -> None:
     non-derivable token is "malformed", never a per-IP failed-token attempt).
     """
     register = {
-        "protocol_version": "boot/1",
+        "protocol_version": "rdv/1",
         "type": "register",
         "cid": CID,
         "bucket": "shared",
@@ -238,36 +238,36 @@ def test_bucket_token_wire_grammar_is_64_lowercase_hex() -> None:
         "version": "1.0.0",
     }
     good = "0123456789abcdef" * 4
-    assert BootRegister(**register, bucket_token=good).bucket_token == good
+    assert RdvRegister(**register, bucket_token=good).bucket_token == good
     assert (
-        BootQuery(
-            protocol_version="boot/1", type="query", bucket="shared", bucket_token=good
+        RdvQuery(
+            protocol_version="rdv/1", type="query", bucket="shared", bucket_token=good
         ).bucket_token
         == good
     )
     for bad in ("", "z" * 64, "A" * 64, "a" * 63, "a" * 65, "a" * 31 + "\n"):
         with pytest.raises(ValueError):
-            BootRegister(**register, bucket_token=bad)
+            RdvRegister(**register, bucket_token=bad)
         with pytest.raises(ValueError):
-            BootQuery(protocol_version="boot/1", type="query", bucket="shared", bucket_token=bad)
+            RdvQuery(protocol_version="rdv/1", type="query", bucket="shared", bucket_token=bad)
 
 
 def test_connected_advisory_bound_is_bounded() -> None:
     """The advisory connected count is a small non-negative JSON integer."""
     register = {
-        "protocol_version": "boot/1",
+        "protocol_version": "rdv/1",
         "type": "register",
         "cid": CID,
         "bucket": "shared",
         "cert_fp": FP,
         "version": "1.0.0",
     }
-    assert BootRegister(**register).connected is None
-    assert BootRegister(**register, connected=7).connected == 7
-    assert BootRegister(**register, connected=2**53).connected == 2**53
+    assert RdvRegister(**register).connected is None
+    assert RdvRegister(**register, connected=7).connected == 7
+    assert RdvRegister(**register, connected=2**53).connected == 2**53
     for bad in (-1, 2**53 + 1):
         with pytest.raises(ValueError):
-            BootRegister(**register, connected=bad)
+            RdvRegister(**register, connected=bad)
 
 
 def test_routing_table_upsert_prune_sample() -> None:
@@ -322,33 +322,33 @@ def test_token_bucket_burst_then_sustained() -> None:
 
 @pytest.mark.parametrize("host", ["198.51.100.7", "peer.example", "2001:db8::1", "[2001:db8::1]"])
 def test_register_accepts_dialable_endpoint_hosts(host: str) -> None:
-    frame = _load_fixture("bootnode-register.json")
+    frame = _load_fixture("rendezvous-register.json")
     frame["endpoints"] = [{"proto": "tcp", "host": host, "port": 443}]
-    assert BootRegister.model_validate(frame).endpoints[0].host == host
+    assert RdvRegister.model_validate(frame).endpoints[0].host == host
 
 
 @pytest.mark.parametrize(
     "host", ["", "..\\..", "../elsewhere", "a b", "a\x00b", "999.1.1.1", "a..b", "x" * 64]
 )
 def test_register_rejects_non_dialable_endpoint_hosts(host: str) -> None:
-    frame = _load_fixture("bootnode-register.json")
+    frame = _load_fixture("rendezvous-register.json")
     frame["endpoints"] = [{"proto": "tcp", "host": host, "port": 443}]
     with pytest.raises(ValidationError):
-        BootRegister.model_validate(frame)
+        RdvRegister.model_validate(frame)
 
 
 @pytest.mark.parametrize("cert_fp", ["", "f", "AA:BB", "not-a-fingerprint", "sha256:zz"])
 def test_register_rejects_a_malformed_certificate_fingerprint(cert_fp: str) -> None:
-    frame = _load_fixture("bootnode-register.json")
+    frame = _load_fixture("rendezvous-register.json")
     frame["cert_fp"] = cert_fp
     with pytest.raises(ValidationError):
-        BootRegister.model_validate(frame)
+        RdvRegister.model_validate(frame)
 
 
 def test_peer_certificate_fingerprint_uses_the_same_grammar() -> None:
-    peer = _load_fixture("bootnode-response.json")["peers"][0]
+    peer = _load_fixture("rendezvous-response.json")["peers"][0]
     peer["cert_fp"] = "sha256:" + FP.replace(":", "").lower()
-    assert BootPeer.model_validate(peer)
+    assert RdvPeer.model_validate(peer)
     peer["cert_fp"] = "AA:BB"
     with pytest.raises(ValidationError):
-        BootPeer.model_validate(peer)
+        RdvPeer.model_validate(peer)

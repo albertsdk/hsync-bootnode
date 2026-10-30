@@ -1,6 +1,6 @@
-"""Pytest fixtures for the language-neutral bootnode black-box suite.
+"""Pytest fixtures for the language-neutral rendezvous black-box suite.
 
-Every test in this directory is gated by ``HSYNC_BB_BOOTNODE=1`` and must keep
+Every test in this directory is gated by ``HSYNC_BB_RENDEZVOUS=1`` and must keep
 the isolation contract: a fresh subprocess per test, scrubbed environment, and
 teardown that never leaves an orphan process behind.
 """
@@ -13,16 +13,16 @@ import random
 import pytest
 from harness import (
     random_bucket,
-    start_bootnode,
+    start_rendezvous,
     terminate,
 )
 
-_BB_REASON = "bootnode black-box tests require HSYNC_BB_BOOTNODE=1"
+_BB_REASON = "rendezvous black-box tests require HSYNC_BB_RENDEZVOUS=1"
 
 
 @pytest.fixture(autouse=True)
 def _require_black_box() -> None:
-    if os.environ.get("HSYNC_BB_BOOTNODE") != "1":
+    if os.environ.get("HSYNC_BB_RENDEZVOUS") != "1":
         pytest.skip(_BB_REASON)
 
 
@@ -48,12 +48,12 @@ def group_key(rng: random.Random) -> str:
 
 
 @pytest.fixture
-def bootnode_factory(tmp_path):
-    """Factory returning a started ``BootnodeProc`` (terminated on teardown)."""
+def rendezvous_factory(tmp_path):
+    """Factory returning a started ``RendezvousProc`` (terminated on teardown)."""
     handles = []
 
     def _start(**kwargs):
-        handle = start_bootnode(tmp_path, **kwargs)
+        handle = start_rendezvous(tmp_path, **kwargs)
         handles.append(handle)
         return handle
 

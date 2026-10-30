@@ -17,13 +17,13 @@ as a systemd credential. No Docker and no Python are required.
 ## Install
 
 ```bash
-curl -fLO "https://github.com/albertsdk/hsync-bootnode/releases/latest/download/hsync-bootnode-x86_64.rpm"
-sudo dnf install hsync-bootnode-x86_64.rpm
+curl -fLO "https://github.com/albertsdk/hsync-rendezvous/releases/latest/download/hsync-rendezvous-x86_64.rpm"
+sudo dnf install hsync-rendezvous-x86_64.rpm
 ```
 
 The URL always points to the **latest stable** release; use `aarch64` instead of
 `x86_64` on ARM. To pin a version, use
-`https://github.com/albertsdk/hsync-bootnode/releases/download/vX.Y.Z/hsync-bootnode-<version>-1.el9.<arch>.rpm`.
+`https://github.com/albertsdk/hsync-rendezvous/releases/download/vX.Y.Z/hsync-rendezvous-<version>-1.el9.<arch>.rpm`.
 
 To build from the checkout instead:
 
@@ -38,7 +38,7 @@ The package behaves exactly like the Debian package. Follow the steps in
 [Debian package → Provision group keys](getting-started-deb.md#provision-group-keys-protected-buckets--private-node)
 through
 [→ Start the service](getting-started-deb.md#start-the-service), using
-`sudo dnf upgrade hsync-bootnode-*.rpm` instead of `dpkg -i` to update.
+`sudo dnf upgrade hsync-rendezvous-*.rpm` instead of `dpkg -i` to update.
 The optional
 [second UDP port](getting-started-deb.md#optional-serve-a-second-udp-port)
 drop-in applies unchanged.

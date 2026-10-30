@@ -20,22 +20,22 @@ as a systemd credential. No Docker and no Python are required.
 Download the latest package for your architecture and install it:
 
 ```bash
-curl -fLO "https://github.com/albertsdk/hsync-bootnode/releases/latest/download/hsync-bootnode-amd64.deb"
-sudo dpkg -i hsync-bootnode-amd64.deb
+curl -fLO "https://github.com/albertsdk/hsync-rendezvous/releases/latest/download/hsync-rendezvous-amd64.deb"
+sudo dpkg -i hsync-rendezvous-amd64.deb
 sudo apt install -f
 ```
 
 The URL always points to the **latest stable** release; use `arm64` or `armhf`
 instead of `amd64` on those architectures. To pin a version, use
-`https://github.com/albertsdk/hsync-bootnode/releases/download/vX.Y.Z/hsync-bootnode_<version>_<arch>.deb`.
+`https://github.com/albertsdk/hsync-rendezvous/releases/download/vX.Y.Z/hsync-rendezvous_<version>_<arch>.deb`.
 
 ### Build from the checkout
 
-From the `hsync-bootnode` checkout (needs Docker for the cross build):
+From the `hsync-rendezvous` checkout (needs Docker for the cross build):
 
 ```bash
 ./compile.sh -t deb
-# → dist/deb/hsync-bootnode_<ver>_<arch>.deb
+# → dist/deb/hsync-rendezvous_<ver>_<arch>.deb
 ```
 
 `./compile.sh -t deb-all` cross-builds the `amd64`, `arm64` and `armhf` packages
@@ -44,12 +44,12 @@ inside Docker.
 ## Provision group keys (protected buckets / private node)
 
 Group keys are a secret provisioned by the administrator, never shipped in the
-package. The install creates `/etc/hsync-bootnode/group-keys` **empty**, which
+package. The install creates `/etc/hsync-rendezvous/group-keys` **empty**, which
 means open mode (no protected buckets); the service unit reads it as a systemd
 credential. Provision the keys over it:
 
 ```bash
-sudo install -m 0640 /path/to/group-keys /etc/hsync-bootnode/group-keys
+sudo install -m 0640 /path/to/group-keys /etc/hsync-rendezvous/group-keys
 ```
 
 The file has one `bucket=<hex-group-key>` line per protected bucket. A drop-in
@@ -57,13 +57,13 @@ cannot append an argument to `ExecStart`, so replace the whole command while
 keeping the identity path, the keys source and the credential redirection:
 
 ```bash
-sudo systemctl edit hsync-bootnode.service
+sudo systemctl edit hsync-rendezvous.service
 ```
 
 ```ini
 [Service]
 ExecStart=
-ExecStart=/bin/sh -c 'exec /usr/bin/hsync-bootnode run --listen-host 0.0.0.0 --listen-port 443 --identity /var/lib/hsync-bootnode/identity.pem --protected-bucket BUCKET --keys-fd 5 5<"$CREDENTIALS_DIRECTORY/group-keys"'
+ExecStart=/bin/sh -c 'exec /usr/bin/hsync-rendezvous run --listen-host 0.0.0.0 --listen-port 443 --identity /var/lib/hsync-rendezvous/identity.pem --protected-bucket BUCKET --keys-fd 5 5<"$CREDENTIALS_DIRECTORY/group-keys"'
 ```
 
 For a fully private node (every bucket gated), an environment drop-in is enough
@@ -71,7 +71,7 @@ and keeps the unit's command untouched:
 
 ```ini
 [Service]
-Environment=HSYNC_BOOTNODE_PRIVATE=1
+Environment=HSYNC_RENDEZVOUS_PRIVATE=1
 ```
 
 ## Start the service
@@ -79,8 +79,8 @@ Environment=HSYNC_BOOTNODE_PRIVATE=1
 The package never enables the service automatically (opt-in start):
 
 ```bash
-sudo systemctl enable --now hsync-bootnode.service
-sudo systemctl status hsync-bootnode.service
+sudo systemctl enable --now hsync-rendezvous.service
+sudo systemctl status hsync-rendezvous.service
 ```
 
 ## Optional: serve a second UDP port
@@ -91,18 +91,18 @@ query on the other. The packaged unit pins a single port, so override its
 command with a drop-in:
 
 ```bash
-sudo systemctl edit hsync-bootnode.service
+sudo systemctl edit hsync-rendezvous.service
 ```
 
 ```ini
 [Service]
 ExecStart=
-ExecStart=/usr/bin/hsync-bootnode run --listen-host 0.0.0.0 --listen-ports 443,53 --identity /var/lib/hsync-bootnode/identity.pem
+ExecStart=/usr/bin/hsync-rendezvous run --listen-host 0.0.0.0 --listen-ports 443,53 --identity /var/lib/hsync-rendezvous/identity.pem
 ```
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl restart hsync-bootnode.service
+sudo systemctl restart hsync-rendezvous.service
 ```
 
 Open UDP 53 in the host firewall too, and free that port if the local resolver
@@ -115,20 +115,20 @@ protected-bucket example above). See `--listen-ports` in
 ## Verify the node is running
 
 ```bash
-sudo journalctl -u hsync-bootnode.service
-sudo hsync-bootnode identity show --identity /var/lib/hsync-bootnode/identity.pem
+sudo journalctl -u hsync-rendezvous.service
+sudo hsync-rendezvous identity show --identity /var/lib/hsync-rendezvous/identity.pem
 ```
 
 The identity command prints the certificate fingerprint clients pin. The
-persistent identity lives at `/var/lib/hsync-bootnode/identity.pem` (the unit's
+persistent identity lives at `/var/lib/hsync-rendezvous/identity.pem` (the unit's
 `StateDirectory`) and stays stable across restarts.
 
 ## Manage and update
 
 ```bash
-sudo systemctl status hsync-bootnode.service
-sudo journalctl -u hsync-bootnode.service -f
-sudo systemctl restart hsync-bootnode.service
+sudo systemctl status hsync-rendezvous.service
+sudo journalctl -u hsync-rendezvous.service -f
+sudo systemctl restart hsync-rendezvous.service
 ```
 
 To update, install the newer `.deb` over the existing one (`sudo dpkg -i …`):

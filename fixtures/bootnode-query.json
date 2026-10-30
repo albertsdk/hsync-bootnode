@@ -1,7 +1,0 @@
-{
-  "protocol_version": "boot/1",
-  "type": "query",
-  "bucket": "shared",
-  "group": "home",
-  "limit": 20
-}

@@ -1,30 +1,30 @@
-# HSYNC Bootnode — FAQ
+# HSYNC Rendezvous — FAQ
 
 Operational questions about running the node and about the clients that connect
 to it. For the CLI itself see [usage.md](usage.md).
 
-## Why does my client abort with "Bootnode '…' trust failed: the certificate fingerprint does not match the accepted pin"?
+## Why does my client abort with "Rendezvous '…' trust failed: the certificate fingerprint does not match the accepted pin"?
 
 **Symptom.** A client that connected to the node before now stops with:
 
 ```text
-ERROR: Bootnode '<host>:<port>' trust failed: the certificate fingerprint
+ERROR: Rendezvous '<host>:<port>' trust failed: the certificate fingerprint
 does not match the accepted pin (possible man-in-the-middle).
-The bootnode presented this SHA256 fingerprint:
+The rendezvous presented this SHA256 fingerprint:
   sha256:<new-fingerprint>
 ```
 
 The client also prints the known-hosts file that holds the accepted pin and the
-exact `hsync trust discovery-server add`/`hsync trust discovery-server remove` commands that
+exact `hsync trust rendezvous-server add`/`hsync trust rendezvous-server remove` commands that
 unblock the situation.
 
 **Why.** The client authenticates the node's **self-signed** certificate by
 fingerprint: at the prompt (the default `ask` policy) or, with
-`--bootnode-tofu`, it remembers the first fingerprint it sees for `<host>:<port>`
+`--rendezvous-tofu`, it remembers the first fingerprint it sees for `<host>:<port>`
 and refuses any later change as a possible man-in-the-middle. The node keeps its
 identity stable by default (a persisted ECDSA P-256 key+cert), so a plain restart
 does **not** change the fingerprint; a mismatch means the operator rotated the
-identity (`hsync-bootnode identity rotate --identity /var/lib/hsync-bootnode/identity.pem`),
+identity (`hsync-rendezvous identity rotate --identity /var/lib/hsync-rendezvous/identity.pem`),
 pointed the node at a different
 identity file, or ran it with `--ephemeral` (a fresh in-memory key each start).
 It can also indicate a real man-in-the-middle.
@@ -35,28 +35,28 @@ to clients:
 
 ```bash
 # start the node (in its own terminal, or as a service)
-hsync-bootnode run --identity /var/lib/hsync-bootnode/identity.pem
+hsync-rendezvous run --identity /var/lib/hsync-rendezvous/identity.pem
 
 # then, in another terminal, read the fingerprint:
-hsync-bootnode identity show --identity /var/lib/hsync-bootnode/identity.pem
+hsync-rendezvous identity show --identity /var/lib/hsync-rendezvous/identity.pem
 ```
 
-Clients then pin it with `--bootnode-fingerprint <fingerprint>` (or confirm it
+Clients then pin it with `--rendezvous-fingerprint <fingerprint>` (or confirm it
 once at the prompt on a terminal).
 
 **Fix — clients after an expected change.** If the new fingerprint is legitimate
 (e.g. the operator rotated the identity), accept it explicitly:
 
 ```bash
-hsync p2p HOST -b BUCKET --bootnode-fingerprint NEW_FINGERPRINT
+hsync p2p HOST -b BUCKET --rendezvous-fingerprint NEW_FINGERPRINT
 ```
 
 Or, if a client already pinned it, forget the stale pin with
-`hsync trust discovery-server remove` (the client prints this exact command, with the host
+`hsync trust rendezvous-server remove` (the client prints this exact command, with the host
 and port, when it refuses) so the next connection is trusted again; the entry
-lives in the client's trust store (`discovery_server_known_hosts.json` under
+lives in the client's trust store (`rendezvous_server_known_hosts.json` under
 `$XDG_STATE_HOME/hsync/`, or the path in
-`HSYNC_BOOTNODE_TRUST_FILE`).
+`HSYNC_RENDEZVOUS_TRUST_FILE`).
 
 **Never** accept a fingerprint you cannot explain: a mismatch is precisely what
 the pin protects against.
@@ -65,7 +65,7 @@ the pin protects against.
 
 **By design.** `SIGHUP` is ignored: a hangup (the terminal was closed, the SSH
 session dropped, the PTY was torn down) is not a stop request, so an unattended
-node keeps serving `boot/1` instead of dying silently with the session. Stopping
+node keeps serving `rdv/1` instead of dying silently with the session. Stopping
 stays on `SIGINT`/`SIGTERM` — what `systemctl stop` and Ctrl+C send — which
 closes the transports, removes the readiness file and exits 0 (see
 [Signals](usage.md#signals-and-service-manager)).
@@ -73,8 +73,8 @@ closes the transports, removes the readiness file and exits 0 (see
 If the node did disappear, the cause is not the session:
 
 ```bash
-systemctl status hsync-bootnode.service
-sudo journalctl -u hsync-bootnode.service
+systemctl status hsync-rendezvous.service
+sudo journalctl -u hsync-rendezvous.service
 uptime -s
 sudo journalctl -k | grep -i "killed process"
 ```
@@ -99,12 +99,12 @@ flag.
 It matters when the node is dialled by a TLS client that *does* verify the
 hostname — a generic QUIC/TLS tool, or any implementation that does not pin the
 fingerprint. Without it, and when the node binds `0.0.0.0`/`::`, the certificate
-SAN falls back to the placeholder DNS name `hsync-bootnode`, which never matches
+SAN falls back to the placeholder DNS name `hsync-rendezvous`, which never matches
 the address dialled, so such a client rejects the handshake (`Error: 298`). Add
 every name/IP that clients dial:
 
 ```bash
-hsync-bootnode run --identity /var/lib/hsync-bootnode/identity.pem \
+hsync-rendezvous run --identity /var/lib/hsync-rendezvous/identity.pem \
     --public-host boot.example.net
 ```
 
@@ -119,7 +119,7 @@ a restart reuses the same fingerprint. To change it deliberately — e.g. after 
 suspected compromise — rotate it:
 
 ```bash
-hsync-bootnode identity rotate --identity /var/lib/hsync-bootnode/identity.pem \
+hsync-rendezvous identity rotate --identity /var/lib/hsync-rendezvous/identity.pem \
     --public-host boot.example.com
 ```
 
@@ -129,7 +129,7 @@ new one. Rotation keeps the existing DNS/IP SANs and adds any `--public-host`
 you pass. The command re-reads and verifies the pair it wrote; **restart the
 node** to serve the new identity (it is loaded at startup), then verify the
 certificate a client actually sees with
-`hsync trust discovery-server fingerprint <host:port>` (`identity show` reads the persisted
+`hsync trust rendezvous-server fingerprint <host:port>` (`identity show` reads the persisted
 file, not the served certificate). A node started with `--ephemeral` is the
 exception: it keeps the identity in memory, so *any* restart changes the
 fingerprint — do not pin such a node.
@@ -138,8 +138,8 @@ fingerprint — do not pin such a node.
 
 Not necessarily: on a terminal the client confirms the fingerprint once at the
 prompt (the default `ask` policy) and remembers it, while an unattended client
-uses `--bootnode-tofu` instead. Pin it explicitly with
-`--bootnode-fingerprint` when the identity must be *stable* and verified out of
+uses `--rendezvous-tofu` instead. Pin it explicitly with
+`--rendezvous-fingerprint` when the identity must be *stable* and verified out of
 band.
 
 ## A client keeps logging "Waiting for peers to join"
@@ -148,7 +148,7 @@ The node is reachable but no peer is registered in the bucket yet — nothing is
 wrong: see the client's
 [FAQ — p2p Mode](https://github.com/albertsdk/hsync-client/blob/main/docs/faq-p2p.md).
 
-A trust failure never produces that wait: the client disables the bootnode source,
+A trust failure never produces that wait: the client disables the rendezvous source,
 keeps syncing on the local network and never contacts the node again until the
 fingerprint is pinned, so only the cross-network peers are missing while the local
 ones keep working.
@@ -161,7 +161,7 @@ listening on a second inbound port — 443 **and** 53, sharing one routing
 table, with both open in the host firewall:
 
 ```bash
-hsync-bootnode run --listen-ports 443,53
+hsync-rendezvous run --listen-ports 443,53
 ```
 
 With a packaged install, set the same option through a unit/Compose override
@@ -170,14 +170,14 @@ With a packaged install, set the same option through a unit/Compose override
 
 ## Peers discover each other but never sync (mobile data, hotspot, CGNAT)
 
-Two peers behind carrier-grade NAT have no inbound address at all: discovery and
+Two peers behind carrier-grade NAT have no inbound address at all: rendezvous and
 the master election work, then the slave keeps logging `No reachable endpoint for
 master …`. Start the node with `--relay` and it also carries the data plane,
 forwarding the peers' TLS verbatim (it never sees content, names or credentials;
 it does see which devices are paired and how many bytes they exchanged):
 
 ```bash
-hsync-bootnode run --relay
+hsync-rendezvous run --relay
 ```
 
 The client then logs `[RELAY]` on both sides and the sync proceeds through the
@@ -187,12 +187,12 @@ ceiling with `--relay-session-bytes` and the idle window with
 `--relay-idle-timeout` (default 120 s). Without `--relay` the node answers every
 relay frame with `relay_unavailable` and only directly reachable peers connect.
 See [usage.md](usage.md#run-options) and the wire contract in
-[`protocol-spec/boot-1.md`](../protocol-spec/boot-1.md) (§Data relay).
+[`protocol-spec/rdv-1.md`](../protocol-spec/rdv-1.md) (§Data relay).
 
 ## Where can I read the pin the client stored?
 
-On the client host, in `discovery_server_known_hosts.json` under `$XDG_STATE_HOME/hsync/`
-(or `~/.local/state/hsync/`), overridable with `HSYNC_BOOTNODE_TRUST_FILE`; the
+On the client host, in `rendezvous_server_known_hosts.json` under `$XDG_STATE_HOME/hsync/`
+(or `~/.local/state/hsync/`), overridable with `HSYNC_RENDEZVOUS_TRUST_FILE`; the
 client prints this path whenever it pins a fingerprint. It maps `<host>:<port>`
 to the current fingerprint and its `updated_at` timestamp.
 
@@ -222,9 +222,9 @@ glibc floor is **2.35**, then install it on the machine:
 ```bash
 uname -m   # x86_64 → amd64; aarch64 → arm64; armv7l → armhf
 ./compile.sh -t deb-all
-# → dist/deb/hsync-bootnode_<ver>_<arch>.deb (needs Docker + qemu)
-scp dist/deb/hsync-bootnode_*_amd64.deb TARGET_HOST:/tmp/
-ssh TARGET_HOST 'sudo dpkg -i /tmp/hsync-bootnode_*_amd64.deb'
+# → dist/deb/hsync-rendezvous_<ver>_<arch>.deb (needs Docker + qemu)
+scp dist/deb/hsync-rendezvous_*_amd64.deb TARGET_HOST:/tmp/
+ssh TARGET_HOST 'sudo dpkg -i /tmp/hsync-rendezvous_*_amd64.deb'
 ```
 
 `TARGET_HOST` is the SSH host of the destination machine. Pick the architecture
@@ -233,8 +233,8 @@ from the failing path in the error (`/lib/x86_64-linux-gnu/` → `amd64`).
 To run it without installing anything, unpack the same package instead:
 
 ```bash
-dpkg-deb -x dist/deb/hsync-bootnode_*_amd64.deb /tmp/hsync-bootnode-bin
-/tmp/hsync-bootnode-bin/usr/lib/hsync-bootnode/hsync-bootnode --version
+dpkg-deb -x dist/deb/hsync-rendezvous_*_amd64.deb /tmp/hsync-rendezvous-bin
+/tmp/hsync-rendezvous-bin/usr/lib/hsync-rendezvous/hsync-rendezvous --version
 ```
 
 **Fix without Docker.** Build **on the destination machine**: `./compile.sh`
@@ -254,13 +254,13 @@ the node will start.
 ## Why does the installer fail with "open .../.env: permission denied"?
 
 ```text
-open /home/USER/.local/share/hsync-bootnode/.env: permission denied
+open /home/USER/.local/share/hsync-rendezvous/.env: permission denied
 ```
 
 The snap-packaged `docker` is confined and cannot read hidden paths under
-`$HOME`; the default install directory `~/.local/share/hsync-bootnode` is
+`$HOME`; the default install directory `~/.local/share/hsync-rendezvous` is
 hidden, so `docker compose` cannot load `.env`. The installer detects this and
-falls back to `$HOME/hsync-bootnode` automatically; an explicit `--install-dir`
+falls back to `$HOME/hsync-rendezvous` automatically; an explicit `--install-dir`
 under a hidden path is refused. Install Docker Engine instead of the snap if you
 want to keep a hidden directory — see
 [Getting Started — Docker installed as a snap](getting-started-script.md#docker-installed-as-a-snap).
@@ -308,6 +308,6 @@ To install without the check (the image is then trusted on the registry
 reference alone), forward `--no-verify` through the pipe:
 
 ```bash
-curl -fsSL https://github.com/albertsdk/hsync-bootnode/releases/latest/download/install.sh \
+curl -fsSL https://github.com/albertsdk/hsync-rendezvous/releases/latest/download/install.sh \
   | bash -s -- --no-verify
 ```

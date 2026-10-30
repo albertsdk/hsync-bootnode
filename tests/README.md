@@ -1,58 +1,58 @@
-# Black-box tests — hsync-bootnode
+# Black-box tests — hsync-rendezvous
 
-Language-neutral functional tests for the `boot/1` bootstrap node. They are
+Language-neutral functional tests for the `rdv/1` rendezvous node. They are
 **independent of the implementation language**: the same suite will
 validate the future `c/` port unchanged.
 
 ## Contract
 
-The tests spawn the bootnode executable and observe **only** its public
+The tests spawn the rendezvous executable and observe **only** its public
 surface:
 
 - the CLI (`run`, `--version`, `--private`, fail-fast exit codes — 2 config
   error, 3 listener bind failure);
-- the `boot/1` wire protocol over QUIC/UDP (`hsync-boot/1` ALPN, NDJSON frames).
+- the `rdv/1` wire protocol over QUIC/UDP (`hsync-rdv/1` ALPN, NDJSON frames).
 
-They never import `hsync_bootnode` or touch internal state. If the whole
+They never import `hsync_rendezvous` or touch internal state. If the whole
 implementation were rewritten while keeping the same CLI + wire contract, the
 suite would still pass.
 
 ## Running
 
-The suite is gated by `HSYNC_BB_BOOTNODE=1` and uses the Python virtualenv only
+The suite is gated by `HSYNC_BB_RENDEZVOUS=1` and uses the Python virtualenv only
 as a *test runner* (pytest + aioquic for the wire client):
 
 ```bash
-# from the workspace root (equivalent: make test-bb-bootnode)
-cd hsync-bootnode
-HSYNC_BB_BOOTNODE=1 python/.venv/bin/python -m pytest -q tests/
+# from the workspace root (equivalent: make test-bb-rendezvous)
+cd hsync-rendezvous
+HSYNC_BB_RENDEZVOUS=1 python/.venv/bin/python -m pytest -q tests/
 ```
 
 ### Stress suite (opt-in)
 
-`tests/test_bb_bootnode_stress.py` is gated **in addition** by `HSYNC_BB_STRESS=1`
+`tests/test_bb_rendezvous_stress.py` is gated **in addition** by `HSYNC_BB_STRESS=1`
 and proves the node stays correct and alive under sustained concurrent load,
 bursts, churn, a garbage storm and a TTL sweep under load. Scale is bounded by
 environment knobs (read at import time):
 
 ```bash
-cd hsync-bootnode
-HSYNC_BB_BOOTNODE=1 HSYNC_BB_STRESS=1 python/.venv/bin/python -m pytest -q tests/test_bb_bootnode_stress.py
+cd hsync-rendezvous
+HSYNC_BB_RENDEZVOUS=1 HSYNC_BB_STRESS=1 python/.venv/bin/python -m pytest -q tests/test_bb_rendezvous_stress.py
 ```
 
 | Knob | Default | Meaning |
 |---|---|---|
-| `HSYNC_BB_BOOTNODE_STRESS_CONNECTIONS` | 4 | concurrent QUIC clients |
-| `HSYNC_BB_BOOTNODE_STRESS_ROUNDS` | 4 | register/query/refresh/leave rounds per client |
-| `HSYNC_BB_BOOTNODE_STRESS_PEERS` | 50 | peers registered for the discovery/TTL/garbage scenarios |
-| `HSYNC_BB_BOOTNODE_STRESS_MAX_P99_MS` | 1000 | p99 latency budget for the mixed-load scenario |
+| `HSYNC_BB_RENDEZVOUS_STRESS_CONNECTIONS` | 4 | concurrent QUIC clients |
+| `HSYNC_BB_RENDEZVOUS_STRESS_ROUNDS` | 4 | register/query/refresh/leave rounds per client |
+| `HSYNC_BB_RENDEZVOUS_STRESS_PEERS` | 50 | peers registered for the rendezvous/TTL/garbage scenarios |
+| `HSYNC_BB_RENDEZVOUS_STRESS_MAX_P99_MS` | 1000 | p99 latency budget for the mixed-load scenario |
 
 Without `HSYNC_BB_STRESS=1` the module is skipped, so the default suite stays
 fast.
 
 ### Security probes (opt-in)
 
-`tests/test_bb_bootnode_security.py` is gated **in addition** by
+`tests/test_bb_rendezvous_security.py` is gated **in addition** by
 `HSYNC_BB_SECURITY=1` and runs adversarial black-box probes (penetration-style)
 against the running node: authorization bypass (cross-bucket token replay,
 foreign-bucket eviction, malformed-token budget abuse, private-mode enumeration
@@ -65,38 +65,38 @@ leaks onto argv/env, identity file `0600`/`0700`, ephemeral writes nothing),
 log-forging via control characters and reply amplification.
 
 The probes are black-box by the same contract as the functional suite (CLI +
-`boot/1` wire only) and stay skipped in the default run because they send
+`rdv/1` wire only) and stay skipped in the default run because they send
 deliberately hostile traffic:
 
 ```bash
-cd hsync-bootnode
-HSYNC_BB_BOOTNODE=1 HSYNC_BB_SECURITY=1 python/.venv/bin/python -m pytest -q tests/test_bb_bootnode_security.py
+cd hsync-rendezvous
+HSYNC_BB_RENDEZVOUS=1 HSYNC_BB_SECURITY=1 python/.venv/bin/python -m pytest -q tests/test_bb_rendezvous_security.py
 ```
 
 | Knob | Default | Meaning |
 |---|---|---|
-| `HSYNC_BB_BOOTNODE_SECURITY_FLOOD` | 120 | handshakes in the connection-flood probe |
-| `HSYNC_BB_BOOTNODE_SECURITY_TIMING` | 30 | rounds in the authorization timing probe |
+| `HSYNC_BB_RENDEZVOUS_SECURITY_FLOOD` | 120 | handshakes in the connection-flood probe |
+| `HSYNC_BB_RENDEZVOUS_SECURITY_TIMING` | 30 | rounds in the authorization timing probe |
 
 The 127.0.0.2 spoofing probes are skipped automatically where a second
 loopback alias cannot be bound.
 
 ## Language selection
 
-The executable under test is resolved from `HSYNC_BOOTNODE_BIN` (a path to the
-`hsync-bootnode` binary); it defaults to the Python build
-(`python/.venv/bin/hsync-bootnode`). To run the suite against a different
+The executable under test is resolved from `HSYNC_RENDEZVOUS_BIN` (a path to the
+`hsync-rendezvous` binary); it defaults to the Python build
+(`python/.venv/bin/hsync-rendezvous`). To run the suite against a different
 implementation, point the variable at its binary — the CLI contract is the
 same:
 
 ```bash
-HSYNC_BB_BOOTNODE=1 HSYNC_BOOTNODE_BIN=/path/to/hsync-bootnode \
+HSYNC_BB_RENDEZVOUS=1 HSYNC_RENDEZVOUS_BIN=/path/to/hsync-rendezvous \
   python/.venv/bin/python -m pytest -q tests/
 ```
 
 ## Readiness and isolation
 
-- Readiness is signalled through the `HSYNC_BOOTNODE_READY_FILE` seam: the
+- Readiness is signalled through the `HSYNC_RENDEZVOUS_READY_FILE` seam: the
   process writes its PID there once the QUIC listener is bound, and removes it
   on graceful shutdown (`SIGTERM`). The suite keys readiness on the file
   **appearing with a PID**, not on that PID equalling the launcher's: a
@@ -119,17 +119,17 @@ HSYNC_BB_BOOTNODE=1 HSYNC_BOOTNODE_BIN=/path/to/hsync-bootnode \
 
 | Module | Scenarios |
 |---|---|
-| `test_bb_bootnode_lifecycle.py` | `--version`, fail-fast config, readiness, graceful shutdown (`SIGTERM` idle **and under load**, `SIGINT`), IPv6 `[::1]` listener, debug mode (peer-aware stderr log), port-in-use bind failure (exit 3), `--upnp` banner + serving, invalid `--ttl` fail-fast |
-| `test_bb_bootnode_register.py` | STUN-echo ack, advertised/observed endpoints, refresh ack, unknown-CID refresh drop, re-register replaces endpoints (upsert), multi-endpoint list relayed in order, refresh never mutates capacity/election, re-register after leave, leave removes across groups, 3-frame pipeline, refresh-after-expiry drop |
-| `test_bb_bootnode_query.py` | peer listing, group filter, limit bounds, pipelined frames, capacity + election-advertisement relay, reachable, default sample limit (20), upper bound accepted, bucket scoping, group-less exclusion, same-cid distinct groups |
-| `test_bb_bootnode_protected_buckets.py` | uniform `token_required`, correct/wrong token, no oracle |
-| `test_bb_bootnode_private.py` | `--private`/envvar: every bucket gated, unkeyed bucket, gated `leave`, fail-fast without keys, banner |
-| `test_bb_bootnode_ratelimit.py` | burst → `rate_limited` + `retry_after` (query/register/bad-token) |
-| `test_bb_bootnode_negative.py` | malformed/unknown/oversized/forbidden frames, partial-frame-then-disconnect, leave, limit out-of-range, malformed token, exact frame-size boundary, wrong field types, endpoints bounds, invalid bucket name, group length, cid length, non-object JSON, leave unknown cid |
-| `test_bb_bootnode_ttl.py` | TTL expiry convergence, refresh keeps peer alive |
-| `test_bb_bootnode_security.py` | **opt-in** (`HSYNC_BB_SECURITY=1`): adversarial probes — authz bypass, source spoofing, parser abuse, DoS, wrong ALPN, timing side channel, secret handling, log forging, amplification |
-| `test_bb_bootnode_metrics.py` | loopback `/metrics`: uniform `401` without/with a wrong token, `200` with it, registered peers move the level and the peak, concurrent connections raise the connection peak, the periodic Prometheus text file, and an exposition that never carries peer identity |
-| `test_bb_bootnode_stress.py` | **opt-in** (`HSYNC_BB_STRESS=1`): sustained mixed load, full-bucket discovery, rate-limit burst + recovery, garbage storm, TTL sweep under query load, register/leave churn RSS-bound (no leak) |
+| `test_bb_rendezvous_lifecycle.py` | `--version`, fail-fast config, readiness, graceful shutdown (`SIGTERM` idle **and under load**, `SIGINT`), IPv6 `[::1]` listener, debug mode (peer-aware stderr log), port-in-use bind failure (exit 3), `--upnp` banner + serving, invalid `--ttl` fail-fast |
+| `test_bb_rendezvous_register.py` | STUN-echo ack, advertised/observed endpoints, refresh ack, unknown-CID refresh drop, re-register replaces endpoints (upsert), multi-endpoint list relayed in order, refresh never mutates capacity/election, re-register after leave, leave removes across groups, 3-frame pipeline, refresh-after-expiry drop |
+| `test_bb_rendezvous_query.py` | peer listing, group filter, limit bounds, pipelined frames, capacity + election-advertisement relay, reachable, default sample limit (20), upper bound accepted, bucket scoping, group-less exclusion, same-cid distinct groups |
+| `test_bb_rendezvous_protected_buckets.py` | uniform `token_required`, correct/wrong token, no oracle |
+| `test_bb_rendezvous_private.py` | `--private`/envvar: every bucket gated, unkeyed bucket, gated `leave`, fail-fast without keys, banner |
+| `test_bb_rendezvous_ratelimit.py` | burst → `rate_limited` + `retry_after` (query/register/bad-token) |
+| `test_bb_rendezvous_negative.py` | malformed/unknown/oversized/forbidden frames, partial-frame-then-disconnect, leave, limit out-of-range, malformed token, exact frame-size boundary, wrong field types, endpoints bounds, invalid bucket name, group length, cid length, non-object JSON, leave unknown cid |
+| `test_bb_rendezvous_ttl.py` | TTL expiry convergence, refresh keeps peer alive |
+| `test_bb_rendezvous_security.py` | **opt-in** (`HSYNC_BB_SECURITY=1`): adversarial probes — authz bypass, source spoofing, parser abuse, DoS, wrong ALPN, timing side channel, secret handling, log forging, amplification |
+| `test_bb_rendezvous_metrics.py` | loopback `/metrics`: uniform `401` without/with a wrong token, `200` with it, registered peers move the level and the peak, concurrent connections raise the connection peak, the periodic Prometheus text file, and an exposition that never carries peer identity |
+| `test_bb_rendezvous_stress.py` | **opt-in** (`HSYNC_BB_STRESS=1`): sustained mixed load, full-bucket rendezvous, rate-limit burst + recovery, garbage storm, TTL sweep under query load, register/leave churn RSS-bound (no leak) |
 
 Per-IP rate-limit isolation between *distinct* source IPs is not exercised here
 (loopback forces a single source address); it is covered by the white-box unit

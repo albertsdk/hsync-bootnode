@@ -1,7 +1,7 @@
-# Project Rules & Coding Guidelines (hsync-bootnode — Python + C)
+# Project Rules & Coding Guidelines (hsync-rendezvous — Python + C)
 
 This document defines the strict architectural, development, and code-reuse rules
-for the `hsync-bootnode` repository. You and any coding agent must strictly adhere to these
+for the `hsync-rendezvous` repository. You and any coding agent must strictly adhere to these
 guidelines at all times.
 
 > **Where this file comes from**: portable, self-contained copy of the rules for
@@ -10,8 +10,8 @@ guidelines at all times.
 > `scripts/dev/gen-clinerules.py`). Keep project-specific rules here; edit the
 > root `AGENTS.md` for anything shared.
 
-`hsync-bootnode` is a **multi-language repository**: one wire protocol
-(`boot/1`) with several implementations of the *same* contract
+`hsync-rendezvous` is a **multi-language repository**: one wire protocol
+(`rdv/1`) with several implementations of the *same* contract
 (`python/` today, `c/` next). This file mirrors the
 Python project guidelines used by the other HSYNC projects and adds the rules
 that apply to the C implementation.
@@ -22,8 +22,8 @@ that apply to the C implementation.
 
 | Path | Content |
 |---|---|
-| `protocol-spec/boot-1.md` | Wire-protocol specification — the **single source of truth (SSOT)** |
-| `fixtures/bootnode-*.json` | Shared protocol fixtures (single source for every language) |
+| `protocol-spec/rdv-1.md` | Wire-protocol specification — the **single source of truth (SSOT)** |
+| `fixtures/rendezvous-*.json` | Shared protocol fixtures (single source for every language) |
 | `tests/` | **Language-neutral** black-box suite (spawns the binary, wire-only) |
 | `bench/` | L1/L2/L3 benchmarks; L2/L3 are language-neutral |
 | `python/` | Python + aioquic implementation (v1) and its white-box unit suite |
@@ -33,12 +33,12 @@ that apply to the C implementation.
 | `llm-wiki/` | Internal agent knowledge base |
 | `docs/` | End-user documentation |
 
-* **One commit per repository**: `hsync-bootnode` is its own git repository.
+* **One commit per repository**: `hsync-rendezvous` is its own git repository.
   Verify it before any git command with
-  `git -C hsync-bootnode rev-parse --git-dir`; if the check fails, **stop and
+  `git -C hsync-rendezvous rev-parse --git-dir`; if the check fails, **stop and
   report it as a blocker** — never `git init`, never commit these files from
   another repository.
-* Inspect what you are about to commit (`git -C hsync-bootnode status --short`
+* Inspect what you are about to commit (`git -C hsync-rendezvous status --short`
   and `git diff --cached`) and prefer explicit paths over `git add -A`.
 * **Never stage build outputs or secrets**: `dist/`, `build/`, `*.deb`,
   `*.o`/`*.a`/`*.so`, `*.env`, and any local `group-keys` file.
@@ -59,7 +59,7 @@ The project maintains two distinct documentation environments. You must understa
 * **Read Before Exploring or Modifying Code**: Before exploring or modifying application code, you **MUST** first consult the internal wiki, starting from `llm-wiki/README.md`, and then drill down into the specific `llm-wiki/` file(s) relevant to the task. Administrative, repository-inspection, and documentation-only operations may use a proportionate subset of this workflow.
 * **Index-Driven Navigation**: Use `llm-wiki/README.md` as the map: identify which module/feature/data-model docs are relevant, read them, and follow their `path/to/file.py::symbol` (Python) / `path/to/file.c::symbol` (C) references to reach the right code directly instead of blindly searching the whole repository.
 * **Docs Guide the Search**: Treat `llm-wiki/` as the first search surface. Codebase-wide exploration is a **fallback** for what the wiki does not yet cover. Remember that `llm-wiki/README.md` also lists the **hard invariants** (no-log, RAM-only, rigid schema, protected buckets, zero backward compatibility) that must be read before touching any module.
-* **Bootstrap on Absence**: If a specific doc does not exist or lacks relevant content, note the gap and create/extend it as part of the task. A missing doc is never an excuse to skip the docs-first step.
+* **Rendezvous on Absence**: If a specific doc does not exist or lacks relevant content, note the gap and create/extend it as part of the task. A missing doc is never an excuse to skip the docs-first step.
 
 ### 2. Mandatory Dual-Synchronization
 * **Code & Docs Are One Change**: Whenever you **add, modify, or remove** any relevant element of the application, you **MUST** update the documentation **within the same task**.
@@ -77,7 +77,7 @@ to the project's nature (multi-language network daemon) and keep each index
   * `llm-wiki/README.md` — index / table of contents linking every other doc, plus the hard invariants.
   * `llm-wiki/architecture.md` — high-level system overview and component interactions.
   * `llm-wiki/modules/<module>.md` — internal responsibilities, key functions (add, rename, split or omit as the project requires; a doc is justified only when it maps to real code).
-  * `llm-wiki/data-models.md` — the `boot/1` frame models of every implementation and their relationships (pydantic models in `python/`, structs/unions in `c/`); add it as soon as the models are worth mapping.
+  * `llm-wiki/data-models.md` — the `rdv/1` frame models of every implementation and their relationships (pydantic models in `python/`, structs/unions in `c/`); add it as soon as the models are worth mapping.
   * `llm-wiki/decisions.md` — log of design decisions (already present; keep the numbering stable).
 * **User Docs (`docs/`) - Human Optimized** (only the subset that applies):
   * `docs/README.md` — welcome page, installation, and quickstart for the user.
@@ -144,27 +144,27 @@ The wiki must describe the code as it is **now**. Accumulated inaccuracies come 
 ## ⚠️ Domain-Critical Rules
 
 * **Wire protocol — single source of truth**
-  `protocol-spec/boot-1.md` is the SSOT for the `boot/1` wire protocol, shared by
+  `protocol-spec/rdv-1.md` is the SSOT for the `rdv/1` wire protocol, shared by
   **every** implementation. Before modifying any frame, field, ALPN, framing rule
   or refusal semantic you **MUST** read it and follow it. **Never fork the spec**
   into `python/` or `c/`: the same frames must be byte-identical across
   languages.
 
 * **Shared fixtures**
-  `fixtures/bootnode-*.json` are the shared protocol fixtures: the same bytes
+  `fixtures/rendezvous-*.json` are the shared protocol fixtures: the same bytes
   must validate every implementation. Any protocol change updates the spec, the
   fixtures, every implementation, the drift/parity tests and the docs
   **atomically**.
 
 * **Language-neutral black-box suite**
   `tests/` at the repository root is the *contract* test suite. It spawns the
-  binary resolved from `HSYNC_BOOTNODE_BIN` and observes only the public CLI and
-  the `boot/1` wire protocol: it **never** imports `hsync_bootnode` (or any C
+  binary resolved from `HSYNC_RENDEZVOUS_BIN` and observes only the public CLI and
+  the `rdv/1` wire protocol: it **never** imports `hsync_rendezvous` (or any C
   object) and never touches internal state. The identical suite must pass against
   `python/` and `c/`. Frame builders live in `tests/harness.py` (single
   source, language-neutral) — do not duplicate them inside an implementation
-  directory. Readiness is signalled through the `HSYNC_BOOTNODE_READY_FILE`
-  seam; the suite is gated by `HSYNC_BB_BOOTNODE=1`.
+  directory. Readiness is signalled through the `HSYNC_RENDEZVOUS_READY_FILE`
+  seam; the suite is gated by `HSYNC_BB_RENDEZVOUS=1`.
 
 * **No-log invariant**
   Identical in every language: the process NEVER writes peer data (IPs, CIDs,
@@ -175,30 +175,30 @@ The wiki must describe the code as it is **now**. Accumulated inaccuracies come 
   fingerprint is stable and rotatable; diagnostics are
   stderr-only and split in two: an always-on, peer-free operational channel
   (`warn`/`error`) and the opt-in, peer-aware full operation log (`--debug` /
-  `HSYNC_BOOTNODE_DEBUG=1`). Enforced for
+  `HSYNC_RENDEZVOUS_DEBUG=1`). Enforced for
   Python by `python/tests/test_nolog.py` (read-only filesystem sandbox): the C
   port must ship an equivalent enforcement test.
 
 * **Rigid schema**
-  Every `boot/1` frame model rejects unknown fields (pydantic
+  Every `rdv/1` frame model rejects unknown fields (pydantic
   `extra="forbid"` in Python; an explicit unknown-field rejection in C). Unknown or targeted fields make the frame invalid and it is silently
   dropped — never reinterpreted, never partially applied.
 
 * **Protected buckets**
-  Tokens are derived as `HMAC-SHA256(key, "boot/1" || bucket)[:32]` hex and
+  Tokens are derived as `HMAC-SHA256(key, "rdv/1" || bucket)[:32]` hex and
   compared in constant time; refusals are uniform (`token_required`) and never
   reveal whether a bucket exists. Group keys enter the process **only** through
-  `--keys-fd` / `HSYNC_BOOTNODE_KEYS_FD` (a file descriptor, never a path inside
+  `--keys-fd` / `HSYNC_RENDEZVOUS_KEYS_FD` (a file descriptor, never a path inside
   the sandbox) and are read once at startup. Rate limits are in-memory sliding
-  windows; `HSYNC_BOOTNODE_NO_RATE_LIMIT` is a test/benchmark seam that must
+  windows; `HSYNC_RENDEZVOUS_NO_RATE_LIMIT` is a test/benchmark seam that must
   never be documented as a production option.
 
 * **Packaging — synchronous updates are mandatory**
-  Any change to CLI flags, environment variables (`HSYNC_BOOTNODE_*`), option
+  Any change to CLI flags, environment variables (`HSYNC_RENDEZVOUS_*`), option
   defaults or user-facing behavior **REQUIRES** an atomic update to:
-  * the implementation CLI (`python/src/hsync_bootnode/cli.py`, and `c/` once
+  * the implementation CLI (`python/src/hsync_rendezvous/cli.py`, and `c/` once
     the port lands);
-  * the man page `packaging/deb/usr/share/man/man1/hsync-bootnode.1`
+  * the man page `packaging/deb/usr/share/man/man1/hsync-rendezvous.1`
     (OPTIONS, ENVIRONMENT, FILES, EXAMPLES, `.TH` date/version);
   * the `.deb` payload under `packaging/deb/` and the language dispatch points in
     `compile.sh` (`validate_language`, `_build_native`, `_build_onedir`,
@@ -224,7 +224,7 @@ The wiki must describe the code as it is **now**. Accumulated inaccuracies come 
 
 * **Multi-language obligation**
   Breaking the wire contract means bumping the mandatory `protocol_version`
-  (`boot/1` → `boot/next`) and updating **atomically**: `protocol-spec/boot-1.md`
+  (`rdv/1` → `boot/next`) and updating **atomically**: `protocol-spec/rdv-1.md`
   (or its successor), `fixtures/`, `python/`, `c/`, `tests/`, `bench/`,
   `compile.sh`/`packaging/`, `llm-wiki/` and `docs/`. No implementation may
   keep speaking the retired version, and no compatibility shim may exist in one
@@ -241,7 +241,7 @@ Every code change must pass a bounded implementation and verification cycle befo
 Before modifying code, the agent must identify:
 
 * the requested observable behavior and the affected contracts — the CLI
-  surface, the `boot/1` wire protocol (spec + fixtures) and the no-log invariant;
+  surface, the `rdv/1` wire protocol (spec + fixtures) and the no-log invariant;
 * failure cases, boundaries, security implications (untrusted network input,
   token handling, path/traversal on the ready file), concurrency and state
   transitions (TTL prune, refresh, graceful shutdown);
@@ -257,8 +257,8 @@ trivial documentation-only or formatting-only changes.
 
 | Implementation | Observable behavior | Cross-language / artifact impact |
 | --- | --- | --- |
-| `python/` | CLI, `boot/1` wire behavior, no-log | spec, fixtures, `c/`, root `tests/`, `bench/`, `compile.sh`, `packaging/`, docs |
-| `c/` | same CLI + `boot/1` wire behavior | spec, fixtures, `python/`, root `tests/`, `bench/`, `compile.sh`, `packaging/`, docs |
+| `python/` | CLI, `rdv/1` wire behavior, no-log | spec, fixtures, `c/`, root `tests/`, `bench/`, `compile.sh`, `packaging/`, docs |
+| `c/` | same CLI + `rdv/1` wire behavior | spec, fixtures, `python/`, root `tests/`, `bench/`, `compile.sh`, `packaging/`, docs |
 | root (`tests/`, `bench/`, `fixtures/`, spec) | the shared contract itself | every implementation |
 
 ### 2. First Implementation Pass
@@ -270,9 +270,9 @@ Implement the smallest complete change satisfying the acceptance criteria. Do no
 After the first implementation pass, and before finalizing:
 
 1. Re-read the original request and acceptance criteria without assuming the implementation is correct.
-2. Inspect the **complete diff** (`cd hsync-bootnode && git diff` / `git status`), including tests, fixtures, the spec, `compile.sh`, `packaging/`, the man page, `llm-wiki/` and `docs/`. Reviewing your own edit history is not enough — read the actual diff.
+2. Inspect the **complete diff** (`cd hsync-rendezvous && git diff` / `git status`), including tests, fixtures, the spec, `compile.sh`, `packaging/`, the man page, `llm-wiki/` and `docs/`. Reviewing your own edit history is not enough — read the actual diff.
 3. Trace normal, invalid-input, empty/missing, minimum/maximum, oversized, malformed, pipelined-frames, TTL-expiry, cancellation, graceful-shutdown, partial-write and rate-limit paths where applicable.
-4. Verify consistency across the spec, the committed fixtures, the frame models of **every** implementation, the CLI/env contract (flags ↔ `HSYNC_BOOTNODE_*` ↔ man page ↔ service units), the packaging scripts and the documentation.
+4. Verify consistency across the spec, the committed fixtures, the frame models of **every** implementation, the CLI/env contract (flags ↔ `HSYNC_RENDEZVOUS_*` ↔ man page ↔ service units), the packaging scripts and the documentation.
 5. Run the narrowest relevant checks first (see below), then the broader ones when practical.
 6. Correct every issue found and rerun the affected checks.
 
@@ -285,18 +285,18 @@ Diff inspection and executed checks are required; stating that the implementatio
 Dependencies are installed with `poetry install`, which creates the in-project
 `.venv` (the virtualenv is local and is **not** committed). `ruff` is **not** on
 `PATH`: always invoke the tools through that virtualenv, prefixing every command
-with `cd hsync-bootnode/python &&`, one command per shell invocation.
+with `cd hsync-rendezvous/python &&`, one command per shell invocation.
 
 ```
 # create/refresh the in-project virtualenv from pyproject.toml + poetry.lock
-cd hsync-bootnode/python && poetry install
+cd hsync-rendezvous/python && poetry install
 # targeted unit test, then the full unit suite
-cd hsync-bootnode/python && .venv/bin/python -m pytest -q tests/test_handler.py::test_name
-cd hsync-bootnode/python && .venv/bin/python -m pytest -q
+cd hsync-rendezvous/python && .venv/bin/python -m pytest -q tests/test_handler.py::test_name
+cd hsync-rendezvous/python && .venv/bin/python -m pytest -q
 # lint + format check + types
-cd hsync-bootnode/python && .venv/bin/python -m ruff check .
-cd hsync-bootnode/python && .venv/bin/python -m ruff format --check .
-cd hsync-bootnode/python && .venv/bin/python -m mypy src/hsync_bootnode
+cd hsync-rendezvous/python && .venv/bin/python -m ruff check .
+cd hsync-rendezvous/python && .venv/bin/python -m ruff format --check .
+cd hsync-rendezvous/python && .venv/bin/python -m mypy src/hsync_rendezvous
 ```
 
 #### Commands — language-neutral code at the repository root (`tests/`, `bench/`)
@@ -305,18 +305,18 @@ These are linted with the root `ruff.toml` but run with the Python virtualenv's
 interpreter (it is the test runner only):
 
 ```
-cd hsync-bootnode && python/.venv/bin/python -m ruff check tests bench
-cd hsync-bootnode && HSYNC_BB_BOOTNODE=1 python/.venv/bin/python -m pytest -q tests/
-cd hsync-bootnode && HSYNC_BB_BOOTNODE=1 HSYNC_BOOTNODE_BIN=/path/to/c/binary \
+cd hsync-rendezvous && python/.venv/bin/python -m ruff check tests bench
+cd hsync-rendezvous && HSYNC_BB_RENDEZVOUS=1 python/.venv/bin/python -m pytest -q tests/
+cd hsync-rendezvous && HSYNC_BB_RENDEZVOUS=1 HSYNC_RENDEZVOUS_BIN=/path/to/c/binary \
     python/.venv/bin/python -m pytest -q tests/
 ```
 
 #### Commands — C (`c/`, once the sources exist)
 
 ```
-cd hsync-bootnode/c && clang-format --dry-run --Werror src/*.c include/*.h
-cd hsync-bootnode/c && clang-tidy src/*.c -- -std=c11 -Iinclude
-cd hsync-bootnode/c && make test          # -fsanitize=address,undefined build
+cd hsync-rendezvous/c && clang-format --dry-run --Werror src/*.c include/*.h
+cd hsync-rendezvous/c && clang-tidy src/*.c -- -std=c11 -Iinclude
+cd hsync-rendezvous/c && make test          # -fsanitize=address,undefined build
 ```
 
 Plus, when the change touches memory management or buffer arithmetic, the
@@ -330,8 +330,8 @@ Notes:
   finding to fix, never to mask with `|| true`.
 * The workspace-root `Makefile` fans out here too: `make lint` covers `python/`
   **and** the language-neutral `tests/` + `bench/`, `make test-python` runs
-  `python/tests`, and `make test-bb-bootnode` runs the black-box suite
-  (`HSYNC_BB_BOOTNODE=1`). The commands above remain the single-project form.
+  `python/tests`, and `make test-bb-rendezvous` runs the black-box suite
+  (`HSYNC_BB_RENDEZVOUS=1`). The commands above remain the single-project form.
 * Never run `ruff check`/`ruff format` from the workspace root, and never chain
   several of these commands with `;` on one line.
 
@@ -341,7 +341,7 @@ Every bug fix must include a regression test that fails against the faulty
 behavior and passes after the fix. New behavior must cover its success path and
 the relevant failure/boundary cases.
 
-* **Protocol changes**: update `protocol-spec/boot-1.md`, `fixtures/` and every
+* **Protocol changes**: update `protocol-spec/rdv-1.md`, `fixtures/` and every
   implementation atomically, and keep a **drift test** that validates each
   implementation's frame models against the committed fixtures. The same fixtures
   must be consumed by the C suite: mirror the Python drift test, never
@@ -355,16 +355,16 @@ the relevant failure/boundary cases.
 **Black-box tests (`test_bb_*`)** must verify the public contract, never the implementation. Every new `test_bb_*` test must be able to answer **YES** to all of these questions:
 
 * Does the test use only public CLI commands, documented environment variables,
-  or `boot/1` wire frames?
+  or `rdv/1` wire frames?
 * If the internal implementation were completely rewritten — including in another
   language — while keeping the same contract, would the test still pass?
 * Does the test verify a behavior that the end user or a remote client can
   actually observe?
 
 Black-box tests must go through the shared harness in `tests/harness.py` (frame
-builders, binary resolution via `HSYNC_BOOTNODE_BIN`, environment scrubbing) —
+builders, binary resolution via `HSYNC_RENDEZVOUS_BIN`, environment scrubbing) —
 never a hand-rolled process spawn with an unscrubbed environment. Readiness is
-awaited through the `HSYNC_BOOTNODE_READY_FILE` PID file, never with sleeps.
+awaited through the `HSYNC_RENDEZVOUS_READY_FILE` PID file, never with sleeps.
 Randomized inputs must log their seed (`[seed] <n>`) so failures are
 reproducible.
 
@@ -399,7 +399,7 @@ replace self-verification or tests.
 ## 🐍 Python Standards & Code Reuse (`python/**/*.py`, `tests/`, `bench/`)
 
 ### 1. Strict DRY & Duplication Prevention
-* **Pre-implementation Check**: Before writing any new function, component, or logic, you **MUST** search the relevant module and shared utility/model locations (`python/src/hsync_bootnode/`, `tests/harness.py`, `fixtures/`) for an existing implementation. Expand to a repository-wide search only when the wiki and local search are insufficient.
+* **Pre-implementation Check**: Before writing any new function, component, or logic, you **MUST** search the relevant module and shared utility/model locations (`python/src/hsync_rendezvous/`, `tests/harness.py`, `fixtures/`) for an existing implementation. Expand to a repository-wide search only when the wiki and local search are insufficient.
 * **No Copy-Paste-Modify**: Copying, pasting, and slightly modifying existing code snippets for a new use case is **STRICTLY PROHIBITED** — including duplicating a frame builder that already lives in `tests/harness.py`.
 * **Refactoring over Duplication**: If *similar* (but not identical) logic already exists, **DO NOT** create a duplicate. Instead, refactor the existing code to make it more generic, parameterized, and reusable. Briefly explain your refactoring logic when doing so.
 * **Rule of Three**: If you identify or need the same logic/code block for a second time, treat it as a warning. If requested for a third time, you **MUST** extract it into a standalone utility function, helper, or common base class.
@@ -407,7 +407,7 @@ replace self-verification or tests.
 * **Semantic Reuse over Superficial Similarity**: Extract shared logic only when behavior, invariants, and reasons to change are the same. Prefer small local duplication over an incorrect or unstable abstraction.
 
 ### 2. Typing & Data Models
-* **Centralized Models**: Strictly use type hints. For data structures, **ALWAYS** reuse the existing pydantic frame models in `python/src/hsync_bootnode/protocol.py` (or the `hsync-common` models when the contract lives there).
+* **Centralized Models**: Strictly use type hints. For data structures, **ALWAYS** reuse the existing pydantic frame models in `python/src/hsync_rendezvous/protocol.py` (or the `hsync-common` models when the contract lives there).
 * **No Manual Parsing**: **DO NOT** perform manual parsing or complex dictionary navigation (e.g., `dict.get()`) if a pydantic class already exists to validate and instantiate that specific frame.
 * **SSOT discipline**: shared contracts come from `hsync-common`, not from a local re-definition. The CID pattern and the bucket-name rule are imported from `hsync-common`; any future local mirror is temporary and must be replaced by the `hsync-common` import with a drift test as soon as the dependency exposes it.
 
@@ -443,7 +443,7 @@ never gets its own dialect, its own spec or its own fixtures.
   do not add lenient re-interpretation, aliases or compatibility fallbacks to the
   frame decoding.
 * **Fuzzing the untrusted input**: any component that processes raw network data
-  or untrusted input — in this repository the `boot/1` NDJSON frame decoder and
+  or untrusted input — in this repository the `rdv/1` NDJSON frame decoder and
   its length/UTF-8/field validation — **must** ship libFuzzer targets
   (`clang -fsanitize=fuzzer,address`), seeded from the committed `fixtures/`.
 * **Concurrency and state**: the routing table is in-memory state shared across
@@ -457,7 +457,7 @@ never gets its own dialect, its own spec or its own fixtures.
   what the language-neutral `tests/` suite verifies.
 
 ### 2. Types and models
-* **Typed frames**: represent every `boot/1` frame with a `struct` per frame, one
+* **Typed frames**: represent every `rdv/1` frame with a `struct` per frame, one
   shared `enum` for the frame kind, and the project's JSON library — never
   hand-rolled string concatenation or manual byte slicing where a typed model
   applies. An unknown or targeted field rejects the frame (rigid schema), never a
@@ -482,11 +482,11 @@ never gets its own dialect, its own spec or its own fixtures.
   has exactly one declaration in a header.
 
 ### 4. Build and layout
-* The sources live under `hsync-bootnode/c/` and must not fork
-  `protocol-spec/boot-1.md` or `fixtures/`.
+* The sources live under `hsync-rendezvous/c/` and must not fork
+  `protocol-spec/rdv-1.md` or `fixtures/`.
 * The C CLI exposes the same commands, flags, environment variables, exit codes
   and `--version` shape as the Python implementation, so the language-neutral
-  suite passes unchanged against `HSYNC_BOOTNODE_BIN=<c binary>`.
+  suite passes unchanged against `HSYNC_RENDEZVOUS_BIN=<c binary>`.
 * Do not add a dependency, change the language standard or bump pinned versions
   unless the task explicitly requires it: this is a no-log daemon, keep the
   dependency surface minimal (C11 plus the QUIC/JSON libraries the port chooses).

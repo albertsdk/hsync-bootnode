@@ -1,14 +1,14 @@
-# HSYNC Bootnode — Welcome
+# HSYNC Rendezvous — Welcome
 
-`hsync-bootnode` is the Internet discovery node of the HSYNC sync network: it
+`hsync-rendezvous` is the Internet rendezvous node of the HSYNC sync network: it
 tells P2P clients which peers are currently online, without storing anything.
-It runs a no-log, zero-knowledge bootstrap service speaking the `boot/1` protocol
+It runs a no-log, zero-knowledge rendezvous service speaking the `rdv/1` protocol
 over QUIC (UDP port 443): the routing table lives only in RAM, and the node's
 own TLS key is its only persistent artifact (an optional readiness PID file is
 written only when `--ready-file` is set).
 
-> **Status**: v1 complete and stable (Python). The `boot/1` protocol is versioned
-> and specified in `protocol-spec/boot-1.md`.
+> **Status**: v1 complete and stable (Python). The `rdv/1` protocol is versioned
+> and specified in `protocol-spec/rdv-1.md`.
 
 Run it as-is and it is a **public** rendezvous point. Run it with `--private` and
 it becomes the closed rendezvous point of a single community: every frame is
@@ -56,14 +56,14 @@ is the single source of truth for the comparison table.
 
 - **Public node** — the default; no configuration.
 - **Private node / protected buckets** — provision group keys; see
-  [usage.md → Private node](usage.md#private-node-authenticated-bootstrap) and
+  [usage.md → Private node](usage.md#private-node-authenticated-rendezvous) and
   [usage.md → Group keys](usage.md#group-keys---keys-fd----keys-file).
 
 ### 3. Point clients at it
 
 Pass the node to the client's `p2p` command (`hsync p2p <host>`; with the group
 key for a private node). The client side is covered by the
-[client p2p bootnode guide](https://github.com/albertsdk/hsync-client/blob/main/docs/p2p-bootnode.md).
+[client p2p rendezvous guide](https://github.com/albertsdk/hsync-client/blob/main/docs/p2p-rendezvous.md).
 
 ### 4. Operate it
 
@@ -78,4 +78,4 @@ backup and rotation, upgrades and the external reachability probe:
 | [usage.md](usage.md) | CLI reference, protected buckets and private nodes, keys provisioning, privacy/security model, signals, metrics and the OS service units |
 | [operations.md](operations.md) | Operating how-to: systemd lifecycle, watchdog, log bounds, aggregate metrics, identity backup/rotation, upgrades, reachability probe |
 | [faq.md](faq.md) | Operational FAQ: certificate pin/TOFU mismatches, stable identity, client-side recovery, signals |
-| `protocol-spec/boot-1.md` | Wire protocol specification |
+| `protocol-spec/rdv-1.md` | Wire protocol specification |

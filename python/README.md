@@ -1,12 +1,12 @@
-# HSYNC Bootnode — Python implementation (v1)
+# HSYNC Rendezvous — Python implementation (v1)
 
-In-memory, zero-knowledge P2P bootstrap node for HSYNC, sharing the single wire
-protocol `boot/1` (see [`../protocol-spec/boot-1.md`](../protocol-spec/boot-1.md)).
+In-memory, zero-knowledge P2P rendezvous node for HSYNC, sharing the single wire
+protocol `rdv/1` (see [`../protocol-spec/rdv-1.md`](../protocol-spec/rdv-1.md)).
 
 ## Status
 
 **v1 complete**: QUIC listener (aioquic) with mandatory RETRY +
-address-validation, in-memory TLS identity, rigid `boot/1` schemas, in-memory
+address-validation, in-memory TLS identity, rigid `rdv/1` schemas, in-memory
 routing table (TTL/prune/sample), sliding-window rate limits, protected
 buckets with constant-time token compare, STUN-echo, zero-touch UPnP and
 the no-log invariant enforced under a read-only filesystem test.
@@ -16,11 +16,11 @@ the no-log invariant enforced under a read-only filesystem test.
 ```
 python/
 ├── pyproject.toml
-├── src/hsync_bootnode/
+├── src/hsync_rendezvous/
 │   ├── __init__.py
-│   ├── __main__.py       # python -m hsync_bootnode
+│   ├── __main__.py       # python -m hsync_rendezvous
 │   ├── cli.py            # Typer CLI (run, --version, --keys-fd, ...)
-│   ├── protocol.py       # boot/1 frame models + validators (pydantic extra="forbid")
+│   ├── protocol.py       # rdv/1 frame models + validators (pydantic extra="forbid")
 │   ├── handler.py        # transport-agnostic core (routing + token auth + rate limits)
 │   ├── server.py         # QUIC transport (aioquic), in-memory TLS identity
 │   ├── routing.py        # in-memory routing table (TTL/prune/sample)
@@ -39,14 +39,14 @@ python/
 ## Run
 
 ```bash
-python -m hsync_bootnode run --listen-host 0.0.0.0 --listen-port 443
+python -m hsync_rendezvous run --listen-host 0.0.0.0 --listen-port 443
 ```
 
 ## Build (standalone binary)
 
 ```bash
 cd python
-./compile.sh            # → python/dist/linux-amd64/hsync-bootnode
+./compile.sh            # → python/dist/linux-amd64/hsync-rendezvous
 ```
 
 This per-language script builds binaries only (`native`, `onedir`). The

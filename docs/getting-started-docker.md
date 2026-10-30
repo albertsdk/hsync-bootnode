@@ -19,25 +19,25 @@ Download `compose.yaml` from the release, create a private `.env` beside it, and
 start it:
 
 ```dotenv
-HSYNC_BOOTNODE_IMAGE=ghcr.io/albertsdk/hsync-bootnode:v1.0.0
-HSYNC_BOOTNODE_IDENTITY=/var/lib/hsync-bootnode/identity.pem
+HSYNC_RENDEZVOUS_IMAGE=ghcr.io/albertsdk/hsync-rendezvous:v1.0.0
+HSYNC_RENDEZVOUS_IDENTITY=/var/lib/hsync-rendezvous/identity.pem
 # Private node / protected buckets (optional):
-#HSYNC_BOOTNODE_KEYS_PATH=/secure/path/group-keys
-#HSYNC_BOOTNODE_KEYS_FILE=/keys
-#HSYNC_BOOTNODE_PRIVATE=1
+#HSYNC_RENDEZVOUS_KEYS_PATH=/secure/path/group-keys
+#HSYNC_RENDEZVOUS_KEYS_FILE=/keys
+#HSYNC_RENDEZVOUS_PRIVATE=1
 ```
 
 The container binds the unprivileged UDP port `8443`; the host maps
-`BOOTNODE_HOST_UDP_PORT` (default `443`) to it. Verify the image signature before
+`RENDEZVOUS_HOST_UDP_PORT` (default `443`) to it. Verify the image signature before
 starting (the released image is signed keyless by the release workflow), then
 start it:
 
 ```bash
 chmod 600 .env compose.yaml
 cosign verify \
-  --certificate-identity-regexp '^https://github\.com/albertsdk/hsync-bootnode/\.github/workflows/release\.yml@refs/(heads|tags)/.*$' \
+  --certificate-identity-regexp '^https://github\.com/albertsdk/hsync-rendezvous/\.github/workflows/release\.yml@refs/(heads|tags)/.*$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  "${HSYNC_BOOTNODE_IMAGE:-ghcr.io/albertsdk/hsync-bootnode:v1.0.0}"
+  "${HSYNC_RENDEZVOUS_IMAGE:-ghcr.io/albertsdk/hsync-rendezvous:v1.0.0}"
 docker compose config --quiet
 docker compose pull
 docker compose up -d
@@ -52,13 +52,13 @@ A temporary `docker run` is useful only for a short smoke test:
 
 ```bash
 mkdir -p hsync-data
-docker run --rm -d --name hsync-bootnode-test \
+docker run --rm -d --name hsync-rendezvous-test \
   -p 443:8443/udp \
   --user "$(id -u):$(id -g)" \
-  -v "$(pwd)/hsync-data:/var/lib/hsync-bootnode" \
-  ghcr.io/albertsdk/hsync-bootnode:v1.0.0 run --listen-port 8443
-docker logs hsync-bootnode-test
-docker stop hsync-bootnode-test
+  -v "$(pwd)/hsync-data:/var/lib/hsync-rendezvous" \
+  ghcr.io/albertsdk/hsync-rendezvous:v1.0.0 run --listen-port 8443
+docker logs hsync-rendezvous-test
+docker stop hsync-rendezvous-test
 ```
 
 ### Serve a second UDP port (optional)
@@ -84,9 +84,9 @@ To build from source, follow the build steps in
 
 `./docker.sh` also supports `stop`, `restart`, `status`, `logs -f`, `shell` and
 `clean`; it persists the identity under `./hsync-data`. Environment variables
-select the public port (`BOOTNODE_HOST_UDP_PORT`), private mode
-(`HSYNC_BOOTNODE_PRIVATE=1`) and the group keys
-(`HSYNC_BOOTNODE_KEYS_PATH=/path/to/group-keys`). Run `./docker.sh --help`.
+select the public port (`RENDEZVOUS_HOST_UDP_PORT`), private mode
+(`HSYNC_RENDEZVOUS_PRIVATE=1`) and the group keys
+(`HSYNC_RENDEZVOUS_KEYS_PATH=/path/to/group-keys`). Run `./docker.sh --help`.
 
 ## Verify the node is running
 

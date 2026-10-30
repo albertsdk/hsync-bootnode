@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.6
 #
-# HSYNC Bootnode — Linux builder image (amd64 / arm64 / armhf)
+# HSYNC Rendezvous — Linux builder image (amd64 / arm64 / armhf)
 #
 # Single-stage builder based on the official ``python:3.14.9-bookworm`` multi-arch
 # image (Debian 12, glibc 2.36, CPython 3.14.9 built ``--enable-shared``), plus

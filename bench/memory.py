@@ -12,15 +12,15 @@ Two sections:
   alive across the ``tracemalloc`` snapshot, so the reported number is the
   *retained* bytes per item — the low-variance, allocator-independent figure for
   the data structures themselves.
-* **B — node RSS (opt-in)**: spawns the bootnode binary
-  (``HSYNC_BOOTNODE_BIN``, default the Python build), pipeline-registers
+* **B — node RSS (opt-in)**: spawns the rendezvous binary
+  (``HSYNC_RENDEZVOUS_BIN``, default the Python build), pipeline-registers
   ``--peers`` peers with ``--endpoints`` endpoints each, and reports the process
   RSS delta per record read from ``/proc/<pid>/status``. It measures the whole
   process (interpreter, allocator, per-record overhead), so it is the
   end-to-end counterpart of A and the metric an operator cares about.
 
 Usage:
-    cd hsync-bootnode && python/.venv/bin/python bench/memory.py \
+    cd hsync-rendezvous && python/.venv/bin/python bench/memory.py \
         [--records 20000] [--limiter-keys 100000] \
         [--node --peers 20000 --endpoints 3] [--json-out FILE]
 """
@@ -43,17 +43,17 @@ sys.path.insert(0, str(_REPO_ROOT / "tests"))
 
 from common import add_json_out, make_cid, make_cids, proc_rss_mb  # noqa: E402
 from harness import (  # noqa: E402
-    BootClient,
+    RdvClient,
     register_frame,
-    start_bootnode,
+    start_rendezvous,
     terminate,
 )
-from hsync_bootnode.handler import BootHandler  # noqa: E402
-from hsync_bootnode.protocol import BootQuery  # noqa: E402
-from hsync_bootnode.routing import PeerRecord, RoutingTable  # noqa: E402
 from hsync_common.ratelimit import TokenBucketLimiter  # noqa: E402
+from hsync_rendezvous.handler import RendezvousHandler  # noqa: E402
+from hsync_rendezvous.protocol import RdvQuery  # noqa: E402
+from hsync_rendezvous.routing import PeerRecord, RoutingTable  # noqa: E402
 
-_QUERY = BootQuery(protocol_version="boot/1", type="query", bucket="shared", group="g")
+_QUERY = RdvQuery(protocol_version="rdv/1", type="query", bucket="shared", group="g")
 
 
 def _retained(build: Callable[[], object]) -> tuple[int, object]:
@@ -99,7 +99,7 @@ def _measure_records(records: int, endpoints: int, *, wire: bool) -> float:
             if wire:
                 # Steady state: every record has served a query at least once,
                 # so its pre-serialized fragment is cached on the record.
-                BootHandler._to_peer(record, _QUERY)
+                RendezvousHandler._to_peer(record, _QUERY)
         return table
 
     total, table = _retained(build)
@@ -130,15 +130,15 @@ async def _measure_node_rss(peers: int, endpoints: int, batch: int, group_size: 
     acked records are counted, and the per-record figure divides by that count.
     """
     cids = make_cids(peers, start=5_000_000)
-    with tempfile.TemporaryDirectory(prefix="bootnode-memory-") as tmp:
-        handle = start_bootnode(Path(tmp), ttl=3600, no_rate_limit=True)
+    with tempfile.TemporaryDirectory(prefix="rendezvous-memory-") as tmp:
+        handle = start_rendezvous(Path(tmp), ttl=3600, no_rate_limit=True)
         try:
             if handle.node_pid is None:  # pragma: no cover - start awaits readiness
-                raise RuntimeError("bootnode readiness PID was not reported")
+                raise RuntimeError("rendezvous readiness PID was not reported")
             rss_base = proc_rss_mb(handle.node_pid)
             acked = 0
             refused = 0
-            async with BootClient(handle.port) as client:
+            async with RdvClient(handle.port) as client:
                 for start in range(0, peers, batch):
                     frames = [
                         register_frame(

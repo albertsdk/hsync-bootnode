@@ -13,7 +13,13 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from hsync_bootnode.cli import (
+# Help rendering is pinned to a fixed width at import time: rich reads COLUMNS
+# when the help console is created, so a mid-process setenv would be too late,
+# and the substring assertions on HSYNC_* env names must not depend on the
+# terminal the suite happens to run in.
+os.environ["COLUMNS"] = "120"
+
+from hsync_rendezvous.cli import (
     _check_stats_target,
     _install_shutdown_handlers,
     _load_keys,
@@ -26,13 +32,13 @@ from hsync_bootnode.cli import (
     app,
     default_identity_path,
 )
-from hsync_bootnode.handler import BootConfigError
+from hsync_rendezvous.handler import RendezvousConfigError
 
 runner = CliRunner()
 
 # Keep the CLI tests hermetic: without this the default identity would be created
 # in the real XDG state dir. Tests that exercise persistence set their own path.
-_EPHEMERAL_ENV = {"HSYNC_BOOTNODE_EPHEMERAL": "1"}
+_EPHEMERAL_ENV = {"HSYNC_RENDEZVOUS_EPHEMERAL": "1"}
 
 # Rich highlights option names by splitting them into styled segments (e.g.
 # ``--private`` becomes ``-`` + ``-private`` with an ANSI reset between) whenever
@@ -55,9 +61,18 @@ def _run_help() -> str:
 
     Rich folds a long word (an ``HSYNC_*`` name) when the description column gets
     narrow, so a substring assertion must not depend on the terminal the suite
-    happens to run in.
+    happens to run in. ``CliRunner``'s ``env`` does not reach the in-process
+    rich console, so the width is set on ``os.environ`` for the call.
     """
-    result = runner.invoke(app, ["run", "--help"], env={"COLUMNS": "120"})
+    previous = os.environ.get("COLUMNS")
+    os.environ["COLUMNS"] = "120"
+    try:
+        result = runner.invoke(app, ["run", "--help"])
+    finally:
+        if previous is None:
+            os.environ.pop("COLUMNS", None)
+        else:
+            os.environ["COLUMNS"] = previous
     assert result.exit_code == 0
     return _plain(result.output)
 
@@ -65,8 +80,8 @@ def _run_help() -> str:
 def test_version_flag() -> None:
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
-    assert "boot/1" in result.output
-    assert "hsync-bootnode" in result.output
+    assert "rdv/1" in result.output
+    assert "hsync-rendezvous" in result.output
 
 
 def test_protected_bucket_without_key_fails_fast() -> None:
@@ -113,7 +128,7 @@ def test_load_keys_refuses_stdout_and_stderr() -> None:
     for bad in (1, 2):
         try:
             _load_keys(bad)
-        except BootConfigError:
+        except RendezvousConfigError:
             pass
         else:  # pragma: no cover - expected to raise
             raise AssertionError(f"fd {bad} must be refused as a keys source")
@@ -125,7 +140,7 @@ def test_load_keys_caps_the_fd_payload(tmp_path) -> None:
     A misrouted fd (a pipe held open, some random device) would otherwise stall
     startup or grow without bound: the cap fails fast instead.
     """
-    from hsync_bootnode.cli import KEYS_FD_MAX_BYTES
+    from hsync_rendezvous.cli import KEYS_FD_MAX_BYTES
 
     with tempfile.NamedTemporaryFile(dir=tmp_path, suffix=".keys", delete=False) as handle:
         handle.write(b"shared=9f2c4b6a8d0e1f3a5c7b9d1e3f5a7c9b\n" * 100_000)  # well past the cap
@@ -134,7 +149,7 @@ def test_load_keys_caps_the_fd_payload(tmp_path) -> None:
     try:
         try:
             _load_keys(fd)
-        except BootConfigError:
+        except RendezvousConfigError:
             pass
         else:  # pragma: no cover - expected to raise
             raise AssertionError(f"payload larger than {KEYS_FD_MAX_BYTES} bytes must fail fast")
@@ -150,10 +165,10 @@ def test_load_keys_times_out_on_a_stuck_open_fd(monkeypatch) -> None:
     The write end stays open and silent, so the read would block forever without
     the bounded wait; the configuration error is raised instead.
     """
-    monkeypatch.setattr("hsync_bootnode.cli.KEYS_FD_READ_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr("hsync_rendezvous.cli.KEYS_FD_READ_TIMEOUT_SECONDS", 0.05)
     read_fd, write_fd = os.pipe()
     try:
-        with pytest.raises(BootConfigError, match="not received within"):
+        with pytest.raises(RendezvousConfigError, match="not received within"):
             _load_keys(read_fd)
     finally:
         os.close(read_fd)
@@ -180,7 +195,7 @@ def test_load_keys_empty_file_means_open_mode(tmp_path) -> None:
 
 
 def test_load_keys_missing_file_fails_fast(tmp_path) -> None:
-    with pytest.raises(BootConfigError, match="cannot open group keys file"):
+    with pytest.raises(RendezvousConfigError, match="cannot open group keys file"):
         _load_keys(None, str(tmp_path / "missing"))
 
 
@@ -190,7 +205,7 @@ def test_load_keys_fd_and_file_are_mutually_exclusive(tmp_path) -> None:
     read_fd, write_fd = os.pipe()
     os.close(write_fd)
     try:
-        with pytest.raises(BootConfigError, match="mutually exclusive"):
+        with pytest.raises(RendezvousConfigError, match="mutually exclusive"):
             _load_keys(read_fd, str(path))
     finally:
         os.close(read_fd)
@@ -202,7 +217,7 @@ def test_load_keys_refuses_a_symlink(tmp_path) -> None:
     real.write_text("shared=9f2c4b6a8d0e1f3a5c7b9d1e3f5a7c9b\n", encoding="utf-8")
     link = tmp_path / "link"
     link.symlink_to(real)
-    with pytest.raises(BootConfigError, match="symlink"):
+    with pytest.raises(RendezvousConfigError, match="symlink"):
         _load_keys(None, str(link))
 
 
@@ -213,7 +228,7 @@ def test_load_keys_warns_on_loose_permissions(tmp_path, monkeypatch) -> None:
     path.chmod(0o644)
     events: list[tuple[str, dict]] = []
     monkeypatch.setattr(
-        "hsync_bootnode.cli.warn_event",
+        "hsync_rendezvous.cli.warn_event",
         lambda event, **fields: events.append((event, fields)),
     )
     assert set(_load_keys(None, str(path))) == {"shared"}
@@ -229,7 +244,7 @@ def test_load_keys_accepts_a_group_readable_file(tmp_path, monkeypatch) -> None:
     path.chmod(0o640)
     events: list[tuple[str, dict]] = []
     monkeypatch.setattr(
-        "hsync_bootnode.cli.warn_event",
+        "hsync_rendezvous.cli.warn_event",
         lambda event, **fields: events.append((event, fields)),
     )
     assert set(_load_keys(None, str(path))) == {"shared"}
@@ -237,11 +252,11 @@ def test_load_keys_accepts_a_group_readable_file(tmp_path, monkeypatch) -> None:
 
 
 def test_load_keys_file_caps_the_payload(tmp_path) -> None:
-    from hsync_bootnode.cli import KEYS_FD_MAX_BYTES
+    from hsync_rendezvous.cli import KEYS_FD_MAX_BYTES
 
     path = tmp_path / "group-keys"
     path.write_bytes(b"shared=9f2c4b6a8d0e1f3a5c7b9d1e3f5a7c9b\n" * 100_000)
-    with pytest.raises(BootConfigError, match="exceeded"):
+    with pytest.raises(RendezvousConfigError, match="exceeded"):
         _load_keys(None, str(path))
     assert KEYS_FD_MAX_BYTES > 0
 
@@ -254,16 +269,16 @@ def test_load_keys_rejects_duplicate_buckets() -> None:
     )
     os.close(write_fd)
     try:
-        with pytest.raises(BootConfigError, match="duplicate group key for bucket 'shared'"):
+        with pytest.raises(RendezvousConfigError, match="duplicate group key for bucket 'shared'"):
             _load_keys(read_fd)
     finally:
         os.close(read_fd)
 
 
 def test_near_expiry_reason_names_the_configured_identity() -> None:
-    reason = _near_expiry_reason(7, "/var/lib/hsync-bootnode/identity.pem")
+    reason = _near_expiry_reason(7, "/var/lib/hsync-rendezvous/identity.pem")
     assert "--identity" in reason
-    assert "/var/lib/hsync-bootnode/identity.pem" in reason
+    assert "/var/lib/hsync-rendezvous/identity.pem" in reason
 
 
 def test_keys_file_and_fd_are_rejected_by_the_cli(tmp_path) -> None:
@@ -306,7 +321,7 @@ def test_keys_options_are_documented_in_help() -> None:
     output = _run_help()
     assert "--keys-fd" in output
     assert "--keys-file" in output
-    assert "HSYNC_BOOTNODE_KEYS_FILE" in output
+    assert "HSYNC_RENDEZVOUS_KEYS_FILE" in output
 
 
 def test_ttl_out_of_range_is_rejected() -> None:
@@ -323,7 +338,7 @@ def test_private_without_key_fails_fast() -> None:
 
 def test_private_envvar_is_equivalent_to_the_flag() -> None:
     """The service units use the envvar form; it must reach the same fail-fast."""
-    result = runner.invoke(app, ["run"], env={"HSYNC_BOOTNODE_PRIVATE": "1"})
+    result = runner.invoke(app, ["run"], env={"HSYNC_RENDEZVOUS_PRIVATE": "1"})
     assert result.exit_code == 2
     assert "private node without any group key" in result.output
 
@@ -333,7 +348,7 @@ def test_private_option_is_documented_in_help() -> None:
     assert result.exit_code == 0
     output = _plain(result.output)
     assert "--private" in output
-    assert "HSYNC_BOOTNODE_PRIVATE" in output
+    assert "HSYNC_RENDEZVOUS_PRIVATE" in output
 
 
 def test_ready_file_helpers_write_pid_and_remove(tmp_path) -> None:
@@ -357,9 +372,9 @@ def _patch_run_no_side_effects(monkeypatch, start_servers) -> None:
     bind; stubbing them keeps the test process free of a global event-loop policy
     swap and shutdown-signal handlers.
     """
-    monkeypatch.setattr("hsync_bootnode.cli.start_servers", start_servers)
-    monkeypatch.setattr("hsync_bootnode.cli._install_uvloop", lambda: None)
-    monkeypatch.setattr("hsync_bootnode.cli._install_shutdown_handlers", lambda: None)
+    monkeypatch.setattr("hsync_rendezvous.cli.start_servers", start_servers)
+    monkeypatch.setattr("hsync_rendezvous.cli._install_uvloop", lambda: None)
+    monkeypatch.setattr("hsync_rendezvous.cli._install_shutdown_handlers", lambda: None)
 
 
 def test_bind_permission_denied_is_actionable(monkeypatch) -> None:
@@ -408,18 +423,18 @@ def test_bind_bad_host_is_actionable(monkeypatch) -> None:
 
 
 def test_run_port_default_uses_the_shared_ssot() -> None:
-    """The effective default port is the shared ``BOOT_DEFAULT_PORT`` (spec §Transport)."""
-    from hsync_common.constants import BOOT_DEFAULT_PORT
+    """The effective default port is the shared ``RDV_DEFAULT_PORT`` (spec §Transport)."""
+    from hsync_common.constants import RDV_DEFAULT_PORT
 
-    from hsync_bootnode.cli import _resolve_listeners
+    from hsync_rendezvous.cli import _resolve_listeners
 
-    assert _resolve_listeners(None, None, None) == ("0.0.0.0", [BOOT_DEFAULT_PORT])
-    assert _resolve_listeners("0.0.0.0", None, None) == ("0.0.0.0", [BOOT_DEFAULT_PORT])
+    assert _resolve_listeners(None, None, None) == ("0.0.0.0", [RDV_DEFAULT_PORT])
+    assert _resolve_listeners("0.0.0.0", None, None) == ("0.0.0.0", [RDV_DEFAULT_PORT])
 
 
 def test_host_port_shorthand_is_accepted() -> None:
     """``--listen-host HOST:PORT`` resolves host and port without a separate ``--listen-port``."""
-    from hsync_bootnode.cli import _resolve_listeners
+    from hsync_rendezvous.cli import _resolve_listeners
 
     assert _resolve_listeners("0.0.0.0:8443", None, None) == ("0.0.0.0", [8443])
     assert _resolve_listeners("[::1]:8443", None, None) == ("::1", [8443])
@@ -430,7 +445,7 @@ def test_host_port_and_port_flag_are_mutually_exclusive() -> None:
     import pytest
     import typer
 
-    from hsync_bootnode.cli import _resolve_listeners
+    from hsync_rendezvous.cli import _resolve_listeners
 
     with pytest.raises(typer.BadParameter):
         _resolve_listeners("0.0.0.0:8443", 8443, None)
@@ -438,7 +453,7 @@ def test_host_port_and_port_flag_are_mutually_exclusive() -> None:
 
 def test_port_flag_alone_keeps_the_default_host() -> None:
     """``--listen-port`` without ``--listen-host`` binds all interfaces."""
-    from hsync_bootnode.cli import _resolve_listeners
+    from hsync_rendezvous.cli import _resolve_listeners
 
     assert _resolve_listeners(None, 8443, None) == ("0.0.0.0", [8443])
 
@@ -448,7 +463,7 @@ def test_ports_flag_resolves_the_ordered_set() -> None:
     import pytest
     import typer
 
-    from hsync_bootnode.cli import _resolve_listeners
+    from hsync_rendezvous.cli import _resolve_listeners
 
     assert _resolve_listeners(None, None, "443,53") == ("0.0.0.0", [443, 53])
     # Whitespace around entries is tolerated; order is preserved.
@@ -544,22 +559,22 @@ def test_debug_run_announces_the_peer_aware_stream(monkeypatch, tmp_path) -> Non
 
 def test_default_identity_path_uses_xdg_state(monkeypatch, tmp_path) -> None:
     """With no override the path is an XDG *state* path (stable across restarts)."""
-    monkeypatch.delenv("HSYNC_BOOTNODE_IDENTITY", raising=False)
+    monkeypatch.delenv("HSYNC_RENDEZVOUS_IDENTITY", raising=False)
     monkeypatch.delenv("HSYNC_STATE_DIR", raising=False)
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
-    assert default_identity_path() == tmp_path / "hsync" / "bootnode" / "identity.pem"
+    assert default_identity_path() == tmp_path / "hsync" / "rendezvous" / "identity.pem"
 
 
 def test_default_identity_path_follows_the_state_dir(monkeypatch, tmp_path) -> None:
     """HSYNC_STATE_DIR relocates the identity together with the rest of the state."""
-    monkeypatch.delenv("HSYNC_BOOTNODE_IDENTITY", raising=False)
+    monkeypatch.delenv("HSYNC_RENDEZVOUS_IDENTITY", raising=False)
     monkeypatch.setenv("HSYNC_STATE_DIR", str(tmp_path / "state"))
-    assert default_identity_path() == tmp_path / "state" / "bootnode" / "identity.pem"
+    assert default_identity_path() == tmp_path / "state" / "rendezvous" / "identity.pem"
 
 
 def test_default_identity_path_honours_the_env_override(monkeypatch, tmp_path) -> None:
     target = tmp_path / "custom" / "id.pem"
-    monkeypatch.setenv("HSYNC_BOOTNODE_IDENTITY", str(target))
+    monkeypatch.setenv("HSYNC_RENDEZVOUS_IDENTITY", str(target))
     assert default_identity_path() == target
 
 
@@ -570,15 +585,15 @@ def test_resolve_identity_returns_none_for_ephemeral() -> None:
 def test_resolve_identity_rejects_identity_and_ephemeral() -> None:
     import pytest
 
-    from hsync_bootnode.handler import BootConfigError
+    from hsync_rendezvous.handler import RendezvousConfigError
 
-    with pytest.raises(BootConfigError, match="mutually exclusive"):
+    with pytest.raises(RendezvousConfigError, match="mutually exclusive"):
         _resolve_identity("id.pem", True, host="127.0.0.1", public_hosts=[])
 
 
 def test_resolve_identity_defaults_to_the_state_path(monkeypatch, tmp_path) -> None:
     state = tmp_path / "state" / "identity.pem"
-    monkeypatch.setenv("HSYNC_BOOTNODE_IDENTITY", str(state))
+    monkeypatch.setenv("HSYNC_RENDEZVOUS_IDENTITY", str(state))
     node = _resolve_identity(None, False, host="127.0.0.1", public_hosts=[])
     assert node is not None
     assert state.is_file()
@@ -588,22 +603,22 @@ def test_identity_options_are_documented_in_help() -> None:
     output = _run_help()
     assert "--identity" in output
     assert "--ephemeral" in output
-    assert "HSYNC_BOOTNODE_EPHEMERAL" in output
+    assert "HSYNC_RENDEZVOUS_EPHEMERAL" in output
 
 
 _PACKAGED_UNIT = Path(__file__).resolve().parents[2] / (
-    "packaging/deb/usr/lib/systemd/system/hsync-bootnode.service"
+    "packaging/deb/usr/lib/systemd/system/hsync-rendezvous.service"
 )
-_SOURCE_UNIT = Path(__file__).resolve().parents[2] / ("packaging/systemd/hsync-bootnode.service")
+_SOURCE_UNIT = Path(__file__).resolve().parents[2] / ("packaging/systemd/hsync-rendezvous.service")
 # A DynamicUser has no resolvable home directory, so the packaged unit must
 # never rely on the default XDG state path (Path.home() raises RuntimeError).
-_IDENTITY_FLAG = "--identity /var/lib/hsync-bootnode/identity.pem"
+_IDENTITY_FLAG = "--identity /var/lib/hsync-rendezvous/identity.pem"
 
 
 def test_packaged_unit_pins_the_identity_path() -> None:
     """The deb unit passes an explicit identity path in every ExecStart branch."""
     text = _PACKAGED_UNIT.read_text(encoding="utf-8")
-    assert "StateDirectory=hsync-bootnode" in text
+    assert "StateDirectory=hsync-rendezvous" in text
     for line in text.splitlines():
         if line.startswith("ExecStart="):
             assert _IDENTITY_FLAG in line, f"missing identity path: {line}"
@@ -613,8 +628,8 @@ def test_packaged_unit_matches_the_source_unit() -> None:
     """The deb and source units must not diverge on identity handling again."""
     packaged = _PACKAGED_UNIT.read_text(encoding="utf-8")
     source = _SOURCE_UNIT.read_text(encoding="utf-8")
-    assert ("StateDirectory=hsync-bootnode" in source) == (
-        "StateDirectory=hsync-bootnode" in packaged
+    assert ("StateDirectory=hsync-rendezvous" in source) == (
+        "StateDirectory=hsync-rendezvous" in packaged
     )
     assert (_IDENTITY_FLAG in source) == (_IDENTITY_FLAG in packaged)
 
@@ -635,7 +650,7 @@ _REQUIRED_UNIT_DIRECTIVES = (
     "MemoryMax=512M",
     "TasksMax=256",
     "LimitNOFILE=8192",
-    "LoadCredential=metrics-token:/etc/hsync-bootnode/metrics-token",
+    "LoadCredential=metrics-token:/etc/hsync-rendezvous/metrics-token",
 )
 
 
@@ -653,7 +668,7 @@ def test_unit_never_enables_the_peer_aware_debug_log(unit: Path) -> None:
     for line in unit.read_text(encoding="utf-8").splitlines():
         if line.startswith("ExecStart=") or line.startswith("Environment="):
             assert "--debug" not in line, line
-            assert "HSYNC_BOOTNODE_DEBUG" not in line, line
+            assert "HSYNC_RENDEZVOUS_DEBUG" not in line, line
 
 
 def test_sighup_is_ignored_and_stop_signals_are_handled() -> None:
@@ -675,7 +690,9 @@ def test_sighup_is_ignored_and_stop_signals_are_handled() -> None:
 def test_watchdog_loop_feeds_the_service_manager(monkeypatch) -> None:
     """The watchdog task pings at the armed interval (half of WatchdogSec=)."""
     pings: list[str] = []
-    monkeypatch.setattr("hsync_bootnode.cli.notify_watchdog", lambda: pings.append("ping") or True)
+    monkeypatch.setattr(
+        "hsync_rendezvous.cli.notify_watchdog", lambda: pings.append("ping") or True
+    )
 
     async def _run() -> None:
         task = asyncio.create_task(_watchdog_loop(0.01))
@@ -699,7 +716,7 @@ def test_group_key_below_the_strength_floor_fails_fast() -> None:
     os.write(write_fd, b"shared=tooshort\n")
     os.close(write_fd)
     try:
-        with pytest.raises(BootConfigError, match="at least 32 characters"):
+        with pytest.raises(RendezvousConfigError, match="at least 32 characters"):
             _load_keys(read_fd)
     finally:
         os.close(read_fd)
@@ -708,14 +725,14 @@ def test_group_key_below_the_strength_floor_fails_fast() -> None:
 def test_group_key_line_with_a_non_canonical_bucket_fails_fast(tmp_path) -> None:
     path = tmp_path / "group-keys"
     path.write_text(f"not a bucket={_KEY_SHARED}\n", encoding="utf-8")
-    with pytest.raises(BootConfigError, match="invalid bucket name"):
+    with pytest.raises(RendezvousConfigError, match="invalid bucket name"):
         _load_keys(None, str(path))
 
 
 def test_group_key_line_must_be_a_key_value_pair(tmp_path) -> None:
     path = tmp_path / "group-keys"
     path.write_text("shared\n", encoding="utf-8")
-    with pytest.raises(BootConfigError, match="malformed group key line"):
+    with pytest.raises(RendezvousConfigError, match="malformed group key line"):
         _load_keys(None, str(path))
 
 
@@ -725,7 +742,7 @@ def test_keys_payload_must_be_utf8() -> None:
     os.write(write_fd, b"shared=\xff\xfe\n")
     os.close(write_fd)
     try:
-        with pytest.raises(BootConfigError, match="not valid UTF-8"):
+        with pytest.raises(RendezvousConfigError, match="not valid UTF-8"):
             _load_keys(read_fd)
     finally:
         os.close(read_fd)
@@ -733,7 +750,7 @@ def test_keys_payload_must_be_utf8() -> None:
 
 def test_the_environment_cannot_enable_the_no_rate_limit_seam(monkeypatch) -> None:
     """--no-rate-limit is CLI-only: a stale env var cannot disable the limits."""
-    monkeypatch.setenv("HSYNC_BOOTNODE_NO_RATE_LIMIT", "1")
+    monkeypatch.setenv("HSYNC_RENDEZVOUS_NO_RATE_LIMIT", "1")
     # TEST-NET-1 is never a local address, so the bind fails after the banner.
     result = runner.invoke(app, ["run", "--listen-host", "192.0.2.1", "--listen-port", "9"])
     assert "rate limit: enabled" in _plain(_combined(result))
@@ -750,14 +767,14 @@ def test_the_metrics_endpoint_is_disabled_without_a_port() -> None:
 
 
 def test_a_metrics_token_without_a_port_is_a_configuration_error() -> None:
-    with pytest.raises(BootConfigError, match="require --metrics-port"):
+    with pytest.raises(RendezvousConfigError, match="require --metrics-port"):
         _resolve_metrics(host="127.0.0.1", port=None, token_fd=5, token_file=None)
 
 
 @pytest.mark.parametrize("host", ["0.0.0.0", "10.0.0.5", "::", "example.com", "192.0.2.1"])
 def test_the_metrics_endpoint_only_listens_on_loopback(host: str, tmp_path: Path) -> None:
     token_file = _metrics_token_file(tmp_path)
-    with pytest.raises(BootConfigError, match="not a loopback address"):
+    with pytest.raises(RendezvousConfigError, match="not a loopback address"):
         _resolve_metrics(host=host, port=9101, token_fd=None, token_file=str(token_file))
 
 
@@ -772,14 +789,14 @@ def test_every_loopback_form_is_accepted(host: str, tmp_path: Path) -> None:
 
 def test_a_metrics_token_below_the_strength_floor_is_refused(tmp_path: Path) -> None:
     token_file = _metrics_token_file(tmp_path, token="tooshort")
-    with pytest.raises(BootConfigError, match="at least 32 characters"):
+    with pytest.raises(RendezvousConfigError, match="at least 32 characters"):
         _resolve_metrics(host="127.0.0.1", port=9101, token_fd=None, token_file=str(token_file))
 
 
 def test_a_metrics_token_must_be_exactly_one_line(tmp_path: Path) -> None:
     token_file = tmp_path / "two-lines"
     token_file.write_text("a" * 64 + "\n" + "b" * 64 + "\n", encoding="utf-8")
-    with pytest.raises(BootConfigError, match="exactly one line"):
+    with pytest.raises(RendezvousConfigError, match="exactly one line"):
         _resolve_metrics(host="127.0.0.1", port=9101, token_fd=None, token_file=str(token_file))
 
 
@@ -800,7 +817,7 @@ def test_the_two_metrics_token_sources_are_mutually_exclusive(tmp_path: Path) ->
     read_fd, write_fd = os.pipe()
     os.close(write_fd)
     try:
-        with pytest.raises(BootConfigError, match="mutually exclusive"):
+        with pytest.raises(RendezvousConfigError, match="mutually exclusive"):
             _resolve_metrics(
                 host="127.0.0.1", port=9101, token_fd=read_fd, token_file=str(token_file)
             )
@@ -809,12 +826,12 @@ def test_the_two_metrics_token_sources_are_mutually_exclusive(tmp_path: Path) ->
 
 
 def test_a_metrics_endpoint_without_a_token_is_refused() -> None:
-    with pytest.raises(BootConfigError, match="requires a bearer token"):
+    with pytest.raises(RendezvousConfigError, match="requires a bearer token"):
         _resolve_metrics(host="127.0.0.1", port=9101, token_fd=None, token_file=None)
 
 
 def test_the_stats_file_directory_must_exist(tmp_path: Path) -> None:
-    with pytest.raises(BootConfigError, match="does not exist"):
+    with pytest.raises(RendezvousConfigError, match="does not exist"):
         _check_stats_target(str(tmp_path / "missing" / "stats.prom"))
     _check_stats_target(str(tmp_path / "stats.prom"))
 

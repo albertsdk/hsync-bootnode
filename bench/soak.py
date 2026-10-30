@@ -1,6 +1,6 @@
 """L3 — soak script (MANUAL, not a test): sustained mixed traffic.
 
-Spawns the bootnode binary (language-neutral) and drives it with
+Spawns the rendezvous binary (language-neutral) and drives it with
 register/refresh/query/leave traffic for --duration seconds, sampling the
 *node* process RSS and CPU (/proc) and its convergence (a final query must
 return zero peers after the load stops and the TTL drains).
@@ -11,7 +11,7 @@ disabled for the soak (it measures sustained throughput/convergence; the BB
 suite covers rate-limit behaviour separately).
 
 Usage:
-    cd hsync-bootnode && python/.venv/bin/python bench/soak.py \
+    cd hsync-rendezvous && python/.venv/bin/python bench/soak.py \
         [--duration 600] [--peers 500] [--qps 20] [--ttl 60]
 """
 
@@ -41,7 +41,7 @@ from harness import (  # noqa: E402
     query_frame,
     refresh_frame,
     register_frame,
-    start_bootnode,
+    start_rendezvous,
     terminate,
 )
 
@@ -144,11 +144,11 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    with tempfile.TemporaryDirectory(prefix="bootnode-soak-") as tmp:
-        handle = start_bootnode(Path(tmp), ttl=args.ttl, no_rate_limit=True)
+    with tempfile.TemporaryDirectory(prefix="rendezvous-soak-") as tmp:
+        handle = start_rendezvous(Path(tmp), ttl=args.ttl, no_rate_limit=True)
         node_pid = handle.node_pid
-        if node_pid is None:  # pragma: no cover - start_bootnode always awaits readiness
-            raise RuntimeError("bootnode readiness PID was not reported")
+        if node_pid is None:  # pragma: no cover - start_rendezvous always awaits readiness
+            raise RuntimeError("rendezvous readiness PID was not reported")
         try:
             code = asyncio.run(_soak(args, handle.port, node_pid))
         finally:

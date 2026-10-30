@@ -1,6 +1,6 @@
-"""Deterministic, stdlib-only fuzz harness for the boot/1 decoder and the UPnP/SSDP validators.
+"""Deterministic, stdlib-only fuzz harness for the rdv/1 decoder and the UPnP/SSDP validators.
 
-Why this exists: the bootnode's frame decoder consumes attacker-controlled
+Why this exists: the rendezvous's frame decoder consumes attacker-controlled
 bytes from unauthenticated peers, and the SSDP/LOCATION validators consume
 attacker-controlled packets. The unit and black-box suites cover hand-picked
 adversarial inputs; this harness explores *generated* ones (grammar-aware
@@ -8,7 +8,7 @@ templates mutated at the value level, byte-level mutations, depth bombs and
 raw garbage) and checks security invariants instead of crash-only hunting.
 
 Scope (deliberate): pure call paths only.
-    - ``BootHandler.handle()``: frame parse + authorization + routing; the
+    - ``RendezvousHandler.handle()``: frame parse + authorization + routing; the
       QUIC transport framing itself is bounded by construction (8 KiB cap,
       bounded pending buffer) and stays covered by the loopback tests.
     - ``upnp``: ``_parse_ssdp_response`` / ``is_private_http_location`` /
@@ -44,9 +44,9 @@ from typing import Any
 
 from pydantic import SecretStr
 
-import hsync_bootnode.upnp as upnp
-from hsync_bootnode.handler import BootHandler
-from hsync_bootnode.tokens import derive_bucket_token, is_valid_bucket_token, verify_bucket_token
+import hsync_rendezvous.upnp as upnp
+from hsync_rendezvous.handler import RendezvousHandler
+from hsync_rendezvous.tokens import derive_bucket_token, is_valid_bucket_token, verify_bucket_token
 
 __all__ = [
     "Finding",
@@ -111,7 +111,7 @@ def templates() -> dict[str, dict]:
     """In-spec frames used as the grammar-aware seed corpus."""
     return {
         "register": {
-            "protocol_version": "boot/1",
+            "protocol_version": "rdv/1",
             "type": "register",
             "cid": PROBE_CID,
             "bucket": "shared",
@@ -122,7 +122,7 @@ def templates() -> dict[str, dict]:
             "connected": 5,
         },
         "refresh": {
-            "protocol_version": "boot/1",
+            "protocol_version": "rdv/1",
             "type": "refresh",
             "cid": PROBE_CID,
             "bucket": "shared",
@@ -130,13 +130,13 @@ def templates() -> dict[str, dict]:
             "connected": 7,
         },
         "leave": {
-            "protocol_version": "boot/1",
+            "protocol_version": "rdv/1",
             "type": "leave",
             "cid": PROBE_CID,
             "bucket": "shared",
         },
         "query": {
-            "protocol_version": "boot/1",
+            "protocol_version": "rdv/1",
             "type": "query",
             "bucket": "shared",
             "group": "home",
@@ -189,10 +189,10 @@ def seed_corpus() -> list[bytes]:
     """Spec fixtures + rendered templates, as byte-mutation starting points."""
     corpus: list[bytes] = []
     for name in (
-        "bootnode-register.json",
-        "bootnode-query.json",
-        "bootnode-ack.json",
-        "bootnode-response.json",
+        "rendezvous-register.json",
+        "rendezvous-query.json",
+        "rendezvous-ack.json",
+        "rendezvous-response.json",
     ):
         path = Path(__file__).resolve().parents[2] / "fixtures" / name
         corpus.append(path.read_bytes())
@@ -342,10 +342,10 @@ def track_accepts(raw: bytes, out: Any) -> None:
         seen_buckets.add(bucket)
 
 
-def fresh_handler() -> BootHandler:
+def fresh_handler() -> RendezvousHandler:
     """Isolated handler per fuzz window (per-IP budgets reset, RAM-only state)."""
     reset_leak_trackers()
-    return BootHandler(
+    return RendezvousHandler(
         protected_buckets=("shared", "private"),
         group_keys={
             "shared": SecretStr(_KEY_SHARED.decode("utf-8")),
@@ -354,7 +354,7 @@ def fresh_handler() -> BootHandler:
     )
 
 
-def handle_one(handler: BootHandler, raw: bytes) -> bytes | None:
+def handle_one(handler: RendezvousHandler, raw: bytes) -> bytes | None:
     """Run one fuzzed frame through the handler under the fuzz invariants.
 
     The invariants (never raises; reply shaped; no cross-record/cross-bucket
@@ -539,7 +539,7 @@ def _fuzz_ssdp(rng: random.Random) -> None:
         _check(False, "valid LAN reply did not reach the fetch", reply)
 
 
-def _fuzz_handle_step(rng: random.Random, handler: BootHandler, corpus: list[bytes]) -> None:
+def _fuzz_handle_step(rng: random.Random, handler: RendezvousHandler, corpus: list[bytes]) -> None:
     for raw in generate_input(rng, corpus):
         handle_one(handler, raw)
 
@@ -553,7 +553,7 @@ def run_fuzz(
     seconds: float = 0.0,
     seed: int = 0,
     targets: tuple[str, ...] = _TARGETS,
-    handler: BootHandler | None = None,
+    handler: RendezvousHandler | None = None,
 ) -> dict[str, int]:
     """Run the fuzz targets; returns per-target iteration counts (raises a
     ``Finding`` on the first violated invariant — reproducible via ``seed``).

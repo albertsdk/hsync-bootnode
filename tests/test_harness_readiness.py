@@ -1,7 +1,7 @@
 """Readiness-contract tests for the black-box harness (packaging-neutral).
 
-A onefile-packaged binary (PyInstaller ``--onefile``) runs the bootnode in a
-child process, so the PID written to ``HSYNC_BOOTNODE_READY_FILE`` differs from
+A onefile-packaged binary (PyInstaller ``--onefile``) runs the rendezvous in a
+child process, so the PID written to ``HSYNC_RENDEZVOUS_READY_FILE`` differs from
 the launcher PID that ``subprocess.Popen`` reports. ``wait_ready`` must accept
 that: readiness is signalled by the *application*, not by the packaging launcher.
 These tests exercise the harness contract without spawning the real binary.

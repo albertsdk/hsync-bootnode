@@ -1,6 +1,6 @@
-"""No-log property tests: the boot/1 hot path never opens a file for writing.
+"""No-log property tests: the rdv/1 hot path never opens a file for writing.
 
-The bootnode is no-log by design: the register→query handler path (peer data),
+The rendezvous is no-log by design: the register→query handler path (peer data),
 the QUIC configuration and the in-memory (``--ephemeral``) identity must be able
 to run under a filesystem guard that makes any write-mode open explode. Reading
 is allowed (libraries, locale data), writing is not. The *only* permitted write
@@ -18,10 +18,10 @@ from typing import Any
 import pytest
 from pydantic import SecretStr
 
-from hsync_bootnode.handler import BootHandler
-from hsync_bootnode.server import build_quic_configuration, load_or_create_identity, make_identity
-from hsync_bootnode.stats import NodeStats
-from hsync_bootnode.tokens import derive_bucket_token
+from hsync_rendezvous.handler import RendezvousHandler
+from hsync_rendezvous.server import build_quic_configuration, load_or_create_identity, make_identity
+from hsync_rendezvous.stats import NodeStats
+from hsync_rendezvous.tokens import derive_bucket_token
 
 CID = "A1b2C3d4E5f6G7h8I9j0K"
 FP = "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
@@ -60,22 +60,22 @@ def read_only_fs(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _frame(**fields: object) -> str:
-    """Serialize a ``boot/1`` frame dict for the raw-bytes ``handle()`` contract.
+    """Serialize a ``rdv/1`` frame dict for the raw-bytes ``handle()`` contract.
 
     Only ``protocol_version`` is implicit: each frame type carries its own
     mandatory fields (``cid`` belongs to register/leave, not to query), and the
     rigid schema rejects anything else.
     """
-    return json.dumps({"protocol_version": "boot/1", **fields})
+    return json.dumps({"protocol_version": "rdv/1", **fields})
 
 
-def _exchange(handler: BootHandler, frame: str) -> bytes | None:
+def _exchange(handler: RendezvousHandler, frame: str) -> bytes | None:
     """Drive one frame through the handler, charging a fixed peer for the IP."""
     return handler.handle(frame, peer_ip="198.51.100.7", peer_port=54321)
 
 
 def test_register_query_prune_never_writes(read_only_fs: pytest.MonkeyPatch) -> None:
-    handler = BootHandler(
+    handler = RendezvousHandler(
         protected_buckets=("shared",),
         group_keys={"shared": SecretStr("kshared")},
     )
@@ -104,7 +104,7 @@ def test_register_query_prune_never_writes(read_only_fs: pytest.MonkeyPatch) -> 
 
 def test_private_register_query_leave_never_writes(read_only_fs: pytest.MonkeyPatch) -> None:
     """Private mode adds no disk write either (holds in both policies)."""
-    handler = BootHandler(private=True, group_keys={"shared": SecretStr("kshared")})
+    handler = RendezvousHandler(private=True, group_keys={"shared": SecretStr("kshared")})
     token = derive_bucket_token(b"kshared", "shared")
     ack = _exchange(
         handler,
@@ -160,12 +160,12 @@ def test_persistence_requires_a_write(read_only_fs: pytest.MonkeyPatch, tmp_path
 def test_the_aggregate_counters_never_write(read_only_fs: pytest.MonkeyPatch) -> None:
     """Observing, expiring and rendering the aggregates is pure: no open()."""
     stats = NodeStats()
-    handler = BootHandler(ttl=60.0, stats=stats)
+    handler = RendezvousHandler(ttl=60.0, stats=stats)
     _exchange(
         handler,
         _frame(type="register", cid=CID, bucket="shared", cert_fp=FP, version="1.0.0"),
     )
     handler.prune(time.monotonic())
     body = stats.render_prometheus()
-    assert "hsync_bootnode_peers_current 1" in body
+    assert "hsync_rendezvous_peers_current 1" in body
     assert stats.status_text() == "conn=0/0 peers=1/1 relay=0/0"

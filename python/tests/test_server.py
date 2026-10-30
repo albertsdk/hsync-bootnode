@@ -1,4 +1,4 @@
-"""QUIC transport tests: identity/config units + real loopback boot/1 exchanges.
+"""QUIC transport tests: identity/config units + real loopback rdv/1 exchanges.
 
 The loopback tests spin up a real aioquic server on 127.0.0.1:0 and talk to it
 with a real aioquic client (TLS 1.3, RETRY for the server side): they exercise
@@ -19,17 +19,17 @@ from aioquic.asyncio.protocol import QuicConnectionProtocol
 from aioquic.quic.configuration import QuicConfiguration
 from pydantic import SecretStr
 
-from hsync_bootnode.handler import BootHandler
-from hsync_bootnode.server import (
-    BOOT_ALPN,
-    BootQuicProtocol,
+from hsync_rendezvous.handler import RendezvousHandler
+from hsync_rendezvous.server import (
+    RDV_ALPN,
     ConnectionGuard,
+    RendezvousQuicProtocol,
     build_quic_configuration,
     make_identity,
     start_server,
     start_servers,
 )
-from hsync_bootnode.tokens import derive_bucket_token
+from hsync_rendezvous.tokens import derive_bucket_token
 
 CID = "A1b2C3d4E5f6G7h8I9j0K"
 FP = "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
@@ -39,7 +39,7 @@ def test_make_identity_produces_self_signed_fingerprint() -> None:
     identity = make_identity(host="127.0.0.1")
     assert re.fullmatch(r"[0-9a-f]{64}", str(identity.fingerprint))
     config = build_quic_configuration(identity)
-    assert config.alpn_protocols == [BOOT_ALPN]
+    assert config.alpn_protocols == [RDV_ALPN]
     assert config.certificate is not None
     assert config.private_key is not None
 
@@ -90,14 +90,14 @@ async def test_loopback_connection_guard_refuses_and_releases() -> None:
     connection is admitted again. No frame/handshake of any refused connection
     reaches the handler.
     """
-    handler = BootHandler()
+    handler = RendezvousHandler()
     guard = ConnectionGuard(handshake_rate=10_000.0, handshake_burst=10_000, active_max=2)
     server, port, _identity = await start_server(
         "127.0.0.1", 0, handler, retry=True, connection_guard=guard
     )
     try:
         client_config = QuicConfiguration(
-            is_client=True, alpn_protocols=[BOOT_ALPN], verify_mode=ssl.CERT_NONE
+            is_client=True, alpn_protocols=[RDV_ALPN], verify_mode=ssl.CERT_NONE
         )
 
         async def _wait_open(expected: int, timeout: float = 5.0) -> None:
@@ -131,14 +131,14 @@ async def test_loopback_connection_guard_refuses_and_releases() -> None:
 
 @pytest.mark.asyncio
 async def test_loopback_register_query_and_protected_refusal() -> None:
-    handler = BootHandler(
+    handler = RendezvousHandler(
         protected_buckets=("shared",),
         group_keys={"shared": SecretStr("kshared")},
     )
     server, port, _identity = await start_server("127.0.0.1", 0, handler, retry=True)
     try:
         client_config = QuicConfiguration(
-            is_client=True, alpn_protocols=[BOOT_ALPN], verify_mode=ssl.CERT_NONE
+            is_client=True, alpn_protocols=[RDV_ALPN], verify_mode=ssl.CERT_NONE
         )
         token = derive_bucket_token(b"kshared", "shared")
         async with connect("127.0.0.1", port, configuration=client_config) as protocol:
@@ -172,7 +172,7 @@ async def test_loopback_register_query_and_protected_refusal() -> None:
 async def test_loopback_multi_port_shares_one_routing_table() -> None:
     """One process, N ports, ONE routing table: a peer registered via one port
     is visible to a query on another port (decision #21 — no sharding)."""
-    handler = BootHandler()
+    handler = RendezvousHandler()
     servers, ports, _identity, failures = await start_servers(
         "127.0.0.1", [0, 0], handler, retry=True
     )
@@ -182,7 +182,7 @@ async def test_loopback_multi_port_shares_one_routing_table() -> None:
     assert failures == []
     try:
         client_config = QuicConfiguration(
-            is_client=True, alpn_protocols=[BOOT_ALPN], verify_mode=ssl.CERT_NONE
+            is_client=True, alpn_protocols=[RDV_ALPN], verify_mode=ssl.CERT_NONE
         )
         # register via the FIRST port
         async with connect("127.0.0.1", ports[0], configuration=client_config) as protocol:
@@ -201,11 +201,11 @@ async def test_loopback_multi_port_shares_one_routing_table() -> None:
 
 @pytest.mark.asyncio
 async def test_loopback_garbage_frame_is_dropped() -> None:
-    handler = BootHandler()
+    handler = RendezvousHandler()
     server, port, _identity = await start_server("127.0.0.1", 0, handler, retry=True)
     try:
         client_config = QuicConfiguration(
-            is_client=True, alpn_protocols=[BOOT_ALPN], verify_mode=ssl.CERT_NONE
+            is_client=True, alpn_protocols=[RDV_ALPN], verify_mode=ssl.CERT_NONE
         )
         async with connect("127.0.0.1", port, configuration=client_config) as protocol:
             reader, writer = await protocol.create_stream()
@@ -231,11 +231,11 @@ async def _exchange(protocol: QuicConnectionProtocol, frame: dict) -> dict:
 @pytest.mark.asyncio
 async def test_loopback_pipelined_frames_on_one_stream() -> None:
     """Two frames sent back-to-back on one stream each get their own reply."""
-    handler = BootHandler()
+    handler = RendezvousHandler()
     server, port, _identity = await start_server("127.0.0.1", 0, handler, retry=True)
     try:
         client_config = QuicConfiguration(
-            is_client=True, alpn_protocols=[BOOT_ALPN], verify_mode=ssl.CERT_NONE
+            is_client=True, alpn_protocols=[RDV_ALPN], verify_mode=ssl.CERT_NONE
         )
         async with connect("127.0.0.1", port, configuration=client_config) as protocol:
             reader, writer = await protocol.create_stream()
@@ -262,11 +262,11 @@ async def test_loopback_private_node_requires_token_on_every_bucket() -> None:
     The handler declares NO protected bucket: the private flag alone must make
     the refusal uniform on the wire.
     """
-    handler = BootHandler(private=True, group_keys={"shared": SecretStr("kshared")})
+    handler = RendezvousHandler(private=True, group_keys={"shared": SecretStr("kshared")})
     server, port, _identity = await start_server("127.0.0.1", 0, handler, retry=True)
     try:
         client_config = QuicConfiguration(
-            is_client=True, alpn_protocols=[BOOT_ALPN], verify_mode=ssl.CERT_NONE
+            is_client=True, alpn_protocols=[RDV_ALPN], verify_mode=ssl.CERT_NONE
         )
         token = derive_bucket_token(b"kshared", "shared")
         async with connect("127.0.0.1", port, configuration=client_config) as protocol:
@@ -304,9 +304,9 @@ async def test_unexpected_session_failure_is_reported_peer_free(capsys) -> None:
     address, even though the failing session knows it.
     """
 
-    protocol = object.__new__(BootQuicProtocol)
+    protocol = object.__new__(RendezvousQuicProtocol)
     protocol.peer_addr = ("203.0.113.9", 51000)
-    protocol.boot_handler = BootHandler()
+    protocol.boot_handler = RendezvousHandler()
 
     class _FailingReader:
         async def read(self, _size: int) -> bytes:
@@ -348,14 +348,14 @@ async def test_unexpected_session_failure_detail_is_debug_only(capsys, monkeypat
     """
     from collections import deque
 
-    from hsync_bootnode import diagnostics
+    from hsync_rendezvous import diagnostics
 
     monkeypatch.setattr(diagnostics, "_dedup", {})
     monkeypatch.setattr(diagnostics, "_dedup_order", deque())
 
-    protocol = object.__new__(BootQuicProtocol)
+    protocol = object.__new__(RendezvousQuicProtocol)
     protocol.peer_addr = ("203.0.113.9", 51000)
-    protocol.boot_handler = BootHandler()
+    protocol.boot_handler = RendezvousHandler()
 
     class _FailingReader:
         async def read(self, _size: int) -> bytes:
@@ -393,7 +393,7 @@ async def test_unexpected_session_failure_detail_is_debug_only(capsys, monkeypat
 
 def _register_frame(token: str | None) -> dict:
     frame = {
-        "protocol_version": "boot/1",
+        "protocol_version": "rdv/1",
         "type": "register",
         "cid": CID,
         "bucket": "shared",
@@ -409,7 +409,7 @@ def _register_frame(token: str | None) -> dict:
 
 def _query_frame(token: str | None, bucket: str = "shared") -> dict:
     frame = {
-        "protocol_version": "boot/1",
+        "protocol_version": "rdv/1",
         "type": "query",
         "bucket": bucket,
         "group": "home",
@@ -421,7 +421,7 @@ def _query_frame(token: str | None, bucket: str = "shared") -> dict:
 
 def test_build_quic_configuration_bounds_receive_windows() -> None:
     """The server advertises small flow-control windows (bounded recv buffering)."""
-    from hsync_bootnode.server import MAX_DATA_BYTES, MAX_STREAM_DATA_BYTES
+    from hsync_rendezvous.server import MAX_DATA_BYTES, MAX_STREAM_DATA_BYTES
 
     config = build_quic_configuration(make_identity(host="127.0.0.1"))
     assert config.is_client is False
@@ -445,10 +445,10 @@ def test_connection_guard_global_cap_and_release() -> None:
 
 
 def test_a_connection_cannot_pin_more_sessions_than_the_cap() -> None:
-    """Streams beyond the per-connection discovery budget are closed, not spawned."""
-    from hsync_bootnode.server import MAX_SESSIONS_PER_CONNECTION
+    """Streams beyond the per-connection rendezvous budget are closed, not spawned."""
+    from hsync_rendezvous.server import MAX_SESSIONS_PER_CONNECTION
 
-    protocol = object.__new__(BootQuicProtocol)
+    protocol = object.__new__(RendezvousQuicProtocol)
     protocol.peer_addr = ("203.0.113.9", 51000)
     protocol._relay_streams = 0
     protocol._stream_tasks = {object() for _ in range(MAX_SESSIONS_PER_CONNECTION)}
@@ -467,8 +467,8 @@ def test_a_connection_cannot_pin_more_sessions_than_the_cap() -> None:
 
 
 def test_the_relay_headroom_is_a_separate_budget() -> None:
-    """Relay streams never extend the discovery budget, and have their own cap."""
-    from hsync_bootnode.server import (
+    """Relay streams never extend the rendezvous budget, and have their own cap."""
+    from hsync_rendezvous.server import (
         MAX_RELAY_STREAMS_PER_CONNECTION,
         MAX_SESSIONS_PER_CONNECTION,
         MAX_STREAMS_PER_CONNECTION,
@@ -486,12 +486,12 @@ def test_the_relay_headroom_is_a_separate_budget() -> None:
             self.closed = True
 
     # A listener holds one control stream plus one stream per relayed session:
-    # the discovery budget is untouched by them...
-    listener = object.__new__(BootQuicProtocol)
+    # the rendezvous budget is untouched by them...
+    listener = object.__new__(RendezvousQuicProtocol)
     listener.peer_addr = ("203.0.113.9", 51000)
     listener._stream_tasks = {object() for _ in range(MAX_SESSIONS_PER_CONNECTION)}
     listener._relay_streams = MAX_SESSIONS_PER_CONNECTION
-    over_relay_budget = object.__new__(BootQuicProtocol)
+    over_relay_budget = object.__new__(RendezvousQuicProtocol)
     over_relay_budget.peer_addr = ("203.0.113.9", 51000)
     over_relay_budget._stream_tasks = {object() for _ in range(MAX_RELAY_STREAMS_PER_CONNECTION)}
     over_relay_budget._relay_streams = MAX_RELAY_STREAMS_PER_CONNECTION

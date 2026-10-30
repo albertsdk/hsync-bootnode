@@ -10,11 +10,11 @@ from __future__ import annotations
 import re
 import time
 
-from hsync_bootnode import __version__
-from hsync_bootnode.stats import METRICS_OUTCOMES, NodeStats
+from hsync_rendezvous import __version__
+from hsync_rendezvous.stats import METRICS_OUTCOMES, NodeStats
 
 # A sample line: the metric name, an optional label block, one numeric value.
-_SAMPLE_RE = re.compile(r"hsync_bootnode_[a-z0-9_]+(\{[^}]*\})? -?[0-9.]+")
+_SAMPLE_RE = re.compile(r"hsync_rendezvous_[a-z0-9_]+(\{[^}]*\})? -?[0-9.]+")
 
 
 def test_levels_and_peaks_follow_the_events() -> None:
@@ -94,4 +94,4 @@ def test_exposition_never_carries_peer_data() -> None:
     body = NodeStats().render_prometheus()
     assert set(re.findall(r'([a-z_]+)="', body)) == {"version", "protocol", "outcome"}
     assert f'version="{__version__}"' in body
-    assert 'protocol="boot/1"' in body
+    assert 'protocol="rdv/1"' in body

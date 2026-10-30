@@ -14,7 +14,7 @@ from pathlib import Path
 DEBIAN = Path(__file__).resolve().parents[2] / "packaging" / "deb" / "DEBIAN"
 PRERM = DEBIAN / "prerm"
 POSTINST = DEBIAN / "postinst"
-SERVICE = "hsync-bootnode.service"
+SERVICE = "hsync-rendezvous.service"
 
 
 def _script(path: Path) -> str:

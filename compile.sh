@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# HSYNC Bootnode - Build Script
+# HSYNC Rendezvous - Build Script
 #
-# Builds the HSYNC bootnode into the requested artifact: a standalone
+# Builds the HSYNC rendezvous into the requested artifact: a standalone
 # executable for the host, Raspberry Pi OS executables (armhf/arm64), or
 # Debian/Ubuntu .deb packages. This script (repository root) selects WHICH
 # implementation language the embedded executable is built from and delegates
@@ -10,7 +10,7 @@
 # scripts build binaries only.
 #
 #   python → python/compile.sh   (native/onedir; implemented)
-#   c      → planned v2 port of the same boot/1 protocol (not yet available)
+#   c      → planned v2 port of the same rdv/1 protocol (not yet available)
 #
 # Usage:
 #   ./compile.sh [options]
@@ -32,7 +32,7 @@
 #                                         (via Docker, Rocky Linux 9 baseline)
 #   -l, --language LANG     Implementation language of the executable
 #                           (default: python). Values:
-#                               python    current bootnode (implemented)
+#                               python    current rendezvous (implemented)
 #                               c         planned v2 port — not yet available
 #                           Also settable via the DEB_LANGUAGE environment
 #                           variable (the CLI flag takes precedence).
@@ -53,15 +53,15 @@
 #   - rpi / deb-all / rpm-all: Docker with qemu-user-static (binfmt) configured
 #
 # Output:
-#   native:   dist/<os>-<arch>/hsync-bootnode[.exe]
-#   rpi:      dist/rpi/armhf/hsync-bootnode   (Raspberry Pi OS 32-bit)
-#             dist/rpi/arm64/hsync-bootnode   (Raspberry Pi OS 64-bit)
-#   deb:      dist/deb/hsync-bootnode_<ver>_<arch>.deb
+#   native:   dist/<os>-<arch>/hsync-rendezvous[.exe]
+#   rpi:      dist/rpi/armhf/hsync-rendezvous   (Raspberry Pi OS 32-bit)
+#             dist/rpi/arm64/hsync-rendezvous   (Raspberry Pi OS 64-bit)
+#   deb:      dist/deb/hsync-rendezvous_<ver>_<arch>.deb
 #             Installable with dpkg -i / apt install
-#   deb-all:  dist/deb/hsync-bootnode_<ver>_{amd64,arm64,armhf}.deb
-#   rpm:      dist/rpm/hsync-bootnode-<ver>-1.<dist>.<arch>.rpm
+#   deb-all:  dist/deb/hsync-rendezvous_<ver>_{amd64,arm64,armhf}.deb
+#   rpm:      dist/rpm/hsync-rendezvous-<ver>-1.<dist>.<arch>.rpm
 #             Installable with dnf install
-#   rpm-all:  dist/rpm/hsync-bootnode-<ver>-1.el9.{x86_64,aarch64}.rpm
+#   rpm-all:  dist/rpm/hsync-rendezvous-<ver>-1.el9.{x86_64,aarch64}.rpm
 #
 # Author: Alberto Basso
 # =============================================================================
@@ -90,7 +90,7 @@ case "$(uname -m)" in
 esac
 readonly PLATFORM="${OS_NAME}-${ARCH_NAME}"
 
-readonly APP_NAME="hsync-bootnode"
+readonly APP_NAME="hsync-rendezvous"
 readonly PYTHON_DIR="python"
 readonly PYPROJECT="${PYTHON_DIR}/pyproject.toml"
 readonly DEB_DIR="packaging/deb"
@@ -102,7 +102,7 @@ readonly DEB_OUTPUT_DIR="${OUTPUT_BASE}/deb"
 readonly BUILD_DIR="build"
 readonly DEB_BUILD_DIR="${BUILD_DIR}/deb"
 readonly DEB_ALL_BUILD_DIR="${BUILD_DIR}/deb-all"
-readonly DEB_ALL_BUILDER_IMAGE_PREFIX="hsync-bootnode-deb-builder"
+readonly DEB_ALL_BUILDER_IMAGE_PREFIX="hsync-rendezvous-deb-builder"
 
 # Standalone executable artifacts (native / rpi targets).
 readonly OUTPUT_DIR="${OUTPUT_BASE}/${PLATFORM}"
@@ -112,7 +112,7 @@ readonly RPI_OUTPUT_DIR="${OUTPUT_BASE}/rpi"
 # toolchain) is reused for the Raspberry Pi cross-build, so no separate
 # Dockerfile is needed.
 readonly RPI_DOCKERFILE="${DEB_DIR}/Dockerfile.builder"
-readonly RPI_BUILDER_IMAGE_PREFIX="hsync-bootnode-rpi-builder"
+readonly RPI_BUILDER_IMAGE_PREFIX="hsync-rendezvous-rpi-builder"
 
 # -----------------------------------------------------------------------------
 # Package language — which implementation the .deb's executable is built from
@@ -192,7 +192,7 @@ ensure_qemu_binfmt() {
 
 show_help() {
     cat << EOF
-${BOLD}HSYNC Bootnode - Build Script${RESET}
+${BOLD}HSYNC Rendezvous - Build Script${RESET}
 
 ${BOLD}Usage:${RESET}
     ./compile.sh [options]
@@ -355,7 +355,7 @@ _build_onedir() {
 }
 
 # In-container command producing the standalone executable at $1 (a path
-# relative to the container workdir /repo/hsync-bootnode/python).
+# relative to the container workdir /repo/hsync-rendezvous/python).
 # HSYNC_PREFER_PATH_PYINSTALLER=1 stops the mounted host .venv from shadowing
 # the container's own (target-arch) PyInstaller; HSYNC_PYINSTALLER_WORKPATH
 # keeps PyInstaller's build/ + .spec intermediates out of the mounted source
@@ -374,7 +374,7 @@ _container_native_cmd() {
 
 # In-container command producing the onedir bundle for $1 (deb_arch). The
 # bundle MUST land at build/deb-all/<arch>/pyinstaller/<APP_NAME> (paths are
-# relative to the container workdir /repo/hsync-bootnode/python).
+# relative to the container workdir /repo/hsync-rendezvous/python).
 _container_build_cmd() {
     local deb_arch="$1"
     case "${DEB_LANGUAGE}" in
@@ -405,7 +405,7 @@ _container_rpm_build_cmd() {
 #   * root and directories 0755 / files 0644 under etc/ and usr/;
 #   * the main executable keeps its 0755 bit;
 #   * the man page is gzip-compressed (-n => reproducible header).
-# /etc/hsync-bootnode (group-keys dir) is NOT shipped: postinst creates it.
+# /etc/hsync-rendezvous (group-keys dir) is NOT shipped: postinst creates it.
 _finalize_deb_stage() {
     local stage_dir="$1"
     chmod 0755 "${stage_dir}"
@@ -544,7 +544,7 @@ build_deb() {
 #   amd64 → linux/amd64
 #   arm64 → linux/arm64
 #   armhf → linux/arm/v7
-# Output: dist/deb/hsync-bootnode_<ver>_<arch>.deb
+# Output: dist/deb/hsync-rendezvous_<ver>_<arch>.deb
 build_deb_all() {
     local version deb_version
     version="$(get_version)"
@@ -556,7 +556,7 @@ build_deb_all() {
     fi
     mkdir -p "${DEB_OUTPUT_DIR}"
 
-    # Monorepo root: mounts hsync-bootnode AND hsync-common (the Poetry path
+    # Monorepo root: mounts hsync-rendezvous AND hsync-common (the Poetry path
     # dependency) into the container at /repo.
     local repo_root
     repo_root="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -587,7 +587,7 @@ build_deb_all() {
     stage_script=$(cat <<'EOS'
 set -eux
 deb_arch="$1"; deb_version="$2"; host_uid="$3"; host_gid="$4"
-APP_NAME=hsync-bootnode
+APP_NAME=hsync-rendezvous
 stage="/build/deb-all/${deb_arch}/stage"
 built="/build/deb-all/${deb_arch}/pyinstaller/${APP_NAME}"
 rm -rf "${stage}"
@@ -648,7 +648,7 @@ EOS
         log_step "Compiling ${deb_arch} binary inside container (${DEB_LANGUAGE})..."
         local build_cmd
         build_cmd="$(_container_build_cmd "${deb_arch}")"
-        docker run --rm --platform "${docker_platform}" -u "$(id -u):$(id -g)" -e HOME=/tmp -e XDG_CACHE_HOME=/tmp -v "${repo_root}:/repo" -v "${build_abs}:/build" -w /repo/hsync-bootnode/python -e LC_ALL=C -e PYTHONWARNINGS=ignore -e PIP_DEFAULT_TIMEOUT=300 -e PIP_RETRIES=10 -e POETRY_REQUESTS_TIMEOUT=300 "${builder_tag}" bash -c "${build_cmd}"
+        docker run --rm --platform "${docker_platform}" -u "$(id -u):$(id -g)" -e HOME=/tmp -e XDG_CACHE_HOME=/tmp -v "${repo_root}:/repo" -v "${build_abs}:/build" -w /repo/hsync-rendezvous/python -e LC_ALL=C -e PYTHONWARNINGS=ignore -e PIP_DEFAULT_TIMEOUT=300 -e PIP_RETRIES=10 -e POETRY_REQUESTS_TIMEOUT=300 "${builder_tag}" bash -c "${build_cmd}"
 
         if [[ ! -d "${bin_dir}/${APP_NAME}" ]]; then
             log_error "onedir bundle not produced for ${deb_arch}"
@@ -657,7 +657,7 @@ EOS
 
         # --- stage + dpkg-deb in container (target-arch dpkg environment) ------
         log_step "Staging .deb tree and building package for ${deb_arch}..."
-        docker run --rm --platform "${docker_platform}" -v "${repo_root}:/repo" -v "${build_abs}:/build" -v "${out_abs}:/out" -w /repo/hsync-bootnode/python "${builder_tag}" bash -c "${stage_script}" stage "${deb_arch}" "${deb_version}" "$(id -u)" "$(id -g)"
+        docker run --rm --platform "${docker_platform}" -v "${repo_root}:/repo" -v "${build_abs}:/build" -v "${out_abs}:/out" -w /repo/hsync-rendezvous/python "${builder_tag}" bash -c "${stage_script}" stage "${deb_arch}" "${deb_version}" "$(id -u)" "$(id -g)"
 
         local deb_name="${DEB_PKG_NAME}_${deb_version}_${deb_arch}.deb"
         local deb_path="${out_abs}/${deb_name}"
@@ -685,15 +685,15 @@ EOS
 # -----------------------------------------------------------------------------
 
 readonly RPM_DIR="packaging/rpm"
-readonly RPM_SPEC="${RPM_DIR}/hsync-bootnode.spec"
+readonly RPM_SPEC="${RPM_DIR}/hsync-rendezvous.spec"
 readonly RPM_PKG_NAME="${APP_NAME}"
 readonly RPM_OUTPUT_DIR="${OUTPUT_BASE}/rpm"
 readonly RPM_BUILD_DIR="${BUILD_DIR}/rpm"
 readonly RPM_ALL_BUILD_DIR="${BUILD_DIR}/rpm-all"
-readonly RPM_BUILDER_IMAGE_PREFIX="hsync-bootnode-rpm-builder"
+readonly RPM_BUILDER_IMAGE_PREFIX="hsync-rendezvous-rpm-builder"
 
 # Stage a buildroot for rpmbuild: Debian payload (usr/) + the PyInstaller
-# --onedir bundle under /usr/lib/hsync-bootnode + /usr/bin symlink + gzipped man
+# --onedir bundle under /usr/lib/hsync-rendezvous + /usr/bin symlink + gzipped man
 # page. No /etc conffile is shipped (the group-keys dir is created in %post).
 # $1 = stage_dir   $2 = built onedir dir
 _stage_rpm_buildroot() {
@@ -730,7 +730,7 @@ _render_rpm_spec() {
     local version="$1" work_dir="$2"
     local rpm_version rendered
     rpm_version="$(_semver_to_rpm "${version}")"
-    rendered="${work_dir}/hsync-bootnode.spec"
+    rendered="${work_dir}/hsync-rendezvous.spec"
     sed "s/__VERSION__/${rpm_version}/g" "${RPM_SPEC}" > "${rendered}"
     printf '%s' "${rendered}"
 }
@@ -850,7 +850,7 @@ build_rpm_all() {
             -e HOME=/tmp -e XDG_CACHE_HOME=/tmp \
             -v "${repo_root}:/repo" \
             -v "${build_abs}:/build" \
-            -w /repo/hsync-bootnode/python \
+            -w /repo/hsync-rendezvous/python \
             -e LC_ALL=C -e PYTHONWARNINGS=ignore \
             -e PIP_DEFAULT_TIMEOUT=300 -e PIP_RETRIES=10 \
             -e POETRY_REQUESTS_TIMEOUT=300 \
@@ -916,7 +916,7 @@ build_rpm_all() {
 # -----------------------------------------------------------------------------
 
 # Build the standalone executable for the host OS/arch.
-# Output: dist/<os>-<arch>/hsync-bootnode[.exe]
+# Output: dist/<os>-<arch>/hsync-rendezvous[.exe]
 build_native() {
     local version out_abs bin_path size
     version="$(get_version)"
@@ -952,7 +952,7 @@ build_native() {
 # Pi OS Bookworm is Debian 12 / glibc 2.36; the produced binaries require
 # libc6 >= 2.35, so Bookworm runs them and Bullseye's 2.31 does not).
 #
-# Output: dist/rpi/<arch>/hsync-bootnode
+# Output: dist/rpi/<arch>/hsync-rendezvous
 build_rpi() {
     local version
     version="$(get_version)"
@@ -968,7 +968,7 @@ build_rpi() {
         exit 1
     fi
 
-    # Monorepo root: mounts hsync-bootnode AND hsync-common (the Poetry path
+    # Monorepo root: mounts hsync-rendezvous AND hsync-common (the Poetry path
     # dependency) into the container at /repo.
     local repo_root
     repo_root="$(cd "${SCRIPT_DIR}/.." && pwd)"
@@ -1012,7 +1012,7 @@ build_rpi() {
             -e HOME=/tmp -e XDG_CACHE_HOME=/tmp \
             -v "${repo_root}:/repo" \
             -v "${out_abs}:/out" \
-            -w /repo/hsync-bootnode/python \
+            -w /repo/hsync-rendezvous/python \
             -e LC_ALL=C -e PYTHONWARNINGS=ignore \
             -e PIP_DEFAULT_TIMEOUT=300 -e PIP_RETRIES=10 \
             -e POETRY_REQUESTS_TIMEOUT=300 \
@@ -1087,7 +1087,7 @@ main() {
 
     cd "${SCRIPT_DIR}"
 
-    echo -e "${BOLD}HSYNC Bootnode - Build${RESET}"
+    echo -e "${BOLD}HSYNC Rendezvous - Build${RESET}"
     echo -e "${DIM}─────────────────────${RESET}"
     echo
 

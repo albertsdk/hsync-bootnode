@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import dataclasses
 
-from hsync_bootnode.resources import (
+from hsync_rendezvous.resources import (
     ResourceLimits,
     available_memory_bytes,
     cpu_count,
@@ -35,7 +35,7 @@ def test_detect_clamps_a_tiny_host_to_a_usable_floor() -> None:
     """A pathological host still yields usable (not zero) ceilings."""
     from unittest.mock import patch
 
-    with patch("hsync_bootnode.resources.available_memory_bytes", return_value=1):
+    with patch("hsync_rendezvous.resources.available_memory_bytes", return_value=1):
         limits = ResourceLimits.detect()
     assert limits.max_peer_records >= 4_096
     assert limits.max_limiter_keys >= 4_096

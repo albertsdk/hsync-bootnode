@@ -12,7 +12,7 @@ needs Docker, qemu and network access):
   ``python/build/`` while the host checks the repo-root ``build/deb-all/``,
   and a relative package output lands in ``python/dist/`` instead of ``dist/``.
 
-Consumers: hsync-bootnode maintainers (regression guard for decisions #38/#39).
+Consumers: hsync-rendezvous maintainers (regression guard for decisions #38/#39).
 """
 
 from __future__ import annotations
@@ -143,10 +143,10 @@ def test_windows_installer_is_wired() -> None:
     """The Inno Setup installer + WinSW service XML must exist and be built."""
     repo = COMPILE_SH.parent
     win = repo / "packaging" / "windows"
-    assert (win / "hsync-bootnode.iss").is_file()
-    assert (win / "hsync-bootnode-service-frozen.xml").is_file()
+    assert (win / "hsync-rendezvous.iss").is_file()
+    assert (win / "hsync-rendezvous-service-frozen.xml").is_file()
     workflow = (repo / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
-    assert "hsync-bootnode.iss" in workflow
+    assert "hsync-rendezvous.iss" in workflow
     assert "innosetup" in workflow
 
 

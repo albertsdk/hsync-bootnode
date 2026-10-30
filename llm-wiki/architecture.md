@@ -1,10 +1,10 @@
-# Architecture — hsync-bootnode
+# Architecture — hsync-rendezvous
 
 One QUIC/UDP listener, in-memory routing state, no logs; the only persisted
 artifact is the node's own TLS identity. The v1
 implementation is Python (aioquic); the C implementation planned in
 the repo root `README.md` will share the same wire protocol SSOT
-(`protocol-spec/boot-1.md`) and the same fixtures.
+(`protocol-spec/rdv-1.md`) and the same fixtures.
 
 ## Layers
 
@@ -12,9 +12,9 @@ the repo root `README.md` will share the same wire protocol SSOT
 UDP :443
   └─ server.py    QUIC transport (aioquic): TLS 1.3 identity (ECDSA P-256,
                   persisted by default, in-memory via --ephemeral), mandatory RETRY
-                  + address-validation tokens, ALPN "hsync-boot/1", NDJSON frames
+                  + address-validation tokens, ALPN "hsync-rdv/1", NDJSON frames
                   on one bidi stream
-       └─ handler.py   BootHandler: transport-agnostic core — routing table,
+       └─ handler.py   RendezvousHandler: transport-agnostic core — routing table,
                        token authorization (declared protected buckets or
                        every bucket in node-wide private mode), rate limiters,
                        STUN-echo
@@ -22,30 +22,30 @@ UDP :443
              ├─ ratelimit.py  bounded sliding-window limiters (peek + eviction)
              ├─ resources.py  host RAM/CPU-derived ceilings for table + limiters
              └─ tokens.py     re-exports the shared bucket_token primitives
-                              (hsync_common.protocol.boot_tokens)
-  └─ protocol.py  pydantic models for every boot/1 frame (extra="forbid")
+                              (hsync_common.protocol.rdv_tokens)
+  └─ protocol.py  pydantic models for every rdv/1 frame (extra="forbid")
   └─ upnp.py      zero-touch UDP port mapping via SSDP + SOAP (best-effort)
-  └─ cli.py       Typer CLI: `hsync-bootnode run [OPTIONS]`, `--version`
+  └─ cli.py       Typer CLI: `hsync-rendezvous run [OPTIONS]`, `--version`
 ```
 
 ## Module map
 
 | Module | Responsibility | Key symbols |
 |---|---|---|
-| `python/src/hsync_bootnode/protocol.py` | `boot/1` frames; CID `^[A-Za-z0-9]{21}$`; 64-hex bucket token; client→server discriminated union; server→client `bytes` serializers | `BootRegister`, `BootRefresh`, `BootLeave`, `BootQuery`, `BootAck`, `BootResponse`, `BootPeer`, `Endpoint`, `ObservedEndpoint`, `BootFrame`, `BOOT_FRAME_ADAPTER`, `BOOT_ACK_ADAPTER`, `BOOT_RESPONSE_ADAPTER`; field grammars (`EndpointHost` → `is_valid_endpoint_host`, `CertificateFingerprint` → `parse_fingerprint`) and the relay bounds `MAX_RELAY_ENDPOINTS` / `MAX_RESPONSE_BYTES` |
-| `python/src/hsync_bootnode/routing.py` | RAM-only table, TTL/prune/sample, source-IP ownership on mutation, bounded by `max_records` / `max_records_per_bucket` / `max_records_per_group` ceilings; `get` is active-only (expiry is the ownership authority); secondary indexes (`_by_group`/`_by_cid`/`_pos`) + a cached serialized `PeerRecord.wire` fragment (`bytes`); endpoints held as `(proto, host, port)` tuples, never pydantic models | `PeerRecord`, `EndpointTuple`, `RoutingTable` (`upsert` → `bool`, `remove`, `get`, `prune`, `sample`, `count`, `source_ips`) |
-| `python/src/hsync_bootnode/handler.py` | Request pipeline: malformed-frame pre-parse gate → validate (single pass) → per-IP admission → per-IP/per-(IP,bucket) limits → authorize (constant-time; declared protected buckets, or every bucket when `private=True`) → ownership check → mutate → reply; relays at most `MAX_RELAY_ENDPOINTS` endpoints per peer within `MAX_RESPONSE_BYTES` | `BootHandler.handle`, `BootConfigError`, `OP_IP_BURST`, `WINDOW_SECONDS`, `_may_replace`, `_authorize` |
-| `python/src/hsync_bootnode/ratelimit.py` | Thin facade over the `hsync_common.ratelimit.TokenBucketLimiter` SSOT (shared with `hsync-client`); keeps the import path used by the boot server/handler/tests | `TokenBucketLimiter` (`allow`, `has_tokens`, `retry_after`, `evict_stale`) |
-| `python/src/hsync_bootnode/resources.py` | Host-resource **budgeting**: available/total RAM and CPU count come from the shared `hsync_common/runtime.py` (cgroup v1/v2 incl. the process's nested cgroup, `MemAvailable`), and this module derives the `ResourceLimits` ceilings for the routing table, limiter maps and connection guard; conservative fallback when `/proc` is hidden | `ResourceLimits` (`detect`, `max_peer_records`, `max_records_per_bucket`, `max_records_per_group`), `available_memory_bytes`, `total_memory_bytes`, `cpu_count` |
-| `python/src/hsync_bootnode/tokens.py` | Re-exports the shared token primitives from `hsync_common/protocol/boot_tokens.py` (`HMAC-SHA256(key, "boot/1" || bucket)[:32]`, constant-time compare); the shared module is the single implementation used by the canonical daemon and the client mirror | `derive_bucket_token`, `verify_bucket_token`, `BUCKET_TOKEN_LEN` |
-| `python/src/hsync_bootnode/server.py` | QUIC adapter: one **or more** QUIC/UDP listeners (`start_servers`, `--ports`; multi-port, decision 57) sharing ONE handler/routing table and guard, self-signed TLS identity (`hsync_common.ssl_utils`, ECDSA P-256), RETRY, bounded receive windows (≤32 KiB/stream, ≤128 KiB/connection), frame IO bound to 8 KiB (framing only — parsing/validation lives in `handler.py`), per-IP/global connection guard; best-effort bind (a busy port is skipped); persistent identity by default, in-memory via `--ephemeral` (ADR-0034/ADR-0037), atomic unique-temp write + on-load key/cert consistency check (decision 54); rotation preserves the existing DNS/IP SANs (decision 62) | `start_server`, `start_servers`, `NodeIdentity`, `make_identity`, `load_or_create_identity`, `load_identity`, `rotate_identity`, `rotation_hint`, `_san_names`, `IdentityError`, `_atomic_write_identity`, `_key_matches_certificate`, `BootQuicProtocol` (`MAX_SESSIONS_PER_CONNECTION`), `ConnectionGuard`, `_ensure_identity_dir` |
-| `python/src/hsync_bootnode/upnp.py` | Facade over the SSRF-hardened `hsync_common.upnp` SSOT (shared with `hsync-client`): adds the async `UpnpManager`; stateless when no IGD. Opt-in (`--upnp`), one manager per bound port so every `--ports` door is also mapped; the mapping carries a finite lease (2x the refresh window) and is removed on graceful shutdown | `UpnpManager.run`, `UpnpManager.close`, `add_port_mapping`, `discover_igd` |
-| `python/src/hsync_bootnode/diagnostics.py` | Two stderr channels: **always-on `warn`/`error`** node health (peer-free by construction, field allow-list, error dedup with `suppressed=<n>`) and the opt-in **full operation log** (decisions #25, #35, #36); never on disk (no-log invariant); line format `<ISO-8601 UTC Z> - hsync-bootnode[<pid>] <level>: …` | `configure_debug`, `debug_enabled` (cheap predicate hot paths use to skip building `debug_event` fields when the opt-in sink is off), `debug_log`, `debug_event`, `warn_event`, `error_event`, `_emit`, `_sanitize`, `_PUBLIC_FIELDS` |
-| `python/src/hsync_bootnode/cli.py` | Typer multi-command app; group keys from `--keys-fd` / `HSYNC_BOOTNODE_KEYS_FD` or `--keys-file` / `HSYNC_BOOTNODE_KEYS_FILE` (read once, size- and time-bounded; duplicate buckets refused — decisions 54/59/61); near-expiry and mismatch hints name the configured identity; fail-fast config; `--ttl`/`--debug`/`--ready-file` seams; `--identity`/`--public-host` + `identity show`/`rotate`; process lifecycle: SIGINT/SIGTERM take the graceful path, SIGHUP is ignored, sd_notify READY/STATUS/WATCHDOG/STOPPING (decisions 67/68); opt-in aggregate sinks: `--metrics-port`/`--metrics-token-*` (loopback + Bearer), `--stats-file`/`--stats-interval` (Prometheus text file), shared with the handler and the guard (decisions 71/72) | `run`, `identity_show`, `identity_rotate`, `main` (`--version`), `_load_keys`, `_load_keys_file`, `_parse_keys`, `_read_fd`, `_fd_readable_before`, `_near_expiry_reason`, `_async_main`, `_prune_loop`, `_watchdog_loop`, `_install_shutdown_handlers` |
-| `python/src/hsync_bootnode/systemd.py` | `sd_notify` sender for the service manager: READY=1 (every requested listener bound), WATCHDOG=1 (fed at half `$WATCHDOG_USEC`), STOPPING=1 (teardown start); honours `$NOTIFY_SOCKET` including the `@` abstract namespace and refuses a ping addressed to another `$WATCHDOG_PID`; inert and exception-free outside systemd (container without systemd, launchd, Windows, foreground) | `notify_ready`, `notify_stopping`, `notify_watchdog`, `watchdog_interval`, `_send` |
-| `python/src/hsync_bootnode/stats.py` | Peer-free aggregate counters (RAM only, O(1)): connection and registered-peer levels, event-exact peaks with their wall-clock stamp, lifetime counters, relay session/byte aggregates and the closed metrics-outcome list; renders the Prometheus text exposition with a fixed cardinality and no label that could identify a peer (decisions 71) | `NodeStats`, `METRICS_OUTCOMES`, `NodeStats.connections_changed`, `NodeStats.peers_changed`, `NodeStats.relay_session_opened`, `NodeStats.relay_session_closed`, `NodeStats.relay_bytes`, `NodeStats.render_prometheus`, `NodeStats.status_text` |
-| `python/src/hsync_bootnode/relay.py` | Data-relay pairing and byte pump (ADR-0047): `RelayRegistry` holds the listener control streams, pairs a requester with the listener of its `target_cid`, and bridges the two QUIC streams symmetrically (fixed `RELAY_BUFFER_BYTES` + `drain()` both ways, idle timeout per direction, per-session byte ceiling, `await`-based aggregate bandwidth shaper, attach timeout, host-derived session ceilings); RAM only, aggregate counters only (`--relay` opt-in) | `RelayRegistry`, `RelayQuotas`, `RelayHandoff`, `RELAY_BUFFER_BYTES`, `RELAY_ATTACH_TIMEOUT_S`, `RelayRegistry.run`, `RelayRegistry.close` |
-| `python/src/hsync_bootnode/metrics.py` | Loopback-only, bearer-authenticated `/metrics`: a rigid HTTP/1.1 responder (one request per connection, 8 KiB header cap, 5 s read timeout, `GET`/`HEAD` only, no body, no keep-alive), constant-time token check with a uniform 401, a token bucket and a concurrency cap; stdlib only, because the project lock cannot gain a runtime dependency (decision 72) | `MetricsEndpoint`, `MetricsServer` (`start`, `aclose`), `PROMETHEUS_CONTENT_TYPE` |
+| `python/src/hsync_rendezvous/protocol.py` | `rdv/1` frames; CID `^[A-Za-z0-9]{21}$`; 64-hex bucket token; client→server discriminated union; server→client `bytes` serializers | `RdvRegister`, `RdvRefresh`, `RdvLeave`, `RdvQuery`, `RdvAck`, `RdvResponse`, `RdvPeer`, `Endpoint`, `ObservedEndpoint`, `RdvFrame`, `RDV_FRAME_ADAPTER`, `RDV_ACK_ADAPTER`, `RDV_RESPONSE_ADAPTER`; field grammars (`EndpointHost` → `is_valid_endpoint_host`, `CertificateFingerprint` → `parse_fingerprint`) and the relay bounds `MAX_RELAY_ENDPOINTS` / `MAX_RESPONSE_BYTES` |
+| `python/src/hsync_rendezvous/routing.py` | RAM-only table, TTL/prune/sample, source-IP ownership on mutation, bounded by `max_records` / `max_records_per_bucket` / `max_records_per_group` ceilings; `get` is active-only (expiry is the ownership authority); secondary indexes (`_by_group`/`_by_cid`/`_pos`) + a cached serialized `PeerRecord.wire` fragment (`bytes`); endpoints held as `(proto, host, port)` tuples, never pydantic models | `PeerRecord`, `EndpointTuple`, `RoutingTable` (`upsert` → `bool`, `remove`, `get`, `prune`, `sample`, `count`, `source_ips`) |
+| `python/src/hsync_rendezvous/handler.py` | Request pipeline: malformed-frame pre-parse gate → validate (single pass) → per-IP admission → per-IP/per-(IP,bucket) limits → authorize (constant-time; declared protected buckets, or every bucket when `private=True`) → ownership check → mutate → reply; relays at most `MAX_RELAY_ENDPOINTS` endpoints per peer within `MAX_RESPONSE_BYTES` | `RendezvousHandler.handle`, `RendezvousConfigError`, `OP_IP_BURST`, `WINDOW_SECONDS`, `_may_replace`, `_authorize` |
+| `python/src/hsync_rendezvous/ratelimit.py` | Thin facade over the `hsync_common.ratelimit.TokenBucketLimiter` SSOT (shared with `hsync-client`); keeps the import path used by the boot server/handler/tests | `TokenBucketLimiter` (`allow`, `has_tokens`, `retry_after`, `evict_stale`) |
+| `python/src/hsync_rendezvous/resources.py` | Host-resource **budgeting**: available/total RAM and CPU count come from the shared `hsync_common/runtime.py` (cgroup v1/v2 incl. the process's nested cgroup, `MemAvailable`), and this module derives the `ResourceLimits` ceilings for the routing table, limiter maps and connection guard; conservative fallback when `/proc` is hidden | `ResourceLimits` (`detect`, `max_peer_records`, `max_records_per_bucket`, `max_records_per_group`), `available_memory_bytes`, `total_memory_bytes`, `cpu_count` |
+| `python/src/hsync_rendezvous/tokens.py` | Re-exports the shared token primitives from `hsync_common/protocol/rdv_tokens.py` (`HMAC-SHA256(key, "rdv/1" || bucket)[:32]`, constant-time compare); the shared module is the single implementation used by the canonical daemon and the client mirror | `derive_bucket_token`, `verify_bucket_token`, `BUCKET_TOKEN_LEN` |
+| `python/src/hsync_rendezvous/server.py` | QUIC adapter: one **or more** QUIC/UDP listeners (`start_servers`, `--ports`; multi-port, decision 57) sharing ONE handler/routing table and guard, self-signed TLS identity (`hsync_common.ssl_utils`, ECDSA P-256), RETRY, bounded receive windows (≤32 KiB/stream, ≤128 KiB/connection), frame IO bound to 8 KiB (framing only — parsing/validation lives in `handler.py`), per-IP/global connection guard; best-effort bind (a busy port is skipped); persistent identity by default, in-memory via `--ephemeral` (ADR-0034/ADR-0037), atomic unique-temp write + on-load key/cert consistency check (decision 54); rotation preserves the existing DNS/IP SANs (decision 62) | `start_server`, `start_servers`, `NodeIdentity`, `make_identity`, `load_or_create_identity`, `load_identity`, `rotate_identity`, `rotation_hint`, `_san_names`, `IdentityError`, `_atomic_write_identity`, `_key_matches_certificate`, `RendezvousQuicProtocol` (`MAX_SESSIONS_PER_CONNECTION`), `ConnectionGuard`, `_ensure_identity_dir` |
+| `python/src/hsync_rendezvous/upnp.py` | Facade over the SSRF-hardened `hsync_common.upnp` SSOT (shared with `hsync-client`): adds the async `UpnpManager`; stateless when no IGD. Opt-in (`--upnp`), one manager per bound port so every `--ports` door is also mapped; the mapping carries a finite lease (2x the refresh window) and is removed on graceful shutdown | `UpnpManager.run`, `UpnpManager.close`, `add_port_mapping`, `discover_igd` |
+| `python/src/hsync_rendezvous/diagnostics.py` | Two stderr channels: **always-on `warn`/`error`** node health (peer-free by construction, field allow-list, error dedup with `suppressed=<n>`) and the opt-in **full operation log** (decisions #25, #35, #36); never on disk (no-log invariant); line format `<ISO-8601 UTC Z> - hsync-rendezvous[<pid>] <level>: …` | `configure_debug`, `debug_enabled` (cheap predicate hot paths use to skip building `debug_event` fields when the opt-in sink is off), `debug_log`, `debug_event`, `warn_event`, `error_event`, `_emit`, `_sanitize`, `_PUBLIC_FIELDS` |
+| `python/src/hsync_rendezvous/cli.py` | Typer multi-command app; group keys from `--keys-fd` / `HSYNC_RENDEZVOUS_KEYS_FD` or `--keys-file` / `HSYNC_RENDEZVOUS_KEYS_FILE` (read once, size- and time-bounded; duplicate buckets refused — decisions 54/59/61); near-expiry and mismatch hints name the configured identity; fail-fast config; `--ttl`/`--debug`/`--ready-file` seams; `--identity`/`--public-host` + `identity show`/`rotate`; process lifecycle: SIGINT/SIGTERM take the graceful path, SIGHUP is ignored, sd_notify READY/STATUS/WATCHDOG/STOPPING (decisions 67/68); opt-in aggregate sinks: `--metrics-port`/`--metrics-token-*` (loopback + Bearer), `--stats-file`/`--stats-interval` (Prometheus text file), shared with the handler and the guard (decisions 71/72) | `run`, `identity_show`, `identity_rotate`, `main` (`--version`), `_load_keys`, `_load_keys_file`, `_parse_keys`, `_read_fd`, `_fd_readable_before`, `_near_expiry_reason`, `_async_main`, `_prune_loop`, `_watchdog_loop`, `_install_shutdown_handlers` |
+| `python/src/hsync_rendezvous/systemd.py` | `sd_notify` sender for the service manager: READY=1 (every requested listener bound), WATCHDOG=1 (fed at half `$WATCHDOG_USEC`), STOPPING=1 (teardown start); honours `$NOTIFY_SOCKET` including the `@` abstract namespace and refuses a ping addressed to another `$WATCHDOG_PID`; inert and exception-free outside systemd (container without systemd, launchd, Windows, foreground) | `notify_ready`, `notify_stopping`, `notify_watchdog`, `watchdog_interval`, `_send` |
+| `python/src/hsync_rendezvous/stats.py` | Peer-free aggregate counters (RAM only, O(1)): connection and registered-peer levels, event-exact peaks with their wall-clock stamp, lifetime counters, relay session/byte aggregates and the closed metrics-outcome list; renders the Prometheus text exposition with a fixed cardinality and no label that could identify a peer (decisions 71) | `NodeStats`, `METRICS_OUTCOMES`, `NodeStats.connections_changed`, `NodeStats.peers_changed`, `NodeStats.relay_session_opened`, `NodeStats.relay_session_closed`, `NodeStats.relay_bytes`, `NodeStats.render_prometheus`, `NodeStats.status_text` |
+| `python/src/hsync_rendezvous/relay.py` | Data-relay pairing and byte pump (ADR-0047): `RelayRegistry` holds the listener control streams, pairs a requester with the listener of its `target_cid`, and bridges the two QUIC streams symmetrically (fixed `RELAY_BUFFER_BYTES` + `drain()` both ways, idle timeout per direction, per-session byte ceiling, `await`-based aggregate bandwidth shaper, attach timeout, host-derived session ceilings); RAM only, aggregate counters only (`--relay` opt-in) | `RelayRegistry`, `RelayQuotas`, `RelayHandoff`, `RELAY_BUFFER_BYTES`, `RELAY_ATTACH_TIMEOUT_S`, `RelayRegistry.run`, `RelayRegistry.close` |
+| `python/src/hsync_rendezvous/metrics.py` | Loopback-only, bearer-authenticated `/metrics`: a rigid HTTP/1.1 responder (one request per connection, 8 KiB header cap, 5 s read timeout, `GET`/`HEAD` only, no body, no keep-alive), constant-time token check with a uniform 401, a token bucket and a concurrency cap; stdlib only, because the project lock cannot gain a runtime dependency (decision 72) | `MetricsEndpoint`, `MetricsServer` (`start`, `aclose`), `PROMETHEUS_CONTENT_TYPE` |
 | `python/fuzz/fuzz_boot.py` | Deterministic stdlib fuzz harness (decoder + SSDP/token validators; security invariants, not just crash-freedom; CI burst in `python/tests/test_fuzz_harness.py`) | `run_fuzz`, `Finding`, targets `handle`/`ssdp`/`token` |
 | `python/fuzz/fuzz_guided.py` | Coverage-guided driver on the same generators/invariants: per-iteration branch-arc signatures via `coverage.Coverage` (branch=True), evolving FIFO-capped corpus (cap 512), deterministic seeds, corpus persistence (`--corpus-out/--corpus-in`); ~140 it/s (tracing) vs ~20 000 it/s static | `run_guided`, `_ArcMeter.arcs`, `_guided_frame` |
 
@@ -54,11 +54,11 @@ UDP :443
 1. `server.py` reads one newline-terminated frame (≤ 8 KiB, checked on the frame
    length itself so an oversized frame always closes the stream); a frame longer
    than 8 KiB closes the session silently (no-log).
-2. `BootHandler.handle` (`python/src/hsync_bootnode/handler.py::BootHandler.handle`) first consults
+2. `RendezvousHandler.handle` (`python/src/hsync_rendezvous/handler.py::RendezvousHandler.handle`) first consults
    the malformed-frame budget: an IP that has exhausted it is dropped before the
    parser runs, so a parse flood costs no event-loop CPU. Otherwise the raw frame
-   is validated in a single pass via the `BootFrame` discriminated union
-   (`BOOT_FRAME_ADAPTER.validate_json`). `ValidationError` → silent drop
+   is validated in a single pass via the `RdvFrame` discriminated union
+   (`RDV_FRAME_ADAPTER.validate_json`). `ValidationError` → silent drop
    (no-log, no oracle); it charges only the malformed-frame budget, never the
    valid-frame admission, so a garbage sender cannot throttle valid neighbours
    behind a shared NAT IP. Only a *valid* frame then charges the generic per-IP
@@ -102,12 +102,12 @@ UDP :443
   private key matches its certificate (decision 54). Verified by
   `python/tests/test_nolog.py` under a read-only filesystem.
 - **Anti-amplification**: QUIC RETRY + address-validation before connection
-  state (`start_server(..., retry=True)`, `python/src/hsync_bootnode/server.py`),
+  state (`start_server(..., retry=True)`, `python/src/hsync_rendezvous/server.py`),
   and a node-side **transport guard** (`ConnectionGuard`,
-  `python/src/hsync_bootnode/server.py`): a per-IP handshake budget (~30/s,
+  `python/src/hsync_rendezvous/server.py`): a per-IP handshake budget (~30/s,
   burst 100), a per-IP cap and a process-wide cap on simultaneously-open
   connections, all sized by `ResourceLimits` from host RAM/CPU, checked in
-  `BootQuicProtocol.datagram_received` before any handshake work; released on
+  `RendezvousQuicProtocol.datagram_received` before any handshake work; released on
   `ConnectionTerminated`, lazily forgetting quiet/empty IPs. QUIC receive windows
   are bounded (≤32 KiB per stream, ≤128 KiB per connection). The guard shares
   the rate-limit seam (`--no-rate-limit`) so benchmarks stay unthrottled.
@@ -123,23 +123,23 @@ UDP :443
 - **Protected buckets**: the group key never enters any record; only the derived token.
   Protected buckets are declared by the operator (`--protected-bucket`,
   repeatable) and fail fast at startup if declared without a key
-  (`BootConfigError`, exit code 2). The client derives the same token from its p2p
+  (`RendezvousConfigError`, exit code 2). The client derives the same token from its p2p
   shared key (raw `HSYNC_P2P_KEY`, or `HSYNC_P2P_PASSPHRASE` derived to it →
   `derive_bucket_token`), so one client key
   authenticates to any bucket whose group key equals it; the user-facing model is
   `docs/usage.md` ("Privacy and anonymity model").
-- **Private node** (`--private` / `HSYNC_BOOTNODE_PRIVATE=1`): the protected-bucket check
+- **Private node** (`--private` / `HSYNC_RENDEZVOUS_PRIVATE=1`): the protected-bucket check
   applies to every bucket, `leave` included, and a node started without any
-  group key fails fast (`BootConfigError`, exit code 2). It is a policy on the
+  group key fails fast (`RendezvousConfigError`, exit code 2). It is a policy on the
   same wire contract — no new frame field, no protocol bump. Operator-facing
   procedure (provisioning, rotation, trade-offs) is in `docs/usage.md`.
 - **Sandboxed deployment**: hardened systemd unit
-  (`packaging/systemd/hsync-bootnode.service`: DynamicUser, protect*,
+  (`packaging/systemd/hsync-rendezvous.service`: DynamicUser, protect*,
   SystemCallFilter, `Type=notify` + `WatchdogSec=` so readiness means "every
   listener bound" and a wedged event loop is restarted, plus explicit restart
   bounds and cgroup caps — decisions 68/69), launchd plist
-  (`packaging/launchd/it.hsync.bootnode.plist`), WinSW service definition
-  (`packaging/windows/hsync-bootnode-service.xml`). The `.deb` maintainer scripts
+  (`packaging/launchd/it.hsync.rendezvous.plist`), WinSW service definition
+  (`packaging/windows/hsync-rendezvous-service.xml`). The `.deb` maintainer scripts
   stop the node on an upgrade without touching the administrator's enablement and
   start it again only when it was enabled (decision 70).
 - **Observability**: peer-free aggregates (`stats.py`) reach the operator only
@@ -152,13 +152,13 @@ UDP :443
 
 | Target | Deployment unit | Status |
 |---|---|---|
-| Linux | `packaging/systemd/hsync-bootnode.service` | v1 |
-| macOS | `packaging/launchd/it.hsync.bootnode.plist` | v1 |
-| Windows | `packaging/windows/hsync-bootnode-service.xml` (WinSW) | v1 |
-| Windows installer (x64) | `packaging/windows/hsync-bootnode.iss` (Inno Setup, built in CI) + `hsync-bootnode-service-frozen.xml`; per-machine, registers the WinSW service | v1 |
+| Linux | `packaging/systemd/hsync-rendezvous.service` | v1 |
+| macOS | `packaging/launchd/it.hsync.rendezvous.plist` | v1 |
+| Windows | `packaging/windows/hsync-rendezvous-service.xml` (WinSW) | v1 |
+| Windows installer (x64) | `packaging/windows/hsync-rendezvous.iss` (Inno Setup, built in CI) + `hsync-rendezvous-service-frozen.xml`; per-machine, registers the WinSW service | v1 |
 | Linux `.deb` (amd64/arm64/armhf) | `../compile.sh -t deb`/`deb-all` (`-l/--language`, default `python`; `c` rejected until that port exists) + `packaging/deb/` (control, maintainer scripts, deb unit, man page) | v1 |
-| Linux `.rpm` (x86_64/aarch64) | `../compile.sh -t rpm`/`rpm-all` + `packaging/rpm/` (`.spec`, Rocky Linux 9 builder); `python/compile.sh -t onedir` payload staged for `/usr/lib/hsync-bootnode` | v1 |
-| Raspberry Pi OS (armhf/arm64) | `../compile.sh -t rpi` (Docker + qemu, reuses `packaging/deb/Dockerfile.builder`) → `dist/rpi/<arch>/hsync-bootnode` | v1 |
+| Linux `.rpm` (x86_64/aarch64) | `../compile.sh -t rpm`/`rpm-all` + `packaging/rpm/` (`.spec`, Rocky Linux 9 builder); `python/compile.sh -t onedir` payload staged for `/usr/lib/hsync-rendezvous` | v1 |
+| Raspberry Pi OS (armhf/arm64) | `../compile.sh -t rpi` (Docker + qemu, reuses `packaging/deb/Dockerfile.builder`) → `dist/rpi/<arch>/hsync-rendezvous` | v1 |
 
 ## Packaging
 
@@ -166,33 +166,33 @@ UDP :443
   `-o/--output-dir`, `onedir` bundle consumed by the root entry point).
   `python/dist/` and `python/build/` are git-ignored build outputs.
 - `../compile.sh -t native` wraps `python/compile.sh -t native` and places the
-  host executable at `dist/<os>-<arch>/hsync-bootnode`.
+  host executable at `dist/<os>-<arch>/hsync-rendezvous`.
 - `../compile.sh -t rpi` cross-builds the onefile executable for Raspberry Pi
   OS 32-bit (armhf/armv7) and 64-bit (arm64/aarch64) inside an emulated
   debian:bookworm container, reusing `packaging/deb/Dockerfile.builder`; output
-  `dist/rpi/<arch>/hsync-bootnode`. PyInstaller's `build/` and `*.spec`
+  `dist/rpi/<arch>/hsync-rendezvous`. PyInstaller's `build/` and `*.spec`
   intermediates are redirected to `/tmp/work` (via `HSYNC_PYINSTALLER_WORKPATH`)
   so nothing is written into the mounted host tree.
 - `../compile.sh -t deb` embeds the selected language's payload
-  (today `python/compile.sh -t onedir`) as `/usr/lib/hsync-bootnode/` with a
-  `/usr/bin/hsync-bootnode` symlink, the hardened deb systemd unit, and the
-  gzipped man page; `DEBIAN/postinst` creates `/etc/hsync-bootnode/` (0750)
+  (today `python/compile.sh -t onedir`) as `/usr/lib/hsync-rendezvous/` with a
+  `/usr/bin/hsync-rendezvous` symlink, the hardened deb systemd unit, and the
+  gzipped man page; `DEBIAN/postinst` creates `/etc/hsync-rendezvous/` (0750)
   for the out-of-package group-keys file and never enables the service.
 - `../compile.sh -t rpm` builds a `.rpm` from a staged buildroot
   (`_stage_rpm_buildroot`) reusing the deb man page + unit, and runs `rpmbuild`
   with an absolute `_topdir` and a writable `_dbpath` (a relative `_topdir`
   breaks `%{buildroot}`, and non-root rpmbuild cannot open `/var/lib/rpm`).
   `packaging/rpm/Dockerfile.builder` (Rocky Linux 9) provides the cross-build;
-  the spec uses `DynamicUser` (no system user) and creates `/etc/hsync-bootnode`
+  the spec uses `DynamicUser` (no system user) and creates `/etc/hsync-rendezvous`
   (0750) in `%post`.
-- The Windows installer (`packaging/windows/hsync-bootnode.iss`, built in CI on
+- The Windows installer (`packaging/windows/hsync-rendezvous.iss`, built in CI on
   `windows-latest`) is per-machine: it installs the frozen `.exe` + WinSW (as
-  `hsync-bootnode-service.exe`) + `hsync-bootnode-service-frozen.xml`, grants
-  LocalService modify on `%ProgramData%\hsync-bootnode`, then installs and starts
+  `hsync-rendezvous-service.exe`) + `hsync-rendezvous-service-frozen.xml`, grants
+  LocalService modify on `%ProgramData%\hsync-rendezvous`, then installs and starts
   the service. Uninstall stops and removes it.
 - The release workflow (`../.github/workflows/release.yml`) also publishes
-  fixed-name `latest` aliases (e.g. `hsync-bootnode-x86_64.rpm`,
-  `hsync-bootnode-amd64.deb`, `hsync-bootnode-windows-amd64-setup.exe`) so the
+  fixed-name `latest` aliases (e.g. `hsync-rendezvous-x86_64.rpm`,
+  `hsync-rendezvous-amd64.deb`, `hsync-rendezvous-windows-amd64-setup.exe`) so the
   docs can link `releases/latest/download/<name>` without a version
   (`RELEASES.md` §5.8); guarded by `python/tests/test_compile_script.py`.
 - **Binary portability floor**: `native` and `deb` build on the host, so their
@@ -218,10 +218,10 @@ Four consumer-facing ways to run a node, kept identical in shape to
 
 | Method | Files | Notes |
 |---|---|---|
-| Installer script | `install.sh` | Resolves the latest release (or a pinned `--version`/`--image-digest`), checks every prerequisite (Docker, Compose v2, and `cosign` unless `--no-verify`) before writing anything, verifies the image's Sigstore signature, writes `.env` + a self-contained `compose.yaml` under `~/.local/share/hsync-bootnode`, runs `docker compose up -d` and waits for the readiness PID. Docker Compose only; never `sudo`. |
-| Docker / Compose | `Dockerfile`, `Dockerfile.dockerignore`, `python/entrypoint.sh`, `compose.yaml`, `docker.sh` | Build context = repo parent (needs the sibling `hsync-common`); the entrypoint opens the mounted group-keys file as fd 3; the container binds the unprivileged UDP 8443, the host maps `BOOTNODE_HOST_UDP_PORT` (default 443); no new env vars. `docker.sh` builds/runs from source. |
+| Installer script | `install.sh` | Resolves the latest release (or a pinned `--version`/`--image-digest`), checks every prerequisite (Docker, Compose v2, and `cosign` unless `--no-verify`) before writing anything, verifies the image's Sigstore signature, writes `.env` + a self-contained `compose.yaml` under `~/.local/share/hsync-rendezvous`, runs `docker compose up -d` and waits for the readiness PID. Docker Compose only; never `sudo`. |
+| Docker / Compose | `Dockerfile`, `Dockerfile.dockerignore`, `python/entrypoint.sh`, `compose.yaml`, `docker.sh` | Build context = repo parent (needs the sibling `hsync-common`); the entrypoint opens the mounted group-keys file as fd 3; the container binds the unprivileged UDP 8443, the host maps `RENDEZVOUS_HOST_UDP_PORT` (default 443); no new env vars. `docker.sh` builds/runs from source. |
 | Debian package | `packaging/deb/` (see above) | Hardened systemd unit, `DynamicUser`, `CAP_NET_BIND_SERVICE`, group keys as a systemd credential. |
-| From source | `run.sh` | Uniform clone-and-run: checks `../hsync-common`, creates `python/.venv` via Poetry, `exec hsync-bootnode`. Mirrors `hsync-server/run.sh`. |
+| From source | `run.sh` | Uniform clone-and-run: checks `../hsync-common`, creates `python/.venv` via Poetry, `exec hsync-rendezvous`. Mirrors `hsync-server/run.sh`. |
 
 ## Tests
 
@@ -235,19 +235,19 @@ Four consumer-facing ways to run a node, kept identical in shape to
 | `python/tests/test_nolog.py` | Zero-write invariant under read-only fs |
 | `python/tests/test_upnp.py` | SSDP/SOAP shapes, error downgrade, stateless no-IGD, LOCATION/source/redirect hardening |
 | `python/tests/test_cli.py` | CLI version/fail-fast/keys contract (fd size + time bounds, fd 1/2 refused; file source, symlink/permission/cap checks) |
-| `tests/` (repo root) | **Black-box** suite (language-neutral): spawns the real binary (`HSYNC_BOOTNODE_BIN`), speaks only `boot/1` over QUIC, gated by `HSYNC_BB_BOOTNODE=1` |
+| `tests/` (repo root) | **Black-box** suite (language-neutral): spawns the real binary (`HSYNC_RENDEZVOUS_BIN`), speaks only `rdv/1` over QUIC, gated by `HSYNC_BB_RENDEZVOUS=1` |
 
 ### Black-box (language-neutral) tests
 
 The root `tests/` directory holds the functional black-box suite. It is
 deliberately **independent of any implementation language**: it launches the
-bootnode executable (path via `HSYNC_BOOTNODE_BIN`, defaulting to the Python
-build) as a subprocess, waits for the `HSYNC_BOOTNODE_READY_FILE` readiness
+rendezvous executable (path via `HSYNC_RENDEZVOUS_BIN`, defaulting to the Python
+build) as a subprocess, waits for the `HSYNC_RENDEZVOUS_READY_FILE` readiness
 seam (keyed on the ready file appearing with a PID, not on PID equality with the
 launcher — a onefile-packaged binary runs the app in a child process), and
-drives it **only** through the public CLI + `boot/1` wire protocol
-(QUIC/UDP, NDJSON, ALPN `hsync-boot/1`). It never imports
-`hsync_bootnode`. The same suite will validate the future `c/`
+drives it **only** through the public CLI + `rdv/1` wire protocol
+(QUIC/UDP, NDJSON, ALPN `hsync-rdv/1`). It never imports
+`hsync_rendezvous`. The same suite will validate the future `c/`
 port unchanged. Benchmarks (`bench/`) follow the same rule for L2/L3
 (`bench_quic.py`, `soak.py` spawn the binary); L1 (`bench/bench_handler.py`) and
 the diagnostics (L4 `bench/profile_handshake.py` — handshake vs `aioquic`
@@ -256,19 +256,19 @@ Python-internal.
 
 ## Known gaps / next phases
 
-The monorepo `p2p`/bootnode migration is **complete**:
+The monorepo `p2p`/rendezvous migration is **complete**:
 
-- **Done**: `hsync-common` mirror (`protocol/bootnode.py`, fixtures, drift test,
+- **Done**: `hsync-common` mirror (`protocol/rendezvous.py`, fixtures, drift test,
   capabilities v3); the advisory `capacity` hint (`0..32`) and the derived
   `reachable` flag relayed `register` → record → `query` (decisions 23–24); the
   **election advertisement** (`server_ready`/`prefer_master`/`never_master`/
-  `startup_time`/`sync_direction`) relayed the same way so a bootnode-discovered
+  `startup_time`/`sync_direction`) relayed the same way so a rendezvous-discovered
   peer ranks in the client's master election exactly like an mDNS-discovered one
   (decision 31); the
-  bootnode's opt-in **debug operation log** (decision 25); client `hsync p2p`
-  with both discovery plans and its black-box suite; desktop mode, wd-os5
+  rendezvous's opt-in **debug operation log** (decision 25); client `hsync p2p`
+  with both rendezvous plans and its black-box suite; desktop mode, wd-os5
   packaging; the peer data-plane protocol is `p2p/1`.
-- **Open**: **Android client for `boot/1`** (deferred; the QUIC stack decision is
+- **Open**: **Android client for `rdv/1`** (deferred; the QUIC stack decision is
   still open — the Android project removed its Rust/`quiche` JNI groundwork).
   Current state: the Android project's
   [`protocol-mirror`](https://github.com/albertsdk/hsync-android/blob/main/llm-wiki/modules/protocol-mirror.md)

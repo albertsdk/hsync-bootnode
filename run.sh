@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 
-# HSYNC bootnode — run from a fresh clone.
+# HSYNC rendezvous — run from a fresh clone.
 #
 # Requires the hsync-common repository checked out as a sibling (the Python v1
 # declares it as a Poetry path dependency). This script is the uniform
 # "run after clone" entry point, mirroring hsync-server/run.sh: it creates (or
 # reuses) the in-project virtualenv, installs the main dependencies once, and
-# starts the node, forwarding any arguments to `hsync-bootnode`.
+# starts the node, forwarding any arguments to `hsync-rendezvous`.
 
 set -euo pipefail
 
@@ -18,10 +18,10 @@ case "$(uname -s)" in
     MINGW*|CYGWIN*|MSYS*) readonly VENV_BIN_DIR="Scripts" BIN_EXT=".exe" ;;
     *)                    readonly VENV_BIN_DIR="bin" BIN_EXT="" ;;
 esac
-readonly BIN="${PY_DIR}/.venv/${VENV_BIN_DIR}/hsync-bootnode${BIN_EXT}"
+readonly BIN="${PY_DIR}/.venv/${VENV_BIN_DIR}/hsync-rendezvous${BIN_EXT}"
 
 if [[ ! -d "${SIBLING}" ]]; then
-    printf 'Error: hsync-common must be checked out as a sibling of hsync-bootnode.\n' >&2
+    printf 'Error: hsync-common must be checked out as a sibling of hsync-rendezvous.\n' >&2
     printf '  git clone <hsync-common-url> %s\n' "${SIBLING}" >&2
     exit 1
 fi

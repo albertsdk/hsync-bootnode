@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from hsync_bootnode.ratelimit import TokenBucketLimiter
+from hsync_rendezvous.ratelimit import TokenBucketLimiter
 
 
 def test_allow_burst_then_refill_on_injected_clock() -> None:

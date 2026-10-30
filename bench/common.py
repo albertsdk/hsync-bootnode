@@ -3,7 +3,7 @@
 Stdlib only. Deterministic counter-based CIDs keep every benchmark run
 reproducible without ``random`` seed juggling. Frame builders live in
 ``tests/harness.py`` (single source, language-neutral) and are imported by the
-benchmark scripts. This module never imports ``hsync_bootnode``.
+benchmark scripts. This module never imports ``hsync_rendezvous``.
 """
 
 from __future__ import annotations
@@ -111,7 +111,7 @@ async def timed_query(
 ) -> float:
     """Time one ``query`` round-trip on an established client, in seconds.
 
-    ``client`` is a ``tests/harness.py`` ``BootClient`` (duck-typed to keep this
+    ``client`` is a ``tests/harness.py`` ``RdvClient`` (duck-typed to keep this
     module free of the harness import). Raises ``RuntimeError`` when the reply
     is not a ``response`` frame, or — when ``require_no_error`` — when the node
     answered an error: timing a rate-limited reply would not measure the query
@@ -156,7 +156,7 @@ def maybe_write_json(path: str | None, results: Sequence[BenchResult]) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Node process sampling (Linux /proc) — CPU and RSS of the spawned bootnode
+# Node process sampling (Linux /proc) — CPU and RSS of the spawned rendezvous
 # --------------------------------------------------------------------------- #
 
 try:

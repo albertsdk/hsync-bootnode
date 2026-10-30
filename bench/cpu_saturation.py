@@ -1,6 +1,6 @@
 """L5 — CPU-saturation sweep (language-neutral driver; Linux /proc sampling).
 
-Answers "at what load does one core saturate?". The bootnode is a single-process
+Answers "at what load does one core saturate?". The rendezvous is a single-process
 asyncio loop, so its CPU is measured as a fraction of ONE core (from
 ``/proc/<pid>/stat`` utime+stime). This script spawns the binary and drives it
 with a rising number of concurrent query connections; at each level it reports
@@ -14,7 +14,7 @@ competes for CPU. The *node* CPU is isolated via ``/proc``, but the latency
 figures are end-to-end through the client.
 
 Usage:
-    cd hsync-bootnode && python/.venv/bin/python bench/cpu_saturation.py \\
+    cd hsync-rendezvous && python/.venv/bin/python bench/cpu_saturation.py \\
         [--peers 200] [--levels 1,2,4,8,16,32] [--step-seconds 3] [--json-out FILE]
 """
 
@@ -41,10 +41,10 @@ from common import (  # noqa: E402
     timed_query,
 )
 from harness import (  # noqa: E402
-    BootClient,
+    RdvClient,
     query_frame,
     register_frame,
-    start_bootnode,
+    start_rendezvous,
     terminate,
 )
 
@@ -75,7 +75,7 @@ class LevelResult:
 
 async def _prime(port: int, peers: int) -> None:
     """Register ``peers`` peers into the shared bucket (the load's table)."""
-    async with BootClient(port) as client:
+    async with RdvClient(port) as client:
         for cid in make_cids(peers, start=7_000_000):
             await client.exchange(register_frame(cid, _BUCKET), timeout=5.0)
 
@@ -87,7 +87,7 @@ async def _level(port: int, node_pid: int, concurrency: int, seconds: float) -> 
     latencies: list[float] = []
 
     async def worker() -> None:
-        async with BootClient(port) as client:
+        async with RdvClient(port) as client:
             while time.monotonic() < deadline:
                 latencies.append(await timed_query(client, query, require_no_error=False))
 
@@ -165,11 +165,11 @@ def main() -> None:
     args = parser.parse_args()
 
     levels = [int(x) for x in args.levels.split(",") if x.strip()]
-    with tempfile.TemporaryDirectory(prefix="bootnode-cpu-") as tmp:
-        handle = start_bootnode(Path(tmp), no_rate_limit=True)
+    with tempfile.TemporaryDirectory(prefix="rendezvous-cpu-") as tmp:
+        handle = start_rendezvous(Path(tmp), no_rate_limit=True)
         node_pid = handle.node_pid
-        if node_pid is None:  # pragma: no cover - start_bootnode always awaits readiness
-            raise RuntimeError("bootnode readiness PID was not reported")
+        if node_pid is None:  # pragma: no cover - start_rendezvous always awaits readiness
+            raise RuntimeError("rendezvous readiness PID was not reported")
         try:
             asyncio.run(_prime(handle.port, args.peers))
             results = asyncio.run(_amain(handle.port, node_pid, levels, args.step_seconds))

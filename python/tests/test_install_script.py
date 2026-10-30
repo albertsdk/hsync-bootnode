@@ -1,6 +1,6 @@
 """Guard for ``install.sh``'s container-image signature verification.
 
-The installer used to pull ``ghcr.io/albertsdk/hsync-bootnode:<tag>`` and start it
+The installer used to pull ``ghcr.io/albertsdk/hsync-rendezvous:<tag>`` and start it
 with no integrity check: a mutated tag or a compromised registry answer would
 run arbitrary code as the node. It now verifies the image's Sigstore (cosign)
 signature — keyless, signed by the release workflow — before starting, and can
@@ -30,7 +30,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 DIGEST = "sha256:" + "a" * 64
-IMAGE = "ghcr.io/albertsdk/hsync-bootnode"
+IMAGE = "ghcr.io/albertsdk/hsync-rendezvous"
 LATEST_TAG = "v9.9.9"
 
 
@@ -146,7 +146,7 @@ def _run(
         curl = bindir / "curl"
         curl.write_text(
             "#!/usr/bin/env bash\n"
-            f"printf '%s\\n' 'https://github.com/albertsdk/hsync-bootnode/releases/tag/{LATEST_TAG}'\n",
+            f"printf '%s\\n' 'https://github.com/albertsdk/hsync-rendezvous/releases/tag/{LATEST_TAG}'\n",
             encoding="utf-8",
         )
         curl.chmod(0o755)
@@ -261,7 +261,7 @@ def test_image_digest_pins_the_exact_reference(tmp_path: Path) -> None:
     proc, state, log = _run(tmp_path, "--image-digest", DIGEST)
     assert proc.returncode == 0, proc.stderr
     env_file = (state / ".env").read_text(encoding="utf-8")
-    assert f"HSYNC_BOOTNODE_IMAGE={IMAGE}@{DIGEST}" in env_file
+    assert f"HSYNC_RENDEZVOUS_IMAGE={IMAGE}@{DIGEST}" in env_file
     assert f"{IMAGE}@{DIGEST}" in log.read_text(encoding="utf-8")
 
 
@@ -275,7 +275,7 @@ def test_latest_version_resolves_and_is_verified(tmp_path: Path) -> None:
     proc, state, log = _run(tmp_path, "--version", "latest", with_curl=True)
     assert proc.returncode == 0, proc.stderr
     env_file = (state / ".env").read_text(encoding="utf-8")
-    assert f"HSYNC_BOOTNODE_IMAGE={IMAGE}:{LATEST_TAG}" in env_file
+    assert f"HSYNC_RENDEZVOUS_IMAGE={IMAGE}:{LATEST_TAG}" in env_file
     assert f"{IMAGE}:{LATEST_TAG}" in log.read_text(encoding="utf-8")
 
 
@@ -290,7 +290,7 @@ def test_release_workflow_signs_the_image() -> None:
 def test_snap_docker_rejects_a_hidden_install_dir(tmp_path: Path) -> None:
     """Snap's home interface denies hidden paths under $HOME, so a snap-packaged
     docker cannot read .env in the default ~/.local/share directory."""
-    hidden_dir = tmp_path / ".local" / "share" / "hsync-bootnode"
+    hidden_dir = tmp_path / ".local" / "share" / "hsync-rendezvous"
     proc, _state, _log = _run(tmp_path, snap_docker=True, install_dir=hidden_dir)
     assert proc.returncode != 0
     assert "snap" in proc.stderr
@@ -300,7 +300,7 @@ def test_snap_docker_rejects_a_hidden_install_dir(tmp_path: Path) -> None:
 
 
 def test_snap_docker_allows_a_non_hidden_install_dir(tmp_path: Path) -> None:
-    non_hidden = tmp_path / "hsync-bootnode"
+    non_hidden = tmp_path / "hsync-rendezvous"
     proc, _state, _log = _run(tmp_path, snap_docker=True, install_dir=non_hidden)
     assert proc.returncode == 0, proc.stderr
 
@@ -313,13 +313,13 @@ def test_snap_docker_adapts_a_default_hidden_install_dir(tmp_path: Path, monkeyp
     monkeypatch.setenv("HOME", str(home))
     proc, _state, _log = _run(tmp_path, snap_docker=True, use_default_dir=True)
     assert proc.returncode == 0, proc.stderr
-    assert (home / "hsync-bootnode" / ".env").exists()
+    assert (home / "hsync-rendezvous" / ".env").exists()
 
 
 def test_compose_failure_hints_at_snap_hidden_paths(tmp_path: Path) -> None:
     """A snap docker failure carrying the hidden-path signature gets an
     actionable hint even where the pre-flight check did not catch it."""
-    non_hidden = tmp_path / "hsync-bootnode"
+    non_hidden = tmp_path / "hsync-rendezvous"
     proc, _state, _log = _run(tmp_path, snap_docker=True, config_fails=True, install_dir=non_hidden)
     assert proc.returncode != 0
     assert "Warning: docker is the snap package" in proc.stderr

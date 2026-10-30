@@ -10,7 +10,7 @@ import asyncio
 
 import pytest
 
-from hsync_bootnode.upnp import (
+from hsync_rendezvous.upnp import (
     IgdService,
     UpnpError,
     UpnpManager,
@@ -42,7 +42,7 @@ def test_add_mapping_soap_contains_expected_fields() -> None:
     assert "<NewProtocol>UDP</NewProtocol>" in soap
     assert "<NewInternalClient>192.168.1.10</NewInternalClient>" in soap
     assert "<NewEnabled>1</NewEnabled>" in soap
-    assert "hsync-bootnode" in soap
+    assert "hsync-rendezvous" in soap
 
 
 def test_parse_soap_error_finds_error_code() -> None:
@@ -172,7 +172,7 @@ def test_upnp_error_code_downgrade_message() -> None:
 
 
 def test_upnp_manager_stateless_when_no_igd(monkeypatch: object) -> None:
-    import hsync_bootnode.upnp as upnp_mod
+    import hsync_rendezvous.upnp as upnp_mod
 
     monkeypatch.setattr(upnp_mod, "discover_igd", lambda *a, **k: None)
     manager = upnp_mod.UpnpManager(443, refresh_interval=3600.0)
@@ -185,7 +185,7 @@ def test_upnp_manager_stateless_when_no_igd(monkeypatch: object) -> None:
 
 def test_upnp_manager_warns_once_when_no_igd(monkeypatch: object, capsys) -> None:
     """Without ``--debug`` the operator still learns the port was not mapped."""
-    import hsync_bootnode.upnp as upnp_mod
+    import hsync_rendezvous.upnp as upnp_mod
 
     monkeypatch.setattr(upnp_mod, "discover_igd", lambda *a, **k: None)
     manager = upnp_mod.UpnpManager(443, refresh_interval=3600.0)
@@ -202,7 +202,7 @@ async def test_upnp_manager_reports_a_failed_cycle(monkeypatch: object, capsys) 
     """An exception is retried, but never silently: the operator sees the reason."""
 
     def _boom(self) -> None:
-        raise UpnpError("SSDP discovery failed: Network is unreachable")
+        raise UpnpError("SSDP rendezvous failed: Network is unreachable")
 
     monkeypatch.setattr(UpnpManager, "_ensure_mapped", _boom)
     manager = UpnpManager(443, refresh_interval=3600.0)
@@ -215,7 +215,7 @@ async def test_upnp_manager_reports_a_failed_cycle(monkeypatch: object, capsys) 
     lines = capsys.readouterr().err.splitlines()
     assert len(lines) == 1
     assert " warn: upnp mapping unavailable" in lines[0]
-    assert "reason=SSDP discovery failed: Network is unreachable" in lines[0]
+    assert "reason=SSDP rendezvous failed: Network is unreachable" in lines[0]
 
 
 class _FakeSocket:
@@ -246,7 +246,7 @@ def test_ssdp_replies_off_lan_are_discarded_unopened(monkeypatch: object) -> Non
     the accepted source to the private LAN collapses it to LAN-hostile only,
     and the LOCATION validation on top covers even an on-LAN rogue device.
     """
-    import hsync_bootnode.upnp as upnp_mod
+    import hsync_rendezvous.upnp as upnp_mod
 
     ssdp_reply = (
         b"HTTP/1.1 200 OK\r\n"
@@ -284,7 +284,7 @@ def test_ssdp_location_host_must_match_reply_source(monkeypatch: object) -> None
     reply from one LAN host naming another would otherwise steer the fetch at a
     host that never answered.
     """
-    import hsync_bootnode.upnp as upnp_mod
+    import hsync_rendezvous.upnp as upnp_mod
 
     reply = b"HTTP/1.1 200 OK\r\nLOCATION: http://192.168.1.1:5000/rootDesc.xml\r\n\r\n"
     fetched: list[str] = []
@@ -309,7 +309,7 @@ def test_ssdp_location_host_must_match_reply_source(monkeypatch: object) -> None
 
 def test_upnp_manager_requests_a_finite_lease(monkeypatch: object) -> None:
     """The mapping carries a finite lease (crash-safety), not a permanent rule."""
-    import hsync_bootnode.upnp as upnp_mod
+    import hsync_rendezvous.upnp as upnp_mod
 
     captured: dict[str, object] = {}
 
@@ -327,7 +327,7 @@ def test_upnp_manager_requests_a_finite_lease(monkeypatch: object) -> None:
 
 @pytest.mark.asyncio
 async def test_upnp_manager_close_removes_the_mapping(monkeypatch: object) -> None:
-    import hsync_bootnode.upnp as upnp_mod
+    import hsync_rendezvous.upnp as upnp_mod
 
     calls: list[tuple[int, str]] = []
 
@@ -352,7 +352,7 @@ async def test_upnp_manager_close_is_a_noop_when_unmapped() -> None:
 @pytest.mark.asyncio
 async def test_upnp_manager_close_degrades_to_a_warning(monkeypatch: object, capsys) -> None:
     """A failed unmap must never raise on the shutdown path."""
-    import hsync_bootnode.upnp as upnp_mod
+    import hsync_rendezvous.upnp as upnp_mod
 
     def boom(service, *, external_port, protocol="UDP", **_kw):
         raise UpnpError("DeletePortMapping failed: Connection refused")

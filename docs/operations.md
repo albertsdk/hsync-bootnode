@@ -1,10 +1,10 @@
-# Operating a bootnode
+# Operating a rendezvous
 
 How-to for a node installed from the Debian/Ubuntu package and supervised by the
 packaged systemd unit (installation: [getting started](getting-started-deb.md);
 CLI, environment variables and units: [usage.md](usage.md)).
 
-A bootnode is a long-running network daemon. Four things keep it useful, and
+A rendezvous is a long-running network daemon. Four things keep it useful, and
 only the first is about the process itself:
 
 1. a supervisor that owns its lifecycle — never a foreground shell;
@@ -20,21 +20,21 @@ The package installs the unit but never enables it: starting at boot is your
 decision.
 
 ```bash
-sudo systemctl enable --now hsync-bootnode.service
-sudo systemctl status hsync-bootnode.service
+sudo systemctl enable --now hsync-rendezvous.service
+sudo systemctl status hsync-rendezvous.service
 ```
 
-Never start the node with `sudo hsync-bootnode run` in an SSH session. The unit is
+Never start the node with `sudo hsync-rendezvous run` in an SSH session. The unit is
 what gives it a restart policy, a filesystem sandbox, the group keys as a
 credential and a log that outlives the session; a manual run has none of them.
 
 ## Read the state of the unit
 
 ```bash
-systemctl is-enabled hsync-bootnode.service
-systemctl is-active hsync-bootnode.service
-systemctl show -p NRestarts hsync-bootnode.service
-sudo journalctl -u hsync-bootnode.service -n 50
+systemctl is-enabled hsync-rendezvous.service
+systemctl is-active hsync-rendezvous.service
+systemctl show -p NRestarts hsync-rendezvous.service
+sudo journalctl -u hsync-rendezvous.service -n 50
 ```
 
 The unit is `Type=notify`: `active` means the QUIC/UDP listeners were bound and
@@ -46,16 +46,16 @@ it.
 ## Probe it from outside
 
 Supervision answers "is the process alive?". Only a request from another host
-answers "does discovery work right now?": a cloud security group, a changed
+answers "does rendezvous work right now?": a cloud security group, a changed
 firewall rule, a lost NAT mapping or a filtered UDP port all leave a perfectly
 healthy process that no client can reach.
 
-The probe is a `boot/1` handshake read from a host that is **not** the node
+The probe is a `rdv/1` handshake read from a host that is **not** the node
 (`hsync` from the [client](https://github.com/albertsdk/hsync-client) must be
 installed there):
 
 ```bash
-hsync trust discovery-server fingerprint BOOTNODE_HOST:443
+hsync trust rendezvous-server fingerprint RENDEZVOUS_HOST:443
 ```
 
 It exits non-zero when no QUIC handshake completes, and prints the fingerprint it
@@ -63,28 +63,28 @@ received — the same value you distribute to clients, so a run also detects an
 identity change. To run it on a schedule, add a timer on the monitoring host:
 
 ```bash
-sudo tee /usr/local/bin/hsync-bootnode-probe >/dev/null <<'EOF'
+sudo tee /usr/local/bin/hsync-rendezvous-probe >/dev/null <<'EOF'
 #!/bin/sh
-exec hsync trust discovery-server fingerprint "$1"
+exec hsync trust rendezvous-server fingerprint "$1"
 EOF
-sudo chmod 755 /usr/local/bin/hsync-bootnode-probe
+sudo chmod 755 /usr/local/bin/hsync-rendezvous-probe
 ```
 
 ```bash
-sudo tee /etc/systemd/system/hsync-bootnode-probe.service >/dev/null <<'EOF'
+sudo tee /etc/systemd/system/hsync-rendezvous-probe.service >/dev/null <<'EOF'
 [Unit]
-Description=Reachability probe for the HSYNC bootnode
+Description=Reachability probe for the HSYNC rendezvous
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/hsync-bootnode-probe BOOTNODE_HOST
+ExecStart=/usr/local/bin/hsync-rendezvous-probe RENDEZVOUS_HOST
 EOF
 ```
 
 ```bash
-sudo tee /etc/systemd/system/hsync-bootnode-probe.timer >/dev/null <<'EOF'
+sudo tee /etc/systemd/system/hsync-rendezvous-probe.timer >/dev/null <<'EOF'
 [Unit]
-Description=Probe the HSYNC bootnode every five minutes
+Description=Probe the HSYNC rendezvous every five minutes
 
 [Timer]
 OnBootSec=2min
@@ -94,7 +94,7 @@ OnUnitActiveSec=5min
 WantedBy=timers.target
 EOF
 sudo systemctl daemon-reload
-sudo systemctl enable --now hsync-bootnode-probe.timer
+sudo systemctl enable --now hsync-rendezvous-probe.timer
 ```
 
 A failed probe is a failed unit: point `OnFailure=` at your alerting unit, or let
@@ -111,25 +111,25 @@ Mint the endpoint's bearer token (its only authorization, at least 32
 characters):
 
 ```bash
-sudo sh -c 'openssl rand -hex 32 > /etc/hsync-bootnode/metrics-token'
-sudo chmod 0600 /etc/hsync-bootnode/metrics-token
+sudo sh -c 'openssl rand -hex 32 > /etc/hsync-rendezvous/metrics-token'
+sudo chmod 0600 /etc/hsync-rendezvous/metrics-token
 ```
 
 ```bash
-sudo systemctl edit hsync-bootnode.service
+sudo systemctl edit hsync-rendezvous.service
 ```
 
 ```ini
 [Service]
-Environment=HSYNC_BOOTNODE_STATS_FILE=/var/lib/hsync-bootnode/stats.prom
+Environment=HSYNC_RENDEZVOUS_STATS_FILE=/var/lib/hsync-rendezvous/stats.prom
 ExecStart=
-ExecStart=/bin/sh -c 'exec /usr/bin/hsync-bootnode run --listen-host 0.0.0.0 --listen-port 443 --identity /var/lib/hsync-bootnode/identity.pem --keys-fd 5 5<"${CREDENTIALS_DIRECTORY}/group-keys" --metrics-port 9101 --metrics-token-fd 6 6<"${CREDENTIALS_DIRECTORY}/metrics-token"'
+ExecStart=/bin/sh -c 'exec /usr/bin/hsync-rendezvous run --listen-host 0.0.0.0 --listen-port 443 --identity /var/lib/hsync-rendezvous/identity.pem --keys-fd 5 5<"${CREDENTIALS_DIRECTORY}/group-keys" --metrics-port 9101 --metrics-token-fd 6 6<"${CREDENTIALS_DIRECTORY}/metrics-token"'
 ```
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl restart hsync-bootnode.service
-systemctl show -p StatusText hsync-bootnode.service
+sudo systemctl restart hsync-rendezvous.service
+systemctl show -p StatusText hsync-rendezvous.service
 ```
 
 `StatusText` carries the live summary (`conn=3/57 peers=1203/1240`), so the
@@ -140,11 +140,11 @@ file there and let the scrape read it:
 
 ```yaml
 scrape_configs:
-  - job_name: hsync-bootnode
+  - job_name: hsync-rendezvous
     static_configs:
       - targets: ["NODE_HOST:9101"]
     authorization:
-      credentials_file: /etc/prometheus/hsync-bootnode-token
+      credentials_file: /etc/prometheus/hsync-rendezvous-token
 ```
 
 Reach it through an SSH tunnel or a proxy when the node is remote, and never
@@ -153,16 +153,16 @@ clear on the wire.
 
 If you collect with node_exporter instead, skip the `/metrics` flags and point
 its textfile collector at the directory you enabled above
-(`--collector.textfile.directory=/var/lib/hsync-bootnode`).
+(`--collector.textfile.directory=/var/lib/hsync-rendezvous`).
 
 Useful queries:
 
 ```text
-hsync_bootnode_peers_current                     # clients online now
-hsync_bootnode_peers_peak                        # since the last restart
-max_over_time(hsync_bootnode_peers_current[7d])   # a week-long peak
-rate(hsync_bootnode_quic_connections_total[5m])   # handshakes per second
-rate(hsync_bootnode_peers_expired_total[5m])      # churn
+hsync_rendezvous_peers_current                     # clients online now
+hsync_rendezvous_peers_peak                        # since the last restart
+max_over_time(hsync_rendezvous_peers_current[7d])   # a week-long peak
+rate(hsync_rendezvous_quic_connections_total[5m])   # handshakes per second
+rate(hsync_rendezvous_peers_expired_total[5m])      # churn
 ```
 
 ## Bound the log
@@ -195,21 +195,21 @@ The TLS identity is the node's only persistent state, and clients pin its
 fingerprint: lose it and every pinned client refuses the node.
 
 ```bash
-sudo install -d -m 0700 /var/backups/hsync-bootnode
+sudo install -d -m 0700 /var/backups/hsync-rendezvous
 sudo cp --preserve=mode,timestamps \
-    /var/lib/hsync-bootnode/identity.pem \
-    /var/backups/hsync-bootnode/identity.pem
+    /var/lib/hsync-rendezvous/identity.pem \
+    /var/backups/hsync-rendezvous/identity.pem
 ```
 
 Restoring it before a start keeps the fingerprint:
 
 ```bash
-sudo cp /var/backups/hsync-bootnode/identity.pem \
-    /var/lib/hsync-bootnode/identity.pem
-sudo chown --reference=/var/lib/hsync-bootnode \
-    /var/lib/hsync-bootnode/identity.pem
-sudo chmod 0600 /var/lib/hsync-bootnode/identity.pem
-sudo systemctl start hsync-bootnode.service
+sudo cp /var/backups/hsync-rendezvous/identity.pem \
+    /var/lib/hsync-rendezvous/identity.pem
+sudo chown --reference=/var/lib/hsync-rendezvous \
+    /var/lib/hsync-rendezvous/identity.pem
+sudo chmod 0600 /var/lib/hsync-rendezvous/identity.pem
+sudo systemctl start hsync-rendezvous.service
 ```
 
 ## Rotate the identity
@@ -217,23 +217,23 @@ sudo systemctl start hsync-bootnode.service
 Rotation is explicit, because a running node has no reload path:
 
 ```bash
-sudo hsync-bootnode identity rotate \
-    --identity /var/lib/hsync-bootnode/identity.pem
-sudo systemctl restart hsync-bootnode.service
-hsync trust discovery-server fingerprint BOOTNODE_HOST:443
+sudo hsync-rendezvous identity rotate \
+    --identity /var/lib/hsync-rendezvous/identity.pem
+sudo systemctl restart hsync-rendezvous.service
+hsync trust rendezvous-server fingerprint RENDEZVOUS_HOST:443
 ```
 
-During the rotation window give clients **both** fingerprints: `--bootnode-fingerprint` is
+During the rotation window give clients **both** fingerprints: `--rendezvous-fingerprint` is
 repeatable for exactly that window. The last command proves the certificate the
 clients actually receive is the new one.
 
 ## Upgrade
 
 ```bash
-curl -fLO "https://github.com/albertsdk/hsync-bootnode/releases/latest/download/hsync-bootnode-amd64.deb"
-sudo dpkg -i hsync-bootnode-amd64.deb
-systemctl is-enabled hsync-bootnode.service
-systemctl is-active hsync-bootnode.service
+curl -fLO "https://github.com/albertsdk/hsync-rendezvous/releases/latest/download/hsync-rendezvous-amd64.deb"
+sudo dpkg -i hsync-rendezvous-amd64.deb
+systemctl is-enabled hsync-rendezvous.service
+systemctl is-active hsync-rendezvous.service
 ```
 
 An upgrade stops the node so its executable can be replaced, then starts it again

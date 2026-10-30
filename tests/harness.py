@@ -1,11 +1,11 @@
-"""Language-neutral black-box harness for the ``boot/1`` bootstrap node.
+"""Language-neutral black-box harness for the ``rdv/1`` rendezvous node.
 
 The black-box suite must stay independent of any implementation language:
-it spawns the bootnode executable (path via ``HSYNC_BOOTNODE_BIN``, defaulting
-to the Python build), waits for the ``HSYNC_BOOTNODE_READY_FILE`` readiness
-seam, and drives it **only** through the public CLI and the ``boot/1`` wire
-protocol (QUIC/UDP, NDJSON, ALPN ``hsync-boot/1``). Nothing in here imports
-``hsync_bootnode`` — the same module will validate the future ``c/`` port
+it spawns the rendezvous executable (path via ``HSYNC_RENDEZVOUS_BIN``, defaulting
+to the Python build), waits for the ``HSYNC_RENDEZVOUS_READY_FILE`` readiness
+seam, and drives it **only** through the public CLI and the ``rdv/1`` wire
+protocol (QUIC/UDP, NDJSON, ALPN ``hsync-rdv/1``). Nothing in here imports
+``hsync_rendezvous`` — the same module will validate the future ``c/`` port
 unchanged.
 """
 
@@ -33,20 +33,20 @@ from aioquic.asyncio import connect
 from aioquic.quic.configuration import QuicConfiguration
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-BOOT_ALPN = "hsync-boot/1"
+RDV_ALPN = "hsync-rdv/1"
 _CID_ALPHABET = string.ascii_letters + string.digits
 _FP = "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
 
 # Single-frame byte bound on the wire (spec: oversized frames are refused and the
-# session dropped). Mirrors ``hsync_bootnode.server.MAX_FRAME_BYTES``; duplicated
+# session dropped). Mirrors ``hsync_rendezvous.server.MAX_FRAME_BYTES``; duplicated
 # here so the language-neutral harness never imports the implementation.
 MAX_FRAME_BYTES = 8192
 
 
 def resolve_bin() -> str:
-    """Bootnode executable path: ``HSYNC_BOOTNODE_BIN`` or the Python build."""
-    return os.environ.get("HSYNC_BOOTNODE_BIN") or str(
-        REPO_ROOT / "python" / ".venv" / "bin" / "hsync-bootnode"
+    """Rendezvous executable path: ``HSYNC_RENDEZVOUS_BIN`` or the Python build."""
+    return os.environ.get("HSYNC_RENDEZVOUS_BIN") or str(
+        REPO_ROOT / "python" / ".venv" / "bin" / "hsync-rendezvous"
     )
 
 
@@ -66,12 +66,12 @@ def scrub_environment() -> dict[str, str]:
 
 
 def run_cli(args: Sequence[str], timeout: float = 30.0) -> subprocess.CompletedProcess[str]:
-    """Run the bootnode CLI once with a scrubbed environment (isolation contract).
+    """Run the rendezvous CLI once with a scrubbed environment (isolation contract).
 
     Black-box checks that only inspect the CLI surface (``--version``, fail-fast
     exit codes) must not spawn a process by hand: this helper resolves the
     executable with :func:`resolve_bin` and runs it with :func:`scrub_environment`,
-    exactly like :func:`start_bootnode`.
+    exactly like :func:`start_rendezvous`.
     """
     return subprocess.run(
         [resolve_bin(), *args],
@@ -111,20 +111,20 @@ def free_tcp_port(family: int = socket.AF_INET) -> int:
 
 
 def client_config() -> QuicConfiguration:
-    """QUIC client configuration for ``boot/1``.
+    """QUIC client configuration for ``rdv/1``.
 
-    The bootnode's TLS identity is self-signed, so the client cannot verify it by
-    chain; only ALPN ``hsync-boot/1`` is asserted (the fingerprint pin is the
+    The rendezvous's TLS identity is self-signed, so the client cannot verify it by
+    chain; only ALPN ``hsync-rdv/1`` is asserted (the fingerprint pin is the
     trust anchor, exercised by the identity black-box tests). Single definition
-    shared by the black-box suite and every benchmark that opens a ``boot/1``
+    shared by the black-box suite and every benchmark that opens a ``rdv/1``
     connection.
     """
-    return QuicConfiguration(is_client=True, alpn_protocols=[BOOT_ALPN], verify_mode=ssl.CERT_NONE)
+    return QuicConfiguration(is_client=True, alpn_protocols=[RDV_ALPN], verify_mode=ssl.CERT_NONE)
 
 
 def derive_bucket_token(key: bytes, bucket: str) -> str:
-    """Spec §Auth: ``HMAC-SHA256(key, "boot/1" || bucket)[:32]`` hex (64 chars)."""
-    return hmac.new(key, b"boot/1" + bucket.encode("utf-8"), hashlib.sha256).digest()[:32].hex()
+    """Spec §Auth: ``HMAC-SHA256(key, "rdv/1" || bucket)[:32]`` hex (64 chars)."""
+    return hmac.new(key, b"rdv/1" + bucket.encode("utf-8"), hashlib.sha256).digest()[:32].hex()
 
 
 def random_cid(rng: random.Random) -> str:
@@ -155,7 +155,7 @@ def register_frame(
     **extra: object,
 ) -> dict:
     frame: dict = {
-        "protocol_version": "boot/1",
+        "protocol_version": "rdv/1",
         "type": "register",
         "cid": cid,
         "bucket": bucket,
@@ -183,7 +183,7 @@ def refresh_frame(
     connected: int | None = None,
 ) -> dict:
     frame: dict = {
-        "protocol_version": "boot/1",
+        "protocol_version": "rdv/1",
         "type": "refresh",
         "cid": cid,
         "bucket": bucket,
@@ -199,7 +199,7 @@ def refresh_frame(
 
 def leave_frame(cid: str, bucket: str, *, token: str | None = None) -> dict:
     """A ``leave`` frame; ``token`` is optional on the wire (required by private nodes)."""
-    frame = {"protocol_version": "boot/1", "type": "leave", "cid": cid, "bucket": bucket}
+    frame = {"protocol_version": "rdv/1", "type": "leave", "cid": cid, "bucket": bucket}
     if token is not None:
         frame["bucket_token"] = token
     return frame
@@ -213,7 +213,7 @@ def query_frame(
     limit: int = 20,
 ) -> dict:
     frame: dict = {
-        "protocol_version": "boot/1",
+        "protocol_version": "rdv/1",
         "type": "query",
         "bucket": bucket,
         "limit": limit,
@@ -230,8 +230,8 @@ def query_frame(
 # ---------------------------------------------------------------------------
 
 
-class BootnodeProc:
-    """A running bootnode subprocess + its readiness/log handles."""
+class RendezvousProc:
+    """A running rendezvous subprocess + its readiness/log handles."""
 
     def __init__(
         self,
@@ -247,7 +247,7 @@ class BootnodeProc:
         # All bound UDP ports (multi-port, decision 57); ``port`` is the primary.
         self.ports: tuple[int, ...] = tuple(ports) if ports else (port,)
         self.ready_file = ready_file
-        # PID of the bootnode *application* process, read from the readiness file
+        # PID of the rendezvous *application* process, read from the readiness file
         # by ``wait_ready``. It can differ from ``pid`` (the launcher): a
         # onefile-packaged binary (PyInstaller) runs the app in a child process.
         self.node_pid: int | None = None
@@ -271,7 +271,7 @@ class BootnodeProc:
         return ""
 
 
-def start_bootnode(
+def start_rendezvous(
     tmp_path: Path,
     *,
     instance: str = "",
@@ -288,17 +288,17 @@ def start_bootnode(
     private: bool = False,
     ephemeral: bool = True,
     env_extra: Mapping[str, str] | None = None,
-) -> BootnodeProc:
-    """Start a bootnode subprocess; ``keys`` are provisioned via ``--keys-fd``.
+) -> RendezvousProc:
+    """Start a rendezvous subprocess; ``keys`` are provisioned via ``--keys-fd``.
 
     ``host`` is the ``--host`` bind address (default loopback IPv4); pass
     ``"[::1]"`` for an IPv6 listener (the free port is then reserved on ``::1``).
     ``private`` appends ``--private``; ``env_extra`` adds environment variables on
     top of the scrubbed environment (used to exercise the envvar form of a flag,
-    e.g. ``HSYNC_BOOTNODE_PRIVATE=1``, exactly as the service units set it).
+    e.g. ``HSYNC_RENDEZVOUS_PRIVATE=1``, exactly as the service units set it).
     ``ephemeral`` (default) appends ``--ephemeral`` so black-box tests never write
     to the operator's/CI's XDG state dir; pass ``ephemeral=False`` (with an
-    explicit ``--identity``/``HSYNC_BOOTNODE_IDENTITY``) to test persistence.
+    explicit ``--identity``/``HSYNC_RENDEZVOUS_IDENTITY``) to test persistence.
     """
     # A test that runs two nodes in one ``tmp_path`` must keep their readiness
     # files and logs apart: ``instance`` gives each node its own subdirectory
@@ -335,7 +335,7 @@ def start_bootnode(
     env = scrub_environment()
     env.update(env_extra or {})
     if ready_file is not None:
-        env["HSYNC_BOOTNODE_READY_FILE"] = str(ready_file)
+        env["HSYNC_RENDEZVOUS_READY_FILE"] = str(ready_file)
 
     pass_fds: tuple[int, ...] = ()
     if keys:
@@ -361,7 +361,7 @@ def start_bootnode(
     if keys:
         os.close(read_fd)
 
-    handle = BootnodeProc(proc, port, ready_file, workdir, ports=resolved_ports)
+    handle = RendezvousProc(proc, port, ready_file, workdir, ports=resolved_ports)
     if ready:
         try:
             wait_ready(handle)
@@ -372,7 +372,7 @@ def start_bootnode(
 
 
 def ready_node_pid(ready_file: Path) -> int | None:
-    """Return the bootnode application PID once the ready file holds it, else ``None``.
+    """Return the rendezvous application PID once the ready file holds it, else ``None``.
 
     Readiness is signalled by the file containing a positive integer — the
     *application* PID (``os.getpid()``). For a onefile-packaged binary that is
@@ -389,8 +389,8 @@ def ready_node_pid(ready_file: Path) -> int | None:
     return pid if pid > 0 else None
 
 
-def wait_ready(handle: BootnodeProc, timeout: float = 15.0) -> None:
-    """Wait until the bootnode signals readiness through its ready file.
+def wait_ready(handle: RendezvousProc, timeout: float = 15.0) -> None:
+    """Wait until the rendezvous signals readiness through its ready file.
 
     The file must appear holding the application PID; on success it is stored on
     ``handle.node_pid``. Readiness is deliberately *not* keyed on the launcher
@@ -407,15 +407,15 @@ def wait_ready(handle: BootnodeProc, timeout: float = 15.0) -> None:
             return
         if handle.proc.poll() is not None:
             raise RuntimeError(
-                f"bootnode exited before ready (rc={handle.proc.returncode})\n"
+                f"rendezvous exited before ready (rc={handle.proc.returncode})\n"
                 f"stderr:\n{handle.stderr_text()}"
             )
         time.sleep(0.05)
-    raise TimeoutError(f"bootnode not ready within {timeout}s\nstderr:\n{handle.stderr_text()}")
+    raise TimeoutError(f"rendezvous not ready within {timeout}s\nstderr:\n{handle.stderr_text()}")
 
 
-def terminate(handle: BootnodeProc) -> None:
-    """Terminate the bootnode (SIGTERM, then SIGKILL fallback); no orphans.
+def terminate(handle: RendezvousProc) -> None:
+    """Terminate the rendezvous (SIGTERM, then SIGKILL fallback); no orphans.
 
     The process runs in its own session (``start_new_session=True``), so the
     whole group — including a onefile launcher's application child — is
@@ -458,7 +458,7 @@ def proc_rss_mb(pid: int) -> float:
 
 
 # ---------------------------------------------------------------------------
-# QUIC client (language-neutral: talks only boot/1 over the wire)
+# QUIC client (language-neutral: talks only rdv/1 over the wire)
 # ---------------------------------------------------------------------------
 
 
@@ -475,8 +475,8 @@ class RawResult(NamedTuple):
     data: bytes | None
 
 
-class BootClient:
-    """One loopback QUIC connection speaking ``boot/1`` NDJSON frames."""
+class RdvClient:
+    """One loopback QUIC connection speaking ``rdv/1`` NDJSON frames."""
 
     def __init__(self, port: int, host: str = "127.0.0.1") -> None:
         self._port = port
@@ -484,7 +484,7 @@ class BootClient:
         self._protocol = None
         self._stack: contextlib.AsyncExitStack | None = None
 
-    async def __aenter__(self) -> BootClient:
+    async def __aenter__(self) -> RdvClient:
         config = client_config()
         self._stack = contextlib.AsyncExitStack()
         await self._stack.__aenter__()

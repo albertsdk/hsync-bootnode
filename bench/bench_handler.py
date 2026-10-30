@@ -1,13 +1,13 @@
 """L1 — pure-handler micro-benchmark (no sockets, deterministic, Python-only).
 
 This is the ONLY benchmark that is implementation-specific: it measures
-``BootHandler.handle`` throughput/latency directly (validation, routing
+``RendezvousHandler.handle`` throughput/latency directly (validation, routing
 sample/scan, serialization) with the routing table pre-populated at several
 sizes. The transport cost is isolated in ``bench_quic.py`` (language-neutral).
 
 Methodology (corrected):
 
-* One ``BootHandler(enforce_rate_limits=False)`` per scenario, so every measured
+* One ``RendezvousHandler(enforce_rate_limits=False)`` per scenario, so every measured
   operation runs the named branch (an ``ack``/``response``/silent ``leave``),
   never a ``rate_limited`` refusal. Each measured reply is asserted to be on the
   intended branch, so a silent drop or refusal can never masquerade as success.
@@ -17,7 +17,7 @@ Methodology (corrected):
   ``bytes``), prebuilt outside the timed region.
 
 Usage:
-    cd hsync-bootnode && python/.venv/bin/python bench/bench_handler.py \
+    cd hsync-rendezvous && python/.venv/bin/python bench/bench_handler.py \
         [--count N] [--json-out FILE]
 """
 
@@ -47,16 +47,16 @@ from harness import (  # noqa: E402
     refresh_frame,
     register_frame,
 )
-from hsync_bootnode.handler import BootHandler  # noqa: E402
+from hsync_rendezvous.handler import RendezvousHandler  # noqa: E402
 
 _PEER_IP = "198.51.100.7"
 _PEER_PORT = 54321
 _WARMUP = 200
-_ACK_PREFIX = b'{"protocol_version":"boot/1","type":"ack"'
+_ACK_PREFIX = b'{"protocol_version":"rdv/1","type":"ack"'
 
 
 def _populate(
-    handler: BootHandler, bucket: str, count: int, start: int = 0
+    handler: RendezvousHandler, bucket: str, count: int, start: int = 0
 ) -> list[tuple[str, str]]:
     """Register ``count`` peers into ONE bucket and move the records into ``handler``.
 
@@ -68,7 +68,7 @@ def _populate(
     """
     cids = make_cids(count, start=start)
     peers: list[tuple[str, str]] = []
-    pool = BootHandler(enforce_rate_limits=False)
+    pool = RendezvousHandler(enforce_rate_limits=False)
     for index, cid in enumerate(cids):
         octet = index % 250 + 1
         source_ip = f"10.9.{(index // 250) % 250}.{octet}"
@@ -93,7 +93,7 @@ def _populate(
 
 def _bench_register(count: int) -> BenchResult:
     # One handler, no rate limits: every measured op is a real register/ack.
-    handler = BootHandler(enforce_rate_limits=False)
+    handler = RendezvousHandler(enforce_rate_limits=False)
     cids = make_cids(count + _WARMUP, start=1_000_000)
     raws = [json.dumps(register_frame(cid, "shared")).encode() for cid in cids]
     state = {"i": 0}
@@ -112,7 +112,7 @@ def _bench_register(count: int) -> BenchResult:
 def _bench_query(table_size: int, limit: int, count: int) -> BenchResult:
     # One handler, no rate limits; one untimed prune so the first measured query
     # never pays an O(n) sweep. Warmup warms the materialized peer cache.
-    handler = BootHandler(enforce_rate_limits=False)
+    handler = RendezvousHandler(enforce_rate_limits=False)
     _populate(handler, "shared", table_size)
     handler.prune()
     query = json.dumps(query_frame("shared", limit=limit)).encode()
@@ -128,7 +128,7 @@ def _bench_refresh(table_size: int, count: int) -> BenchResult:
     # One handler, no rate limits; refresh always targets the first populated CID.
     # The refresh must come from the record's own registered source: the handler
     # only honours a renewal from the source the peer registered from.
-    handler = BootHandler(enforce_rate_limits=False)
+    handler = RendezvousHandler(enforce_rate_limits=False)
     peers = _populate(handler, "shared", table_size)
     handler.prune()
     cid, source = peers[0]
@@ -146,7 +146,7 @@ def _bench_leave(count: int) -> BenchResult:
     # frame). No warmup: a warmup would drain the table before measurement.
     # The leave carries each peer's own observed source IP: the node honours a
     # departure only from the source the record was registered from.
-    handler = BootHandler(enforce_rate_limits=False)
+    handler = RendezvousHandler(enforce_rate_limits=False)
     peers = _populate(handler, "shared", count, start=2_000_000)
     leave_raws = [
         (json.dumps(leave_frame(cid, "shared")).encode(), source) for cid, source in peers
@@ -169,7 +169,7 @@ def _bench_prune(table_size: int) -> BenchResult:
     # prune cost: expire the whole table once per timing sample; 20 samples.
     samples: list[float] = []
     for _ in range(20):
-        handler = BootHandler(enforce_rate_limits=False)
+        handler = RendezvousHandler(enforce_rate_limits=False)
         _populate(handler, "shared", table_size)
         # force expiry without sleeping: backdate every record.
         now_backdated = time.monotonic() - 61.0

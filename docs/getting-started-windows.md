@@ -1,7 +1,7 @@
 # Getting Started — Windows installer
 
 The installer is **per-machine** (administrator rights). It installs the daemon
-and registers it as the Windows service **`hsync-bootnode`** through
+and registers it as the Windows service **`hsync-rendezvous`** through
 [WinSW](https://github.com/winsw/winsw), starting it automatically at boot.
 
 ## Prerequisites
@@ -14,37 +14,37 @@ and registers it as the Windows service **`hsync-bootnode`** through
 
 Download the latest installer:
 
-[Download hsync-bootnode-windows-amd64-setup.exe](https://github.com/albertsdk/hsync-bootnode/releases/latest/download/hsync-bootnode-windows-amd64-setup.exe)
+[Download hsync-rendezvous-windows-amd64-setup.exe](https://github.com/albertsdk/hsync-rendezvous/releases/latest/download/hsync-rendezvous-windows-amd64-setup.exe)
 
 Run it (the wizard prompts for elevation). The service is installed and started
 automatically. The link always points to the **latest stable** release; to pin a
-version, use the [Releases page](https://github.com/albertsdk/hsync-bootnode/releases).
+version, use the [Releases page](https://github.com/albertsdk/hsync-rendezvous/releases).
 
 ## Manage the service
 
 Run PowerShell **as administrator**:
 
 ```powershell
-Get-Service hsync-bootnode
-Start-Service hsync-bootnode
-Stop-Service hsync-bootnode
-Restart-Service hsync-bootnode
+Get-Service hsync-rendezvous
+Start-Service hsync-rendezvous
+Stop-Service hsync-rendezvous
+Restart-Service hsync-rendezvous
 ```
 
 - The TLS identity and the service logs are persisted under
-  `C:\ProgramData\hsync-bootnode` (logs in the `logs` subdirectory).
-- The service definition is `hsync-bootnode-service.xml` next to
-  `hsync-bootnode-service.exe` in the install directory.
+  `C:\ProgramData\hsync-rendezvous` (logs in the `logs` subdirectory).
+- The service definition is `hsync-rendezvous-service.xml` next to
+  `hsync-rendezvous-service.exe` in the install directory.
 - Protected buckets / private node: the installer creates
-  `C:\ProgramData\hsync-bootnode\group-keys` **empty** (open mode) and grants
+  `C:\ProgramData\hsync-rendezvous\group-keys` **empty** (open mode) and grants
   administrators write access / `LocalService` read access. Provision one
   `bucket=<hex-group-key>` line per protected bucket there and restart the
   service. The installed service already passes `--keys-file` for that file; for
-  a fully private node uncomment the `HSYNC_BOOTNODE_PRIVATE` environment block
-  in `hsync-bootnode-service.xml` and restart. The node reads the file once at
+  a fully private node uncomment the `HSYNC_RENDEZVOUS_PRIVATE` environment block
+  in `hsync-rendezvous-service.xml` and restart. The node reads the file once at
   startup and never writes it.
 - Read the fingerprint clients pin with
-  `hsync-bootnode identity show --identity C:\ProgramData\hsync-bootnode\identity.pem`.
+  `hsync-rendezvous identity show --identity C:\ProgramData\hsync-rendezvous\identity.pem`.
 - To serve a **second** inbound UDP port (for clients whose network blocks UDP
   443), add `--listen-ports 443,53` to the service `<arguments>` in the XML above and
   open the extra port — see `--listen-ports` in
@@ -52,9 +52,9 @@ Restart-Service hsync-bootnode
 
 ## Update and remove
 
-Run the newer installer to upgrade. Removing HSYNC Bootnode from
+Run the newer installer to upgrade. Removing HSYNC Rendezvous from
 **Settings → Apps** stops and unregisters the service (the data under
-`C:\ProgramData\hsync-bootnode` is left in place).
+`C:\ProgramData\hsync-rendezvous` is left in place).
 
 ## Next
 

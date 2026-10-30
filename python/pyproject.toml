@@ -1,7 +1,7 @@
 [project]
-name = "hsync-bootnode"
+name = "hsync-rendezvous"
 version = "1.0.11"
-description = "HSYNC P2P bootstrap node (no-log, in-memory, zero-knowledge)"
+description = "HSYNC P2P rendezvous node (no-log, in-memory, zero-knowledge)"
 authors = [{name = "Alberto Basso", email = "17047798+albertsdk@users.noreply.github.com"}]
 license = "BSD-3-Clause"
 readme = "README.md"
@@ -15,10 +15,10 @@ dependencies = [
 ]
 
 [project.scripts]
-hsync-bootnode = "hsync_bootnode.cli:app"
+hsync-rendezvous = "hsync_rendezvous.cli:app"
 
 [tool.poetry]
-packages = [{ include = "hsync_bootnode", from = "src" }]
+packages = [{ include = "hsync_rendezvous", from = "src" }]
 
 [tool.poetry.dependencies]
 hsync-common = {path = "../../hsync-common", develop = true}

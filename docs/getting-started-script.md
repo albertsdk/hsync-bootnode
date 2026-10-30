@@ -1,6 +1,6 @@
 # Getting Started — Method 1: Installer script
 
-The `install.sh` installer is the recommended way to get a bootnode running: it
+The `install.sh` installer is the recommended way to get a rendezvous running: it
 downloads the released container image, persists the TLS identity in a plain
 host directory, and starts the node with Docker Compose.
 
@@ -24,15 +24,15 @@ for you to run. See the [FAQ](faq.md#why-does-the-installer-stop-with-required-c
 
 The snap-packaged `docker` is confined: its `home` interface denies hidden paths
 under `$HOME`, so it cannot read `.env` in the default install directory
-`~/.local/share/hsync-bootnode`. When it detects a snap `docker` and an install
+`~/.local/share/hsync-rendezvous`. When it detects a snap `docker` and an install
 directory under a hidden path, the installer falls back to a non-hidden default
-(`$HOME/hsync-bootnode`) automatically. If you passed `--install-dir` explicitly,
+(`$HOME/hsync-rendezvous`) automatically. If you passed `--install-dir` explicitly,
 it stops before writing anything and tells you to re-run with a non-hidden
 directory:
 
 ```bash
-curl -fsSL https://github.com/albertsdk/hsync-bootnode/releases/latest/download/install.sh \
-  | bash -s -- --install-dir "$HOME/hsync-bootnode"
+curl -fsSL https://github.com/albertsdk/hsync-rendezvous/releases/latest/download/install.sh \
+  | bash -s -- --install-dir "$HOME/hsync-rendezvous"
 ```
 
 Installing Docker Engine (<https://docs.docker.com/engine/install/>) instead of
@@ -43,20 +43,20 @@ the snap avoids the constraint entirely.
 ### Quick install (one command, latest stable release)
 
 ```bash
-curl -fsSL https://github.com/albertsdk/hsync-bootnode/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/albertsdk/hsync-rendezvous/releases/latest/download/install.sh | bash
 ```
 
 This downloads and runs the installer in one step. The host's UDP port `443` is
 mapped to the container; the node's persistent TLS identity lives in
-`~/.local/share/hsync-bootnode/hsync-data`.
+`~/.local/share/hsync-rendezvous/hsync-data`.
 
 ### Verified install (checksum)
 
 To verify the download before running it:
 
 ```bash
-curl -fLO "https://github.com/albertsdk/hsync-bootnode/releases/latest/download/install.sh"
-curl -fLO "https://github.com/albertsdk/hsync-bootnode/releases/latest/download/SHA256SUMS"
+curl -fLO "https://github.com/albertsdk/hsync-rendezvous/releases/latest/download/install.sh"
+curl -fLO "https://github.com/albertsdk/hsync-rendezvous/releases/latest/download/SHA256SUMS"
 sha256sum --ignore-missing -c SHA256SUMS
 chmod 700 install.sh
 ./install.sh
@@ -117,7 +117,7 @@ trusted on the registry reference alone). With the one-line install the option
 goes after `bash -s --`:
 
 ```bash
-curl -fsSL https://github.com/albertsdk/hsync-bootnode/releases/latest/download/install.sh \
+curl -fsSL https://github.com/albertsdk/hsync-rendezvous/releases/latest/download/install.sh \
   | bash -s -- --no-verify
 ```
 
@@ -140,7 +140,7 @@ The installer maps a **single** host UDP port. To also serve a second port
 (e.g. 53) for clients whose network blocks UDP 443, use the manual Compose
 override in the [Docker guide](getting-started-docker.md#serve-a-second-udp-port-optional).
 
-### Private node (authenticated bootstrap)
+### Private node (authenticated rendezvous)
 
 A **private** node requires a valid `bucket_token` on every frame. Provision the
 group keys with a `bucket=<hex-group-key>` line per protected bucket:
@@ -156,8 +156,8 @@ the certificate fingerprint clients pin:
 
 ```bash
 # use your --install-dir instead if you passed one (the snap fallback may have
-# moved the default to $HOME/hsync-bootnode)
-cd "$HOME/.local/share/hsync-bootnode"
+# moved the default to $HOME/hsync-rendezvous)
+cd "$HOME/.local/share/hsync-rendezvous"
 docker compose ps
 docker compose logs | grep -i fingerprint
 ```
@@ -166,7 +166,7 @@ docker compose logs | grep -i fingerprint
 
 ```bash
 # use your --install-dir instead if you passed one
-cd "$HOME/.local/share/hsync-bootnode"
+cd "$HOME/.local/share/hsync-rendezvous"
 docker compose logs -f
 docker compose restart
 docker compose down

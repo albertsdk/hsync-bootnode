@@ -1,10 +1,10 @@
-"""Coverage-guided Python fuzzer for the boot/1 decoder (arc feedback, in-process).
+"""Coverage-guided Python fuzzer for the rdv/1 decoder (arc feedback, in-process).
 
 How it works: every iteration executes one fuzzed frame through the SAME
 security invariants as ``fuzz/fuzz_boot.py`` (:func:`fuzz_boot.handle_one` —
 never raises, shaped reply, no cross-record/cross-bucket leak) while a
 ``coverage.Coverage`` tracer measures the executed branch arcs of the
-``hsync_bootnode`` package. An input whose arc signature contains arcs never
+``hsync_rendezvous`` package. An input whose arc signature contains arcs never
 seen before is kept as a corpus seed, and later generations are derived by
 byte-mutating corpus members (AFL-style greedy guidance, at Python-branch
 granularity instead of machine edges).
@@ -61,7 +61,7 @@ from fuzz_boot import (
 __all__ = ["run_guided"]
 
 # Arc feedback targets the daemon package only (never the harness itself).
-_INCLUDE = ["*/hsync_bootnode/*"]
+_INCLUDE = ["*/hsync_rendezvous/*"]
 # A 512-member evolving corpus bounds memory and keeps the seed mix fresh;
 # eviction is FIFO (deterministic), unlike libFuzzer's energy schedule.
 _CORPUS_CAP = 512

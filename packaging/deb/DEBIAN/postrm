@@ -8,7 +8,7 @@
 
 set -e
 
-KEYS_DIR="/etc/hsync-bootnode"
+KEYS_DIR="/etc/hsync-rendezvous"
 
 case "$1" in
     purge)

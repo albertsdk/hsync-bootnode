@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2025 Alberto Basso
 
-"""White-box tests for the persistent bootnode TLS identity (ADR-0034/ADR-0037).
+"""White-box tests for the persistent rendezvous TLS identity (ADR-0034/ADR-0037).
 
 Service identities are ECDSA P-256, stored unencrypted under ``0600``/``0700``
 permissions, with a 20-year validity; the loader accepts nothing else.
@@ -16,7 +16,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric import dsa, ec
 from hsync_common import ssl_utils
 
-from hsync_bootnode.server import (
+from hsync_rendezvous.server import (
     IdentityError,
     load_identity,
     load_or_create_identity,
@@ -45,7 +45,7 @@ def test_make_identity_wildcard_bind_uses_dns_name():
     node = make_identity(host="0.0.0.0")
     san = node.certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
     names = {n.value for n in san}
-    assert "hsync-bootnode" in names
+    assert "hsync-rendezvous" in names
 
 
 def test_make_identity_validity_is_twenty_years():
@@ -105,7 +105,7 @@ def test_rotate_does_not_duplicate_preserved_sans(tmp_path):
 
     san = rotated.certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
     values = [name.value for name in san]
-    assert values.count("hsync-bootnode") == 1
+    assert values.count("hsync-rendezvous") == 1
 
 
 def test_rotate_writes_a_consistent_pair_that_reloads(tmp_path):
@@ -126,7 +126,7 @@ def test_rotate_writes_a_consistent_pair_that_reloads(tmp_path):
 
 def test_rotation_hint_names_the_identity_path():
     assert rotation_hint("/tmp/my identity.pem") == (
-        'hsync-bootnode identity rotate --identity "/tmp/my identity.pem"'
+        'hsync-rendezvous identity rotate --identity "/tmp/my identity.pem"'
     )
 
 
@@ -157,8 +157,8 @@ def test_load_identity_rejects_cert_without_key(tmp_path):
 def _write_identity(path, key) -> None:
     cert = ssl_utils.build_self_signed_certificate(
         key,
-        subject_attrs=[x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, "hsync-bootnode")],
-        san_list=[x509.DNSName("hsync-bootnode")],
+        subject_attrs=[x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, "hsync-rendezvous")],
+        san_list=[x509.DNSName("hsync-rendezvous")],
         validity_days=30,
     )
     path.write_bytes(
@@ -202,8 +202,8 @@ def test_load_identity_rejects_mismatched_key(tmp_path):
     other_key = ssl_utils.generate_ecdsa_private_key()
     cert = ssl_utils.build_self_signed_certificate(
         cert_key,
-        subject_attrs=[x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, "hsync-bootnode")],
-        san_list=[x509.DNSName("hsync-bootnode")],
+        subject_attrs=[x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, "hsync-rendezvous")],
+        san_list=[x509.DNSName("hsync-rendezvous")],
         validity_days=30,
     )
     path = tmp_path / "mismatched.pem"
@@ -258,8 +258,8 @@ def test_rotate_recovers_from_a_mismatched_key_certificate(tmp_path):
     other_key = ssl_utils.generate_ecdsa_private_key()
     cert = ssl_utils.build_self_signed_certificate(
         cert_key,
-        subject_attrs=[x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, "hsync-bootnode")],
-        san_list=[x509.DNSName("hsync-bootnode")],
+        subject_attrs=[x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, "hsync-rendezvous")],
+        san_list=[x509.DNSName("hsync-rendezvous")],
         validity_days=30,
     )
     path = tmp_path / "identity.pem"

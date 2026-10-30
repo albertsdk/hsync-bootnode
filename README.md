@@ -2,23 +2,23 @@
   <img src="docs/assets/hsync-logo-horizontal.svg" alt="HSYNC logo" width="300">
 </p>
 
-# HSYNC Bootnode
+# HSYNC Rendezvous
 
-**HSYNC Bootnode** is the optional discovery node that lets HSYNC peers find
+**HSYNC Rendezvous** is the optional rendezvous node that lets HSYNC peers find
 each other over the Internet when they are **not** on the same local network. It
 is a stateless, no-log meeting point: it tells P2P clients which peers are
-online without ever storing anything, speaking the `boot/1` protocol over QUIC
+online without ever storing anything, speaking the `rdv/1` protocol over QUIC
 (UDP port 443). Think of it as an **address book, not a post office**: it helps
 your devices find each other, and the file data always flows directly between
 them.
 
-> New to HSYNC? Start with the [HSYNC Ecosystem](https://github.com/albertsdk/hsync/blob/main/README.md) for an overview of the platform before deploying a bootnode.
+> New to HSYNC? Start with the [HSYNC Ecosystem](https://github.com/albertsdk/hsync/blob/main/README.md) for an overview of the platform before deploying a rendezvous.
 
 **Why it exists:** the [HSYNC Client](https://github.com/albertsdk/hsync-client)'s
 [p2p Mode](https://github.com/albertsdk/hsync-client/blob/main/docs/p2p-mode.md)
-discovers peers over mDNS on the local network. A bootnode extends that same
+discovers peers over mDNS on the local network. A rendezvous extends that same
 mode across networks: same election, same transport, same peer-to-peer data
-plane — only discovery differs.
+plane — only rendezvous differs.
 
 **Status:** v1 **complete and stable** (Python + aioquic): packaged, tested,
 and the implementation clients currently talk to. A C port is
@@ -34,20 +34,20 @@ implementations sharing the same spec and fixtures (see the
 ---
 
 [![License: BSD 3-Clause](https://img.shields.io/badge/License-BSD_3--Clause-brightgreen.svg)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/albertsdk/hsync-bootnode)](https://github.com/albertsdk/hsync-bootnode/releases/latest)
+[![Release](https://img.shields.io/github/v/release/albertsdk/hsync-rendezvous)](https://github.com/albertsdk/hsync-rendezvous/releases/latest)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/)
 [![C11 (planned)](https://img.shields.io/badge/C-11_(planned)-A8B9CC.svg)](c/)
 [![Status: v1](https://img.shields.io/badge/Status-v1-yellow.svg)](docs/README.md)
 
 ---
 
-## What you can do with HSYNC Bootnode
+## What you can do with HSYNC Rendezvous
 
 - **Extend p2p Mode across networks** — let devices that are not on the same
   LAN discover each other, with no central server holding the files.
 - **Run a private, closed network** — start the node with `--private` and every
   frame is authenticated against a group key: no accounts, nothing stored.
-- **Keep discovery stateless and no-log** — clients register and query
+- **Keep rendezvous stateless and no-log** — clients register and query
   candidates; the routing table is RAM-only with a 60-second TTL, and file data
   never passes through the node.
   
@@ -55,7 +55,7 @@ implementations sharing the same spec and fixtures (see the
 
 HSYNC syncs files peer-to-peer without a central server. On a single local
 network peers find each other with mDNS; when devices are spread across the
-Internet they need a rendezvous point. The bootnode is exactly that, and nothing
+Internet they need a rendezvous point. The rendezvous is exactly that, and nothing
 more:
 
 - Clients **register** their endpoint candidate list (the NAT-mapped public
@@ -80,16 +80,16 @@ hostname. Started with `--private` it becomes the closed rendezvous point of a
 single community instead: every frame is authenticated against a group key, there
 is no account to create and nothing is stored — a **private, pseudonymous P2P
 network over the Internet** whose file data still flows only between peers. See
-[Private node](docs/usage.md#private-node-authenticated-bootstrap) and the
+[Private node](docs/usage.md#private-node-authenticated-rendezvous) and the
 [privacy and anonymity model](docs/usage.md#privacy-and-anonymity-model).
 
 ## When you need it
 
-**You need a bootnode when:**
+**You need a rendezvous when:**
 
 * your P2P group spans different networks — home ↔ office, two branches, a laptop on mobile data — and you don't want a central server holding the files;
 * you want a private, closed group: start the node with `--private`, so every
-  frame is authenticated against a group key — see [Private node](docs/usage.md#private-node-authenticated-bootstrap).
+  frame is authenticated against a group key — see [Private node](docs/usage.md#private-node-authenticated-rendezvous).
 
 **You don't need it when:**
 
@@ -109,9 +109,9 @@ Pick an install method and follow it to a running node:
 - [From source](docs/getting-started-source.md) — clone and run.
 
 The [Getting Started](docs/getting-started.md) chooser compares the methods; point
-clients at the node with the `hsync p2p` bootnode argument (`hsync p2p <host>`)
+clients at the node with the `hsync p2p` rendezvous argument (`hsync p2p <host>`)
 — see the client
-[p2p bootnode guide](https://github.com/albertsdk/hsync-client/blob/main/docs/p2p-bootnode.md).
+[p2p rendezvous guide](https://github.com/albertsdk/hsync-client/blob/main/docs/p2p-rendezvous.md).
 
 ## Design invariants
 
@@ -127,9 +127,9 @@ clients at the node with the `hsync p2p` bootnode argument (`hsync p2p <host>`)
 - **Zero-knowledge / protected buckets** — group tokens are HMAC-SHA256
   capabilities compared in constant time; refusals are uniform and never reveal
   whether a bucket exists.
-- **Rigid schema** — every `boot/1` frame rejects unknown fields; malformed
+- **Rigid schema** — every `rdv/1` frame rejects unknown fields; malformed
   frames are silently dropped, never reinterpreted.
-- **One wire protocol** — `protocol-spec/boot-1.md` is the single source of
+- **One wire protocol** — `protocol-spec/rdv-1.md` is the single source of
   truth; every implementation must be byte-identical on the wire.
 
 ## Documentation
@@ -138,12 +138,12 @@ clients at the node with the `hsync p2p` bootnode argument (`hsync p2p <host>`)
 | -------- | -------------- |
 | [Getting Started](docs/getting-started.md) | Choose an install method (installer script, Docker, `.deb`, source) and run the node |
 | [Usage reference](docs/usage.md) | `run` options, environment variables, group keys, private nodes, privacy/security model, services, diagnostics |
-| [`boot/1` specification](protocol-spec/boot-1.md) | Wire protocol — the single source of truth |
+| [`rdv/1` specification](protocol-spec/rdv-1.md) | Wire protocol — the single source of truth |
 | [Internal wiki](llm-wiki/README.md) | Architecture, data models, decisions, hard invariants |
 | [Benchmarks](bench/README.md) | L1–L5 measurement scope and methodology |
 | [Black-box suite](tests/README.md) | Language-neutral wire/CLI contract tests |
 | [Contributing](CONTRIBUTING.md) | Development setup, toolchain, tests and contribution guidelines |
-| [Report an issue](https://github.com/albertsdk/hsync-bootnode/issues) | Open development and bug tracking |
+| [Report an issue](https://github.com/albertsdk/hsync-rendezvous/issues) | Open development and bug tracking |
 
 ## Associated Ecosystem Components
 
@@ -158,10 +158,10 @@ The other components of the HSYNC ecosystem:
 
 ## Security & Vulnerability Reporting
 
-The bootnode sits at the Internet edge, so security reports are taken seriously.
+The rendezvous sits at the Internet edge, so security reports are taken seriously.
 Please use GitHub's **Private Vulnerability Reporting** rather than a public issue:
 
-👉 **[Report a vulnerability](https://github.com/albertsdk/hsync-bootnode/security/advisories/new)**
+👉 **[Report a vulnerability](https://github.com/albertsdk/hsync-rendezvous/security/advisories/new)**
 
 See our [Security Policy](SECURITY.md) for supported versions and hardening guidance.
 
@@ -176,8 +176,8 @@ HSYNC is a passion project that I primarily develop and maintain in my spare tim
 ## Disclaimer
 
 > [!WARNING]
-> **The bootnode exposes a network service.** Misconfiguration, software defects
-> or unexpected conditions may expose your discovery metadata or make the node
+> **The rendezvous exposes a network service.** Misconfiguration, software defects
+> or unexpected conditions may expose your rendezvous metadata or make the node
 > unavailable. **Use at your own risk**, run it in a controlled environment, and
 > review the privacy model in the [Usage reference](docs/usage.md#privacy-and-anonymity-model).
 

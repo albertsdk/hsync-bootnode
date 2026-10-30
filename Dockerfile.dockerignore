@@ -1,6 +1,6 @@
 # Build context is the repository root (see Dockerfile header). BuildKit reads
-# this per-Dockerfile ignore file when building with -f hsync-bootnode/Dockerfile;
-# patterns are relative to the context root. Only hsync-bootnode/python/ and
+# this per-Dockerfile ignore file when building with -f hsync-rendezvous/Dockerfile;
+# patterns are relative to the context root. Only hsync-rendezvous/python/ and
 # hsync-common/ are needed for the node image, so everything heavy or unrelated
 # is excluded.
 
@@ -31,5 +31,5 @@ hsync-client/
 hsync-server/
 hsync-desktop/
 
-# Bootnode runtime data
-hsync-bootnode/hsync-data/
+# Rendezvous runtime data
+hsync-rendezvous/hsync-data/

@@ -1,23 +1,23 @@
-# HSYNC Bootnode — LLM Wiki
+# HSYNC Rendezvous — LLM Wiki
 
-Internal, agent-optimized knowledge base for the `hsync-bootnode` project
-(no-log, zero-knowledge P2P bootstrap node speaking `boot/1`).
+Internal, agent-optimized knowledge base for the `hsync-rendezvous` project
+(no-log, zero-knowledge P2P rendezvous node speaking `rdv/1`).
 
 ## Table of contents
 
 | Document | Content |
 |---|---|
 | [architecture.md](architecture.md) | High-level system overview: layers, data flow, security model, target matrix |
-| [data-models.md](data-models.md) | The `boot/1` frame models, nested types, shared validators and their relationships |
+| [data-models.md](data-models.md) | The `rdv/1` frame models, nested types, shared validators and their relationships |
 | [decisions.md](decisions.md) | Implementation decisions |
 
 ## Project snapshot (v1 — Python, complete)
 
 | Artifact | Path |
 |---|---|
-| Wire-protocol specification (SSOT) | `protocol-spec/boot-1.md` |
-| Shared protocol fixtures | `fixtures/bootnode-*.json` |
-| Python implementation | `python/src/hsync_bootnode/` |
+| Wire-protocol specification (SSOT) | `protocol-spec/rdv-1.md` |
+| Shared protocol fixtures | `fixtures/rendezvous-*.json` |
+| Python implementation | `python/src/hsync_rendezvous/` |
 | [`compile.sh`](../compile.sh) | Root build entry point (`native`/`rpi`/`deb`/`deb-all`, `-l/--language`); per-language binary builds stay in their own directory | v1 |
 | [`run.sh`](../run.sh) | Uniform "run after clone" entry point (checks the sibling `hsync-common`, creates the in-project venv, runs the node) — mirrors `hsync-server/run.sh` |
 | Install/distribution | `install.sh` (Docker Compose installer), `compose.yaml`, `Dockerfile` + `Dockerfile.dockerignore` + `python/entrypoint.sh` (image, group keys as fd 3), `docker.sh` (source image build/lifecycle) |
@@ -38,12 +38,12 @@ Internal, agent-optimized knowledge base for the `hsync-bootnode` project
    (`warn`/`error`, decisions #36) and the opt-in peer-aware `--debug` sink
    (decision #25); without `--debug` nothing peer-related leaves memory.
 2. **RAM only**: the routing table lives in
-   `python/src/hsync_bootnode/routing.py` and is never persisted. TTL 60 s,
+   `python/src/hsync_rendezvous/routing.py` and is never persisted. TTL 60 s,
    prune every 15 s, client refresh every 30 s. The data relay keeps the same
    promise: its listener/session state lives in
-   `python/src/hsync_bootnode/relay.py`, RAM only, and only aggregate counters
+   `python/src/hsync_rendezvous/relay.py`, RAM only, and only aggregate counters
    exist (`--relay` opt-in, ADR-0047).
-3. **Rigid schema**: every `boot/1` frame model uses pydantic
+3. **Rigid schema**: every `rdv/1` frame model uses pydantic
    `extra="forbid"` — unknown/targeted fields make the frame invalid and it is
    silently dropped. The field domains are enforced too: `bucket_token` must be
    64 lowercase hex characters (`BucketToken`, `protocol.py`), `connected`
@@ -55,7 +55,7 @@ Internal, agent-optimized knowledge base for the `hsync-bootnode` project
    an uncomparable pin is an invalid frame, not an unbounded
    storage/accounting/relay event (decision #46).
 4. **Protected buckets**: tokens are derived
-   `HMAC-SHA256(key, "boot/1" || bucket)[:32]` hex, compared in constant time
+   `HMAC-SHA256(key, "rdv/1" || bucket)[:32]` hex, compared in constant time
    (`hmac.compare_digest`) whether or not the bucket has a key; refusals are
    uniform (`token_required`) and never reveal bucket existence or the
    provisioned set. `--private` widens the same policy to every bucket
@@ -77,12 +77,12 @@ Internal, agent-optimized knowledge base for the `hsync-bootnode` project
    connection runs at most `MAX_SESSIONS_PER_CONNECTION` sessions, so what a
    registrant controls can never size what the node allocates or emits.
 7. **Zero backward compatibility**: breaking the wire contract means bumping
-   the mandatory `protocol_version` (`boot/1`) and updating spec, fixtures,
+   the mandatory `protocol_version` (`rdv/1`) and updating spec, fixtures,
    implementation and tests atomically.
 8. **SSOT note**: the CID shape and the bucket-name rule are **imported** from
    `hsync-common` (`hsync_common.models.event.CID_PATTERN`,
    `hsync_common.path_validation.is_valid_bucket_name`), not re-declared locally;
-   the boot/1 spec + fixtures stay the cross-language contract. The daemon also
+   the rdv/1 spec + fixtures stay the cross-language contract. The daemon also
    reuses `hsync_common.ssl_utils` for its TLS identity (see
    `decisions.md` #26 and hsync-common ADR-0033); ADR-0034/ADR-0037 define the
    persistent identity (`--identity`, `--ephemeral`, `identity show`/`rotate`)

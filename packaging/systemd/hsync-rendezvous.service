@@ -1,0 +1,111 @@
+# hsync-rendezvous — hardened systemd unit (Linux, source install)
+#
+# Install:
+#   sudo cp packaging/systemd/hsync-rendezvous.service /etc/systemd/system/
+#   sudo install -d -m 0750 /etc/hsync-rendezvous
+#   # The credential source must exist: create it EMPTY for open mode, or
+#   # provision the operator's group-keys file to enable protected buckets.
+#   sudo install -m 0640 -o root -g root /dev/null /etc/hsync-rendezvous/group-keys
+#   sudo install -m 0640 -o root -g root /path/to/group-keys \
+#       /etc/hsync-rendezvous/group-keys   # protected buckets only
+#   sudo systemctl daemon-reload && sudo systemctl enable --now hsync-rendezvous
+#
+# The group-keys file is exposed to the process ONLY through systemd's
+# credential mechanism (fd, never a path inside the sandbox) and read once
+# at startup via --keys-fd. The only thing written to disk (no-log) is the
+# persistent TLS identity under StateDirectory — the operator's own
+# key+cert, never peer data.
+
+[Unit]
+Description=HSYNC P2P rendezvous node (rdv/1, QUIC/UDP 443, no-log)
+Documentation=https://github.com/albertsdk/hsync-rendezvous/tree/main/docs
+After=network-online.target
+Wants=network-online.target
+# A crash loop must surface as a failed unit (and an alert) instead of an endless
+# restart storm.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+# Type=notify: the unit is active only once the node has bound the QUIC/UDP
+# listener and announced READY=1 (sd_notify), not as soon as it forks. The
+# watchdog restarts a node whose event loop stops making progress — a wedged
+# process still holds the socket, so liveness cannot be inferred from the PID.
+Type=notify
+NotifyAccess=main
+WatchdogSec=30
+# A SIGTERM stop is graceful and exits 0, so only a failure restarts the unit;
+# the stop timeout bounds the transport teardown before SIGKILL is escalated.
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15
+KillSignal=SIGTERM
+# Host protection: the node sizes its own table/connection limits from RAM and
+# CPU, and the cgroup is what keeps a runaway instance from taking the host down
+# (an OOM inside the cgroup restarts the service, not the machine).
+MemoryMax=512M
+TasksMax=256
+LimitNOFILE=8192
+# No-log node: a dynamic system user (no /home; the only persisted state is the
+# TLS identity), strict filesystem sandbox, allowed to bind the QUIC/UDP port
+# 443. StateDirectory= makes /var/lib/hsync-rendezvous writable for the identity
+# file the node keeps by default (or at an explicit --identity path).
+DynamicUser=yes
+StateDirectory=hsync-rendezvous
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+# The (optional) group-keys file is exposed ONLY through systemd's credential
+# mechanism; the process reads it once at startup via --keys-fd. Open mode
+# (no protected buckets) is used when the file is empty.
+LoadCredential=group-keys:/etc/hsync-rendezvous/group-keys
+LoadCredential=metrics-token:/etc/hsync-rendezvous/metrics-token
+# The metrics endpoint (/metrics) and the Prometheus text file are opt-in: an
+# EMPTY credential keeps them off. To enable them, provision a token
+# (`sudo sh -c 'openssl rand -hex 32 > /etc/hsync-rendezvous/metrics-token'`) and add
+# the flags in a drop-in; the exact ExecStart is in docs/operations.md,
+# "Measure the node". The token is never passed on the command line.
+ExecStart=/bin/sh -c 'if [ -r "$CREDENTIALS_DIRECTORY/group-keys" ]; then exec /usr/local/bin/hsync-rendezvous run --listen-host 0.0.0.0 --listen-port 443 --identity /var/lib/hsync-rendezvous/identity.pem --keys-fd 5 5<"$CREDENTIALS_DIRECTORY/group-keys"; else exec /usr/local/bin/hsync-rendezvous run --listen-host 0.0.0.0 --listen-port 443 --identity /var/lib/hsync-rendezvous/identity.pem; fi'
+# Private node (protected-bucket policy node-wide): require a valid bucket_token on every frame.
+# Needs a group key for EVERY bucket served and fails fast at startup (exit 2)
+# without any key. The ExecStart above already passes --keys-fd whenever the
+# credential exists, so uncommenting this line closes an otherwise open node.
+#Environment=HSYNC_RENDEZVOUS_PRIVATE=1
+# No-log: the rendezvous node writes nothing to disk (verified by the
+# read-only-filesystem test suite). The banner on stdout is discarded; stderr
+# goes to the journal so the always-on operational channel (warn/error) is
+# visible with `journalctl -u hsync-rendezvous`. That channel is peer-free by
+# construction (see docs/usage.md, "Diagnostics"). Never add --debug here: it
+# emits peer identity and the journal is written to disk. Bound the journal if
+# you need a retention policy:
+#   /etc/systemd/journald.conf: SystemMaxUse=…, MaxRetentionSec=…
+StandardOutput=null
+StandardError=journal
+
+# ---- Hardening ---------------------------------------------------------------
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+SystemCallArchitectures=native
+UMask=077
+ReadWritePaths=
+
+[Install]
+WantedBy=multi-user.target

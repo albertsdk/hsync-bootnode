@@ -1,18 +1,18 @@
-# Benchmarks — hsync-bootnode
+# Benchmarks — hsync-rendezvous
 
 Six tiers, split by language-dependence:
 
 | Tier | Script | Transport | Language-neutral? |
 |---|---|---|---|
-| L1 | `bench_handler.py` | none (calls `BootHandler.handle`) | **No** — Python-internal micro-benchmark |
+| L1 | `bench_handler.py` | none (calls `RendezvousHandler.handle`) | **No** — Python-internal micro-benchmark |
 | L2 | `bench_quic.py` | real QUIC/UDP loopback | **Yes** — spawns the binary, wire-only |
 | L3 | `soak.py` | real QUIC/UDP loopback (sustained) | **Yes** — spawns the binary, wire-only |
 | L4 | `profile_handshake.py` | real QUIC/UDP loopback (diagnostic) | **No** — splits the `aioquic` client cost |
 | L5 | `cpu_saturation.py` | real QUIC/UDP loopback (diagnostic) | **No** — sweeps load, reads node CPU from `/proc` |
 | L6 | `memory.py` | in-process (A) + real QUIC/UDP loopback (B) | **Mixed** — A is Python-internal (`tracemalloc`); B spawns the binary, wire-only |
 
-L2/L3/L6-B launch the bootnode executable (`HSYNC_BOOTNODE_BIN`, default Python
-build) and drive it only through the `boot/1` wire protocol, so the same
+L2/L3/L6-B launch the rendezvous executable (`HSYNC_RENDEZVOUS_BIN`, default Python
+build) and drive it only through the `rdv/1` wire protocol, so the same
 benchmark runs unchanged against the future `c/` port. L1 (handler),
 L6-A and the L4/L5 diagnostics are Python-internal; L5's CPU sampling needs Linux
 `/proc` and reports `n/a` elsewhere.
@@ -26,7 +26,7 @@ L6-A and the L4/L5 diagnostics are Python-internal; L5's CPU sampling needs Linu
 ## Running
 
 ```bash
-cd hsync-bootnode
+cd hsync-rendezvous
 
 # L1 — handler micro-benchmark (Python-only)
 python/.venv/bin/python bench/bench_handler.py --count 2000
@@ -48,7 +48,7 @@ python/.venv/bin/python bench/memory.py --records 20000 --limiter-keys 100000
 python/.venv/bin/python bench/memory.py --node --peers 20000 --endpoints 3
 
 # Against a different implementation
-HSYNC_BOOTNODE_BIN=/path/to/hsync-bootnode python/.venv/bin/python bench/bench_quic.py
+HSYNC_RENDEZVOUS_BIN=/path/to/hsync-rendezvous python/.venv/bin/python bench/bench_quic.py
 ```
 
 `--json-out FILE` writes machine-readable results on every tier.

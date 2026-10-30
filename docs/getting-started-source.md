@@ -9,7 +9,7 @@ managed host prefer the [installer script](getting-started-script.md) or the
 
 - Python 3.12–3.14
 - Poetry
-- The `hsync-common` repository checked out as a sibling of `hsync-bootnode`
+- The `hsync-common` repository checked out as a sibling of `hsync-rendezvous`
   (a path dependency of the Python v1)
 
 ## Install and run
@@ -19,14 +19,14 @@ managed host prefer the [installer script](getting-started-script.md) or the
 With both repositories cloned side by side:
 
 ```bash
-git clone https://github.com/albertsdk/hsync-bootnode.git hsync-bootnode
+git clone https://github.com/albertsdk/hsync-rendezvous.git hsync-rendezvous
 git clone https://github.com/albertsdk/hsync-common.git hsync-common
-cd hsync-bootnode
+cd hsync-rendezvous
 ./run.sh run
 ```
 
 `run.sh` creates the in-project virtualenv on first use, installs the main
-dependencies, and starts the node, forwarding any argument to `hsync-bootnode`
+dependencies, and starts the node, forwarding any argument to `hsync-rendezvous`
 (`./run.sh --help`). It stops with a clear message if `../hsync-common` is
 missing.
 
@@ -36,14 +36,14 @@ The same steps, spelled out (the virtualenv is created by `run.sh`):
 
 ```bash
 cd python
-.venv/bin/hsync-bootnode run
+.venv/bin/hsync-rendezvous run
 ```
 
 On first run the node creates a persistent identity at
-`$HSYNC_STATE_DIR/bootnode/identity.pem` (`$XDG_STATE_HOME/hsync/bootnode/identity.pem`
+`$HSYNC_STATE_DIR/rendezvous/identity.pem` (`$XDG_STATE_HOME/hsync/rendezvous/identity.pem`
 when `HSYNC_STATE_DIR` is unset; override with `--identity PATH`),
 so its fingerprint is stable across restarts and clients can pin it. Read it
-with `hsync-bootnode identity show` (add the same `--identity PATH` when you
+with `hsync-rendezvous identity show` (add the same `--identity PATH` when you
 overrode it), and use `--ephemeral` for a throwaway node that keeps the identity
 in memory.
 
@@ -51,7 +51,7 @@ Verify it started (another terminal):
 
 ```bash
 cd python
-.venv/bin/hsync-bootnode identity show
+.venv/bin/hsync-rendezvous identity show
 ```
 
 ### Serve a second UDP port (optional)
@@ -62,7 +62,7 @@ open in the host firewall):
 
 ```bash
 cd python
-.venv/bin/hsync-bootnode run --listen-ports 443,53
+.venv/bin/hsync-rendezvous run --listen-ports 443,53
 ```
 
 The ports share one routing table, so a peer registered on one port is
@@ -75,8 +75,8 @@ visible to a query on another. See `--listen-ports` in
 
 ```bash
 ./compile.sh
-# → dist/<os>-<arch>/hsync-bootnode
-./dist/linux-amd64/hsync-bootnode --version
+# → dist/<os>-<arch>/hsync-rendezvous
+./dist/linux-amd64/hsync-rendezvous --version
 ```
 
 Raspberry Pi OS executables (`armhf`/`arm64`) are cross-built inside Docker on
@@ -86,7 +86,7 @@ them):
 
 ```bash
 ./compile.sh -t rpi
-# → dist/rpi/armhf/hsync-bootnode and dist/rpi/arm64/hsync-bootnode
+# → dist/rpi/armhf/hsync-rendezvous and dist/rpi/arm64/hsync-rendezvous
 ```
 
 `native` embeds the host Python and its C library, so a binary copied to a
@@ -99,11 +99,11 @@ For a managed host, run the node with systemd (or launchd/Windows) instead of an
 interactive terminal:
 
 ```bash
-sudo install -d -m 0750 /etc/hsync-bootnode
-sudo install -m 0640 /path/to/group-keys /etc/hsync-bootnode/group-keys
-sudo cp packaging/systemd/hsync-bootnode.service /etc/systemd/system/
+sudo install -d -m 0750 /etc/hsync-rendezvous
+sudo install -m 0640 /path/to/group-keys /etc/hsync-rendezvous/group-keys
+sudo cp packaging/systemd/hsync-rendezvous.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now hsync-bootnode.service
+sudo systemctl enable --now hsync-rendezvous.service
 ```
 
 Edit the executable path inside the unit to your venv or binary. macOS
@@ -116,7 +116,7 @@ upgrades, reachability probe) are in [operations.md](operations.md).
 ## Update
 
 ```bash
-cd /path/to/hsync-bootnode
+cd /path/to/hsync-rendezvous
 git pull
 ./run.sh run
 ```

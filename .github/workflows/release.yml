@@ -1,6 +1,6 @@
 name: Release
 
-# Publish prebuilt bootnode binaries, a Windows installer (Inno Setup), .deb and
+# Publish prebuilt rendezvous binaries, a Windows installer (Inno Setup), .deb and
 # .rpm packages, the install.sh installer and compose.yaml as GitHub Release
 # assets, and a multi-arch container image to GHCR. Two triggers:
 #
@@ -38,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with: { path: hsync-bootnode }
+        with: { path: hsync-rendezvous }
       # Path dependency: the Python implementation declares hsync-common as
       # {path = "../../hsync-common"}, so the sibling must be checked out next to
       # this repo. hsync-common is private, so the default GITHUB_TOKEN cannot
@@ -54,30 +54,30 @@ jobs:
       # Gate the markdown docs on valid relative links, including the cross-repo
       # pointers into the sibling hsync-common checkout (pure stdlib script).
       - name: Docs link-check
-        working-directory: hsync-bootnode
+        working-directory: hsync-rendezvous
         run: python ../hsync-common/scripts/dev/check_doc_links.py .
       - run: pipx install poetry
       - name: Configure in-project virtualenv
-        working-directory: hsync-bootnode/python
+        working-directory: hsync-rendezvous/python
         run: poetry config virtualenvs.in-project true
       - name: Install dependencies
-        working-directory: hsync-bootnode/python
+        working-directory: hsync-rendezvous/python
         run: poetry install --no-interaction --without build
       - name: Lint, types and unit tests
-        working-directory: hsync-bootnode/python
+        working-directory: hsync-rendezvous/python
         run: |
           poetry run ruff check .
           poetry run ruff format --check .
-          poetry run mypy src/hsync_bootnode
+          poetry run mypy src/hsync_rendezvous
           poetry run pytest -q
       - name: Lint the language-neutral suite
-        working-directory: hsync-bootnode
+        working-directory: hsync-rendezvous
         run: python/.venv/bin/python -m ruff check tests bench
       # Contract suite: spawns the console script and observes only the public
-      # CLI + boot/1 wire, so it stays valid for the c/ port.
+      # CLI + rdv/1 wire, so it stays valid for the c/ port.
       - name: Black-box suite (tests/)
-        working-directory: hsync-bootnode
-        run: HSYNC_BB_BOOTNODE=1 python/.venv/bin/python -m pytest -q tests/
+        working-directory: hsync-rendezvous
+        run: HSYNC_BB_RENDEZVOUS=1 python/.venv/bin/python -m pytest -q tests/
 
   build-binaries:
     needs: gate
@@ -96,7 +96,7 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v7
-        with: { path: hsync-bootnode }
+        with: { path: hsync-rendezvous }
       - uses: actions/checkout@v7
         with:
           repository: albertsdk/hsync-common
@@ -112,7 +112,7 @@ jobs:
           if [[ "${{ github.event_name }}" == "push" ]]; then
             echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
           else
-            BASE=$(grep -E '^version\s*=' hsync-bootnode/python/pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+            BASE=$(grep -E '^version\s*=' hsync-rendezvous/python/pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
             SUFFIX="${{ inputs.version_suffix }}"
             if [ -n "$SUFFIX" ]; then
               echo "version=${BASE}-${SUFFIX}" >> "$GITHUB_OUTPUT"
@@ -121,7 +121,7 @@ jobs:
             fi
           fi
       - name: Build native binary
-        working-directory: hsync-bootnode
+        working-directory: hsync-rendezvous
         run: |
           cd python
           poetry config virtualenvs.in-project true
@@ -129,21 +129,21 @@ jobs:
           cd ..
           ./compile.sh
       - name: Package binary
-        working-directory: hsync-bootnode
+        working-directory: hsync-rendezvous
         run: |
           version="${{ steps.version.outputs.version }}"
           mkdir -p release-out
           cd "dist/${{ matrix.target }}"
           if [ "${{ matrix.archive }}" = "zip" ]; then
-            7z a "../../release-out/hsync-bootnode-${version}-${{ matrix.target }}.zip" hsync-bootnode.exe
+            7z a "../../release-out/hsync-rendezvous-${version}-${{ matrix.target }}.zip" hsync-rendezvous.exe
           else
-            tar czf "../../release-out/hsync-bootnode-${version}-${{ matrix.target }}.tar.gz" hsync-bootnode
+            tar czf "../../release-out/hsync-rendezvous-${version}-${{ matrix.target }}.tar.gz" hsync-rendezvous
           fi
       - name: Build the Windows installer (Inno Setup)
         # Per-machine installer (admin): installs the daemon + WinSW and
-        # registers the hsync-bootnode Windows service.
+        # registers the hsync-rendezvous Windows service.
         if: runner.os == 'Windows'
-        working-directory: hsync-bootnode
+        working-directory: hsync-rendezvous
         shell: pwsh
         run: |
           choco install innosetup -y --no-progress
@@ -157,21 +157,21 @@ jobs:
           $vi = "${{ steps.version.outputs.version }}" -replace '-.*$','' -replace '\+.*$',''
           & $iscc "/DAppVersion=${{ steps.version.outputs.version }}" `
                   "/DVersionInfoVersion=$vi" `
-                  "/DSourceExe=$((Resolve-Path 'dist/windows-amd64/hsync-bootnode.exe').Path)" `
+                  "/DSourceExe=$((Resolve-Path 'dist/windows-amd64/hsync-rendezvous.exe').Path)" `
                   "/DWinSWPath=$((Resolve-Path $winsw).Path)" `
                   "/DOutDir=$((Resolve-Path 'release-out').Path)" `
-                  "packaging/windows/hsync-bootnode.iss"
+                  "packaging/windows/hsync-rendezvous.iss"
       - uses: actions/upload-artifact@v7
         with:
           name: bin-${{ matrix.target }}
-          path: hsync-bootnode/release-out/*
+          path: hsync-rendezvous/release-out/*
 
   build-packages:
     needs: gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with: { path: hsync-bootnode }
+        with: { path: hsync-rendezvous }
       - uses: actions/checkout@v7
         with:
           repository: albertsdk/hsync-common
@@ -189,7 +189,7 @@ jobs:
           if [[ "${{ github.event_name }}" == "push" ]]; then
             echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
           else
-            BASE=$(grep -E '^version\s*=' hsync-bootnode/python/pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+            BASE=$(grep -E '^version\s*=' hsync-rendezvous/python/pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
             SUFFIX="${{ inputs.version_suffix }}"
             if [ -n "$SUFFIX" ]; then
               echo "version=${BASE}-${SUFFIX}" >> "$GITHUB_OUTPUT"
@@ -215,7 +215,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
       - name: Build .deb and .rpm packages
-        working-directory: hsync-bootnode
+        working-directory: hsync-rendezvous
         env:
           HSYNC_VERSION: ${{ steps.version.outputs.version }}
         run: |
@@ -225,8 +225,8 @@ jobs:
         with:
           name: packages
           path: |
-            hsync-bootnode/dist/deb/*.deb
-            hsync-bootnode/dist/rpm/*.rpm
+            hsync-rendezvous/dist/deb/*.deb
+            hsync-rendezvous/dist/rpm/*.rpm
 
   image:
     needs: gate
@@ -239,7 +239,7 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v7
-        with: { path: hsync-bootnode }
+        with: { path: hsync-rendezvous }
       - uses: actions/checkout@v7
         with:
           repository: albertsdk/hsync-common
@@ -259,21 +259,21 @@ jobs:
           if [[ "${{ github.event_name }}" == "push" ]]; then
             TAG="${GITHUB_REF_NAME}"
           else
-            BASE=$(grep -E '^version\s*=' hsync-bootnode/python/pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+            BASE=$(grep -E '^version\s*=' hsync-rendezvous/python/pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
             SUFFIX="${{ inputs.version_suffix }}"
             if [ -n "$SUFFIX" ]; then TAG="v${BASE}-${SUFFIX}"; else TAG="v${BASE}"; fi
           fi
           if [[ "${TAG}" == *-* ]]; then
-            echo "tags=ghcr.io/albertsdk/hsync-bootnode:${TAG}" >> "$GITHUB_OUTPUT"
+            echo "tags=ghcr.io/albertsdk/hsync-rendezvous:${TAG}" >> "$GITHUB_OUTPUT"
           else
-            echo "tags=ghcr.io/albertsdk/hsync-bootnode:${TAG},ghcr.io/albertsdk/hsync-bootnode:latest" >> "$GITHUB_OUTPUT"
+            echo "tags=ghcr.io/albertsdk/hsync-rendezvous:${TAG},ghcr.io/albertsdk/hsync-rendezvous:latest" >> "$GITHUB_OUTPUT"
           fi
       - name: Build and push
         id: build
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: hsync-bootnode/Dockerfile
+          file: hsync-rendezvous/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.tags.outputs.tags }}
@@ -283,21 +283,21 @@ jobs:
         # install.sh verifies this signature before it starts the node.
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
-        run: cosign sign --yes "ghcr.io/albertsdk/hsync-bootnode@${DIGEST}"
+        run: cosign sign --yes "ghcr.io/albertsdk/hsync-rendezvous@${DIGEST}"
 
   release:
     needs: [build-binaries, build-packages, image]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with: { path: hsync-bootnode }
+        with: { path: hsync-rendezvous }
       - name: Determine release tag
         id: tag
         run: |
           if [[ "${{ github.event_name }}" == "push" ]]; then
             echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           else
-            BASE=$(grep -E '^version\s*=' hsync-bootnode/python/pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+            BASE=$(grep -E '^version\s*=' hsync-rendezvous/python/pyproject.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
             SUFFIX="${{ inputs.version_suffix }}"
             if [ -n "$SUFFIX" ]; then
               echo "tag=v${BASE}-${SUFFIX}" >> "$GITHUB_OUTPUT"
@@ -331,25 +331,25 @@ jobs:
             done
           }
           mk_alias \
-            "hsync-bootnode-*-linux-amd64.tar.gz|hsync-bootnode-linux-amd64.tar.gz" \
-            "hsync-bootnode-*-linux-arm64.tar.gz|hsync-bootnode-linux-arm64.tar.gz" \
-            "hsync-bootnode-*-darwin-arm64.tar.gz|hsync-bootnode-darwin-arm64.tar.gz" \
-            "hsync-bootnode-*-darwin-amd64.tar.gz|hsync-bootnode-darwin-amd64.tar.gz" \
-            "hsync-bootnode-*-windows-amd64.zip|hsync-bootnode-windows-amd64.zip" \
-            "hsync-bootnode_*_amd64.deb|hsync-bootnode-amd64.deb" \
-            "hsync-bootnode_*_arm64.deb|hsync-bootnode-arm64.deb" \
-            "hsync-bootnode_*_armhf.deb|hsync-bootnode-armhf.deb" \
-            "hsync-bootnode-*-1.el9.x86_64.rpm|hsync-bootnode-x86_64.rpm" \
-            "hsync-bootnode-*-1.el9.aarch64.rpm|hsync-bootnode-aarch64.rpm" \
-            "hsync-bootnode-*-windows-amd64-setup.exe|hsync-bootnode-windows-amd64-setup.exe"
+            "hsync-rendezvous-*-linux-amd64.tar.gz|hsync-rendezvous-linux-amd64.tar.gz" \
+            "hsync-rendezvous-*-linux-arm64.tar.gz|hsync-rendezvous-linux-arm64.tar.gz" \
+            "hsync-rendezvous-*-darwin-arm64.tar.gz|hsync-rendezvous-darwin-arm64.tar.gz" \
+            "hsync-rendezvous-*-darwin-amd64.tar.gz|hsync-rendezvous-darwin-amd64.tar.gz" \
+            "hsync-rendezvous-*-windows-amd64.zip|hsync-rendezvous-windows-amd64.zip" \
+            "hsync-rendezvous_*_amd64.deb|hsync-rendezvous-amd64.deb" \
+            "hsync-rendezvous_*_arm64.deb|hsync-rendezvous-arm64.deb" \
+            "hsync-rendezvous_*_armhf.deb|hsync-rendezvous-armhf.deb" \
+            "hsync-rendezvous-*-1.el9.x86_64.rpm|hsync-rendezvous-x86_64.rpm" \
+            "hsync-rendezvous-*-1.el9.aarch64.rpm|hsync-rendezvous-aarch64.rpm" \
+            "hsync-rendezvous-*-windows-amd64-setup.exe|hsync-rendezvous-windows-amd64-setup.exe"
       - name: Prepare installer and Compose file
         run: |
           # Pin the published installer to this release tag, and ship the
           # Compose file used by the manual Docker path.
           sed "s/^readonly DEFAULT_VERSION=.*/readonly DEFAULT_VERSION=\"${{ steps.tag.outputs.tag }}\"/" \
-            hsync-bootnode/install.sh > "assets/install.sh"
+            hsync-rendezvous/install.sh > "assets/install.sh"
           chmod 755 "assets/install.sh"
-          cp hsync-bootnode/compose.yaml "assets/compose.yaml"
+          cp hsync-rendezvous/compose.yaml "assets/compose.yaml"
       - name: Generate checksums
         run: |
           cd assets

@@ -21,9 +21,10 @@ Streams
   first line is ``relay_attach``; from there it is opaque too.
 
 The pump is symmetric: two forwarding tasks, a fixed 64 KiB read buffer,
-``drain()`` on both sides (so backpressure reaches the real sender), an idle
-timeout per direction and a per-session byte cap. Every counter kept here is an
-aggregate — no CID, bucket, IP or port leaves this module.
+``drain()`` on both sides (so backpressure reaches the real sender), a per-
+session byte cap and a per-session idle watchdog that drops the bridge after
+``idle_timeout`` without traffic. Every counter kept here is an aggregate — no
+CID, bucket, IP or port leaves this module.
 
 Consumers: ``hsync_rendezvous.server`` (stream handoff), ``hsync_rendezvous.handler``
 (validation/authorization), ``hsync_rendezvous.cli`` (the switch + quotas) and
@@ -39,6 +40,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from hsync_rendezvous.diagnostics import debug_event, debug_log
+from hsync_rendezvous.framing import FrameTooLarge, read_ndjson
 from hsync_rendezvous.protocol import (
     PROTOCOL_VERSION_RDV,
     RDV_FRAME_ADAPTER,
@@ -140,26 +142,27 @@ class _Pending:
     acceptor: tuple[Any, Any] | None = None
     bytes: int = 0
     reserved: bool = True
+    # Last instant either direction forwarded an opaque chunk (idle watch).
+    last_activity: float = field(default_factory=time.monotonic)
 
 
 class _Bandwidth:
-    """Process-wide byte-rate shaper (token bucket, ``await``-based)."""
+    """Process-wide byte-rate shaper (token bucket, await-free fast path)."""
 
     def __init__(self, bytes_per_second: int) -> None:
         self._rate = float(bytes_per_second)
         self._tokens = float(bytes_per_second)
         self._stamp = time.monotonic()
 
-    async def take(self, size: int) -> None:
-        """Wait until ``size`` bytes may be relayed, then charge them."""
-        while True:
-            now = time.monotonic()
-            self._tokens = min(self._rate, self._tokens + (now - self._stamp) * self._rate)
-            self._stamp = now
-            if self._tokens >= size:
-                self._tokens -= size
-                return
-            await asyncio.sleep((size - self._tokens) / self._rate)
+    def charge(self, size: int) -> float | None:
+        """Charge ``size`` bytes; ``None`` when they fit, else seconds to wait."""
+        now = time.monotonic()
+        self._tokens = min(self._rate, self._tokens + (now - self._stamp) * self._rate)
+        self._stamp = now
+        if self._tokens >= size:
+            self._tokens -= size
+            return None
+        return (size - self._tokens) / self._rate
 
 
 class PrefixedReader:
@@ -282,7 +285,17 @@ class RelayRegistry:
             await writer.drain()
             pending = bytearray()
             while True:
-                raw = await _read_line(reader, pending, self._idle_timeout)
+                try:
+                    raw = await read_ndjson(
+                        reader,
+                        pending,
+                        max_bytes=_CONTROL_FRAME_BYTES,
+                        idle_timeout=self._idle_timeout,
+                    )
+                except FrameTooLarge:
+                    # The control stream carries only keepalives, so an oversized
+                    # line is a protocol violation: drop the listener.
+                    return
                 if raw is None:
                     return
                 if not _is_ping(raw, model.cid, model.bucket):
@@ -405,12 +418,18 @@ class RelayRegistry:
                 name="relay-forward-acceptor",
             ),
         ]
+        watchdog = asyncio.create_task(self._idle_watch(session))
+        # The watchdog is one of the awaited tasks: when it fires (idle past
+        # the deadline) the pump unblocks and cancels the two forwards, so a
+        # silent session is torn down by the watchdog itself and a session
+        # with traffic keeps pumping (the watchdog only returns on expiry).
+        pump_tasks = [*tasks, watchdog]
         try:
-            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            await asyncio.wait(pump_tasks, return_when=asyncio.FIRST_COMPLETED)
         finally:
-            for task in tasks:
+            for task in pump_tasks:
                 task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            await asyncio.gather(*pump_tasks, return_exceptions=True)
             self.stats.relay_session_closed()
             debug_event(
                 "relay session close",
@@ -419,22 +438,57 @@ class RelayRegistry:
                 bytes=session.bytes,
             )
 
+    async def _idle_watch(self, session: _Pending) -> None:
+        """Close the session once it stays silent past the idle timeout.
+
+        One wake-up per (estimated) expiry instead of a ``wait_for`` timer per
+        forwarded chunk (a timer costs a few microseconds even when data is
+        already buffered): the forward loops only update ``last_activity``, and
+        this task sleeps straight to the next deadline, re-computing it after
+        any activity. Closing both writers forces the forward tasks to see EOF,
+        so the pump completes on its own.
+        """
+        try:
+            while True:
+                await asyncio.sleep(
+                    max(0.0, session.last_activity + self._idle_timeout - time.monotonic())
+                )
+                if time.monotonic() - session.last_activity >= self._idle_timeout:
+                    _close(session.dialer_writer)
+                    if session.acceptor is not None:
+                        _close(session.acceptor[1])
+                    return
+        except asyncio.CancelledError:
+            return
+
     async def _forward(self, session: _Pending, reader: Any, writer: Any) -> None:
-        """Copy one direction, enforcing the idle timeout and the byte bounds."""
+        """Copy one direction, enforcing the byte bounds.
+
+        No per-chunk timer: ``reader.read`` returns immediately when the
+        connection has buffered bytes and suspends otherwise, so the idle
+        deadline is enforced by :meth:`_idle_watch` instead (one wake-up per
+        session, not per chunk).
+        """
+        session_bytes = self.quotas.session_bytes
+        stats = self.stats
+        bandwidth = self._bandwidth
         while True:
             try:
-                chunk = await asyncio.wait_for(reader.read(RELAY_BUFFER_BYTES), self._idle_timeout)
-            except (TimeoutError, ConnectionError, OSError):
+                chunk = await reader.read(RELAY_BUFFER_BYTES)
+            except (ConnectionError, OSError):
                 return
             if not chunk:
                 return
             session.bytes += len(chunk)
-            if self.quotas.session_bytes and session.bytes > self.quotas.session_bytes:
+            session.last_activity = time.monotonic()
+            if session_bytes and session.bytes > session_bytes:
                 debug_event("relay session byte cap", cid=session.dialer_cid, bytes=session.bytes)
                 return
-            self.stats.relay_bytes(len(chunk))
-            if self._bandwidth is not None:
-                await self._bandwidth.take(len(chunk))
+            stats.relay_bytes(len(chunk))
+            if bandwidth is not None:
+                wait = bandwidth.charge(len(chunk))
+                if wait:
+                    await asyncio.sleep(wait)
             try:
                 writer.write(chunk)
                 await writer.drain()
@@ -508,25 +562,6 @@ async def _refuse(writer: Any, error: RdvError) -> None:
     except (ConnectionError, TimeoutError, OSError):
         pass
     _close(writer)
-
-
-async def _read_line(reader: Any, pending: bytearray, idle_timeout: float) -> bytes | None:
-    """Read one newline-terminated control frame, or ``None`` on EOF/timeout."""
-    while True:
-        newline = pending.find(b"\n")
-        if newline != -1:
-            frame = bytes(pending[:newline])
-            del pending[: newline + 1]
-            return frame
-        if len(pending) > _CONTROL_FRAME_BYTES:
-            return None
-        try:
-            chunk = await asyncio.wait_for(reader.read(1024), idle_timeout)
-        except (TimeoutError, ConnectionError, OSError):
-            return None
-        if not chunk:
-            return None
-        pending.extend(chunk)
 
 
 def _is_ping(raw: bytes, cid: str, bucket: str) -> bool:

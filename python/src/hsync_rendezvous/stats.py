@@ -135,56 +135,39 @@ class NodeStats:
             "# HELP hsync_rendezvous_build_info Identity of the running node.",
             "# TYPE hsync_rendezvous_build_info gauge",
             f'hsync_rendezvous_build_info{{version="{version}",protocol="{protocol}"}} 1',
-            "# HELP hsync_rendezvous_start_time_seconds Unix time the process started.",
-            "# TYPE hsync_rendezvous_start_time_seconds gauge",
-            f"hsync_rendezvous_start_time_seconds {self.started_at:.3f}",
-            "# HELP hsync_rendezvous_quic_connections_current Open QUIC connections.",
-            "# TYPE hsync_rendezvous_quic_connections_current gauge",
-            f"hsync_rendezvous_quic_connections_current {self.connections_current}",
-            "# HELP hsync_rendezvous_quic_connections_peak Highest open-connection level.",
-            "# TYPE hsync_rendezvous_quic_connections_peak gauge",
-            f"hsync_rendezvous_quic_connections_peak {self.connections_peak}",
-            "# HELP hsync_rendezvous_quic_connections_peak_timestamp_seconds When the peak was reached.",
-            "# TYPE hsync_rendezvous_quic_connections_peak_timestamp_seconds gauge",
-            "hsync_rendezvous_quic_connections_peak_timestamp_seconds "
-            f"{self.connections_peak_at:.3f}",
-            "# HELP hsync_rendezvous_quic_connections_total Admitted QUIC connections.",
-            "# TYPE hsync_rendezvous_quic_connections_total counter",
-            f"hsync_rendezvous_quic_connections_total {self.connections_total}",
-            "# HELP hsync_rendezvous_peers_current Peers registered right now (TTL-bounded).",
-            "# TYPE hsync_rendezvous_peers_current gauge",
-            f"hsync_rendezvous_peers_current {self.peers_current}",
-            "# HELP hsync_rendezvous_peers_peak Highest registered-peer level.",
-            "# TYPE hsync_rendezvous_peers_peak gauge",
-            f"hsync_rendezvous_peers_peak {self.peers_peak}",
-            "# HELP hsync_rendezvous_peers_peak_timestamp_seconds When the peak was reached.",
-            "# TYPE hsync_rendezvous_peers_peak_timestamp_seconds gauge",
-            f"hsync_rendezvous_peers_peak_timestamp_seconds {self.peers_peak_at:.3f}",
-            "# HELP hsync_rendezvous_peers_updates_total Accepted register/refresh writes.",
-            "# TYPE hsync_rendezvous_peers_updates_total counter",
-            f"hsync_rendezvous_peers_updates_total {self.peers_updates_total}",
-            "# HELP hsync_rendezvous_peers_expired_total Records dropped by the TTL sweep.",
-            "# TYPE hsync_rendezvous_peers_expired_total counter",
-            f"hsync_rendezvous_peers_expired_total {self.peers_expired_total}",
-            "# HELP hsync_rendezvous_relay_sessions_current Relayed sessions right now.",
-            "# TYPE hsync_rendezvous_relay_sessions_current gauge",
-            f"hsync_rendezvous_relay_sessions_current {self.relay_sessions_current}",
-            "# HELP hsync_rendezvous_relay_sessions_peak Highest relayed-session level.",
-            "# TYPE hsync_rendezvous_relay_sessions_peak gauge",
-            f"hsync_rendezvous_relay_sessions_peak {self.relay_sessions_peak}",
-            "# HELP hsync_rendezvous_relay_sessions_peak_timestamp_seconds When the peak was reached.",
-            "# TYPE hsync_rendezvous_relay_sessions_peak_timestamp_seconds gauge",
-            "hsync_rendezvous_relay_sessions_peak_timestamp_seconds "
-            f"{self.relay_sessions_peak_at:.3f}",
-            "# HELP hsync_rendezvous_relay_sessions_total Relay sessions opened.",
-            "# TYPE hsync_rendezvous_relay_sessions_total counter",
-            f"hsync_rendezvous_relay_sessions_total {self.relay_sessions_total}",
-            "# HELP hsync_rendezvous_relay_bytes_total Bytes forwarded by the relay.",
-            "# TYPE hsync_rendezvous_relay_bytes_total counter",
-            f"hsync_rendezvous_relay_bytes_total {self.relay_bytes_total}",
-            "# HELP hsync_rendezvous_metrics_requests_total Requests answered by /metrics.",
-            "# TYPE hsync_rendezvous_metrics_requests_total counter",
         ]
+        metrics = (
+            ("gauge", "hsync_rendezvous_start_time_seconds", "Unix time the process started.", f"{self.started_at:.3f}"),
+            ("gauge", "hsync_rendezvous_quic_connections_current", "Open QUIC connections.", self.connections_current),
+            ("gauge", "hsync_rendezvous_quic_connections_peak", "Highest open-connection level.", self.connections_peak),
+            ("gauge", "hsync_rendezvous_quic_connections_peak_timestamp_seconds", "When the peak was reached.", f"{self.connections_peak_at:.3f}"),
+            ("counter", "hsync_rendezvous_quic_connections_total", "Admitted QUIC connections.", self.connections_total),
+            ("gauge", "hsync_rendezvous_peers_current", "Peers registered right now (TTL-bounded).", self.peers_current),
+            ("gauge", "hsync_rendezvous_peers_peak", "Highest registered-peer level.", self.peers_peak),
+            ("gauge", "hsync_rendezvous_peers_peak_timestamp_seconds", "When the peak was reached.", f"{self.peers_peak_at:.3f}"),
+            ("counter", "hsync_rendezvous_peers_updates_total", "Accepted register/refresh writes.", self.peers_updates_total),
+            ("counter", "hsync_rendezvous_peers_expired_total", "Records dropped by the TTL sweep.", self.peers_expired_total),
+            ("gauge", "hsync_rendezvous_relay_sessions_current", "Relayed sessions right now.", self.relay_sessions_current),
+            ("gauge", "hsync_rendezvous_relay_sessions_peak", "Highest relayed-session level.", self.relay_sessions_peak),
+            ("gauge", "hsync_rendezvous_relay_sessions_peak_timestamp_seconds", "When the peak was reached.", f"{self.relay_sessions_peak_at:.3f}"),
+            ("counter", "hsync_rendezvous_relay_sessions_total", "Relay sessions opened.", self.relay_sessions_total),
+            ("counter", "hsync_rendezvous_relay_bytes_total", "Bytes forwarded by the relay.", self.relay_bytes_total),
+        )
+        lines.extend(
+            line
+            for kind, name, help_text, value in metrics
+            for line in (
+                f"# HELP {name} {help_text}",
+                f"# TYPE {name} {kind}",
+                f"{name} {value}",
+            )
+        )
+        lines.extend(
+            [
+                "# HELP hsync_rendezvous_metrics_requests_total Requests answered by /metrics.",
+                "# TYPE hsync_rendezvous_metrics_requests_total counter",
+            ]
+        )
         lines.extend(
             f'hsync_rendezvous_metrics_requests_total{{outcome="{outcome}"}} '
             f"{self.metrics_requests[outcome]}"

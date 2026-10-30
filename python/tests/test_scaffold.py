@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
+from rdv_response import RdvResponse
 
 from hsync_rendezvous.protocol import (
     CAPACITY_MAX,
@@ -17,7 +18,6 @@ from hsync_rendezvous.protocol import (
     RdvPeer,
     RdvQuery,
     RdvRegister,
-    RdvResponse,
 )
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"

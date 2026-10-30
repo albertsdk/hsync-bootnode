@@ -965,17 +965,13 @@ def test_response_bytes_match_the_pydantic_serializer() -> None:
     """The hand-assembled response must stay byte-identical to the pydantic dump.
 
     ``_response`` concatenates cached peer fragments around a server-controlled
-    envelope; this pins that envelope against ``RDV_RESPONSE_ADAPTER`` so the
-    wire format cannot drift from the SSOT model.
+    envelope; this pins that envelope against the test-side pydantic mirror
+    (``rdv_response``) so the wire format cannot drift.
     """
     from pydantic import TypeAdapter
+    from rdv_response import RDV_RESPONSE_ADAPTER, RdvResponse
 
-    from hsync_rendezvous.protocol import (
-        RDV_RESPONSE_ADAPTER,
-        Endpoint,
-        RdvPeer,
-        RdvResponse,
-    )
+    from hsync_rendezvous.protocol import Endpoint, RdvPeer
 
     peers = [
         RdvPeer(
@@ -995,6 +991,38 @@ def test_response_bytes_match_the_pydantic_serializer() -> None:
         RdvResponse(protocol_version="rdv/1", type="response", peers=peers, count=1, ttl=60)
     )
     assert h._response(peers=fragments, error=None, retry_after=None) == expected
+
+
+def test_ack_bytes_match_the_pydantic_serializer(monkeypatch) -> None:
+    """The hand-assembled ack must stay byte-identical to the pydantic dump.
+
+    ``_ack`` concatenates server-controlled bytes around the socket-observed
+    endpoint; this pins that envelope against ``RDV_ACK_ADAPTER`` so the wire
+    format cannot drift.
+    """
+    from hsync_rendezvous.protocol import (
+        PROTOCOL_VERSION_RDV,
+        RDV_ACK_ADAPTER,
+        ObservedEndpoint,
+        RdvAck,
+    )
+
+    monkeypatch.setattr(
+        "hsync_rendezvous.handler._utc_now_z", lambda: "2026-10-09T10:00:00Z"
+    )
+    h = make_handler()
+    expected = RDV_ACK_ADAPTER.dump_json(
+        RdvAck(
+            protocol_version=PROTOCOL_VERSION_RDV,
+            type="ack",
+            observed_endpoint=ObservedEndpoint(
+                proto="udp", ip="198.51.100.7", port=54321
+            ),
+            ttl=int(h.ttl),
+            server_time="2026-10-09T10:00:00Z",
+        )
+    )
+    assert h._ack("198.51.100.7", 54321) == expected
 
 
 def test_peer_record_keeps_endpoints_compact_and_caches_wire_bytes() -> None:

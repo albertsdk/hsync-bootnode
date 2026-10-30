@@ -24,7 +24,7 @@ guesses the frame kind from the payload shape.
 | `leave` | client → server | `RdvLeave` (`python/src/hsync_rendezvous/protocol.py::RdvLeave`) | `cid`, `bucket`, `bucket_token?` |
 | `query` | client → server | `RdvQuery` (`python/src/hsync_rendezvous/protocol.py::RdvQuery`) | `bucket`, `group?`, `bucket_token?`, `limit` (1–50, default 20) |
 | `ack` | server → client | `RdvAck` (`python/src/hsync_rendezvous/protocol.py::RdvAck`) | `observed_endpoint`, `ttl`, `server_time`, `retry_after?` |
-| `response` | server → client | `RdvResponse` (`python/src/hsync_rendezvous/protocol.py::RdvResponse`) | `peers[]`, `count`, `ttl`, `error?` (`token_required`/`rate_limited`/`overloaded`/`relay_unavailable`), `retry_after?` |
+| `response` | server → client | hand-assembled by `handler._response`; parity oracle `RdvResponse` in `python/tests/rdv_response.py` | `peers[]`, `count`, `ttl`, `error?` (`token_required`/`rate_limited`/`overloaded`/`relay_unavailable`), `retry_after?` |
 | `relay_listen` | client → server | `RdvRelayListen` (`python/src/hsync_rendezvous/protocol.py::RdvRelayListen`) | `cid`, `bucket`, `group?`, `bucket_token?` |
 | `relay_ping` | client → server | `RdvRelayPing` (`python/src/hsync_rendezvous/protocol.py::RdvRelayPing`) | `cid`, `bucket` |
 | `relay_connect` | client → server | `RdvRelayConnect` (`python/src/hsync_rendezvous/protocol.py::RdvRelayConnect`) | `cid`, `bucket`, `target_cid`, `group?`, `bucket_token?` |
@@ -77,13 +77,13 @@ The relayed list is advisory and unauthenticated, like the other peer fields.
 | `Endpoint` (`python/src/hsync_rendezvous/protocol.py::Endpoint`) | `RdvRegister.endpoints[]` | `proto` (`tcp`/`udp`), `host`, `port` |
 | `ObservedEndpoint` (`python/src/hsync_rendezvous/protocol.py::ObservedEndpoint`) | `RdvAck.observed_endpoint` | `proto`, `ip`, `port` (STUN-echo of the source) |
 | `RelayId` (`python/src/hsync_rendezvous/protocol.py::RelayId`) | `RdvRelayAttach.relay_id`, `RdvRelayIncoming.relay_id`, `RdvRelayOk.relay_id` | 32 lowercase hex characters (16 random bytes, minted per pairing) |
-| `RdvPeer` (`python/src/hsync_rendezvous/protocol.py::RdvPeer`) | `RdvResponse.peers[]` | `cid`, `endpoints[]`, `cert_fp`, `bucket`, `group?`, `version`, `capacity`, `reachable`, `server_ready`, `prefer_master`, `never_master`, `startup_time`, `sync_direction` |
+| `RdvPeer` (`python/src/hsync_rendezvous/protocol.py::RdvPeer`) | `response.peers[]` | `cid`, `endpoints[]`, `cert_fp`, `bucket`, `group?`, `version`, `capacity`, `reachable`, `server_ready`, `prefer_master`, `never_master`, `startup_time`, `sync_direction` |
 
 The client→server frames are dispatched in one pass by the discriminated union
 `RdvFrame = Annotated[RdvRegister | RdvRefresh | RdvLeave | RdvQuery,
 Field(discriminator="type")]` (`python/src/hsync_rendezvous/protocol.py::RdvFrame`) and validated from raw bytes via
 `RDV_FRAME_ADAPTER` (`python/src/hsync_rendezvous/protocol.py::RDV_FRAME_ADAPTER`, a `TypeAdapter[RdvFrame]`). The
-server→client frames (`RdvAck`/`RdvResponse`/`RdvPeer`) are deliberately
+server→client frames (`RdvAck`/`RdvPeer` and the hand-assembled `response`) are deliberately
 excluded from the union: they are never validated on the input path.
 
 ## Shared validators
@@ -115,7 +115,7 @@ excluded from the union: they are never validated on the input path.
 
 ```
 register/refresh ──► RdvRegister / RdvRefresh ──► RdvAck (STUN-echo + ttl)
-query           ──► RdvQuery                    ──► RdvResponse ──► RdvPeer[]
+query           ──► RdvQuery                    ──► response ──► RdvPeer[]
 leave           ──► RdvLeave                    ──► (no reply frame)
 ```
 

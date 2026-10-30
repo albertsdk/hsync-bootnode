@@ -217,35 +217,37 @@ def test_load_identity_rejects_mismatched_key(tmp_path):
     assert f'--identity "{path}"' in str(excinfo.value)
 
 
-def test_load_or_create_recovers_from_a_stale_temp_file(tmp_path):
+def test_load_or_create_ignores_an_orphaned_temp_file(tmp_path):
     """A leftover temp from a crashed run must not wedge the next start.
 
-    SIGKILL between temp creation and ``os.replace`` leaves the temp behind; with
-    the old fixed ``.{name}.tmp`` scheme the next run then failed on ``O_EXCL``
-    forever. The unique-temp write must succeed and clear the legacy leftover.
+    ``mkstemp`` gives every temp a unique name in the target directory, so a
+    temp orphaned by a crash (SIGKILL between creation and ``os.replace``) can
+    never collide with a later write: the identity is created next to it and
+    the orphan is left untouched.
     """
     path = tmp_path / "identity.pem"
-    stale = tmp_path / ".identity.pem.tmp"
-    stale.write_bytes(b"partial write from a killed process")
+    orphan = tmp_path / ".identity.pem.orphan.tmp"
+    orphan.write_bytes(b"partial write from a killed process")
 
     node = load_or_create_identity(path, host="127.0.0.1")
     assert path.is_file()
     assert len(str(node.fingerprint)) == 64
-    assert not stale.exists()  # legacy fixed-name leftover is cleared
-    assert list(tmp_path.glob(".*.tmp")) == []  # and no temp survives the write
+    assert orphan.exists()  # never cleared: it is not ours to touch
+    # and no temp from this write survives
+    assert list(tmp_path.glob(f".{path.name}.*.tmp")) == [orphan]
 
 
-def test_rotate_recovers_from_a_stale_temp_file(tmp_path):
+def test_rotate_ignores_an_orphaned_temp_file(tmp_path):
     """Rotation also survives an orphaned temp and stays atomic."""
     path = tmp_path / "identity.pem"
     load_or_create_identity(path)
-    stale = tmp_path / ".identity.pem.tmp"
-    stale.write_bytes(b"junk")
+    orphan = tmp_path / ".identity.pem.orphan.tmp"
+    orphan.write_bytes(b"junk")
 
     rotated = rotate_identity(path, host="127.0.0.1")
     assert str(load_identity(path).fingerprint) == str(rotated.fingerprint)
-    assert not stale.exists()
-    assert list(tmp_path.glob(".*.tmp")) == []
+    assert orphan.exists()  # never cleared: it is not ours to touch
+    assert list(tmp_path.glob(f".{path.name}.*.tmp")) == [orphan]
 
 
 def test_rotate_recovers_from_a_mismatched_key_certificate(tmp_path):

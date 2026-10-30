@@ -1,8 +1,8 @@
 """In-memory token-bucket rate limiters for the rendezvous.
 
 The implementation is the ``hsync_common.ratelimit`` SSOT shared with
-``hsync-client``; this facade keeps the ``hsync_rendezvous.ratelimit`` import path
-used by the boot server, handler and tests.
+``hsync-client``; the boot server, the handler and the tests import the limiter
+from ``hsync_rendezvous.ratelimit``.
 """
 
 from __future__ import annotations

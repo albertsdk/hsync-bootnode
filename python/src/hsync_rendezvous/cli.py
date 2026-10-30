@@ -569,11 +569,8 @@ def run(
         )
     except (KeyboardInterrupt, asyncio.CancelledError):
         pass  # graceful shutdown: transport closed in _async_main's finally
-    except ListenerBindError as exc:
+    except BindError as exc:
         typer.echo(_bind_error_message(exc), err=True)
-        raise typer.Exit(code=3) from exc
-    except MetricsBindError as exc:
-        typer.echo(_metrics_bind_error_message(exc), err=True)
         raise typer.Exit(code=3) from exc
     except ReadyFileError as exc:
         error_event("readiness file not writable", path=exc.path, reason=exc.reason)
@@ -644,13 +641,33 @@ def identity_rotate(
     )
 
 
-class ListenerBindError(Exception):
-    """The QUIC/UDP listener could not bind (privileged port, port in use, bad host)."""
+class BindError(Exception):
+    """A bound endpoint could not be created (privileged port, port in use, bad host).
 
-    def __init__(self, host: str, port: int, errno_value: int | None) -> None:
+    Raised for every endpoint the node exposes — the QUIC/UDP listeners and the
+    loopback metrics listener. ``what`` names the endpoint in the messages,
+    ``port_flag``/``port_example`` the flags a free port is picked with and
+    ``bind_advice`` the fallback guidance line.
+    """
+
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        errno_value: int | None,
+        *,
+        what: str,
+        port_flag: str,
+        port_example: str,
+        bind_advice: str,
+    ) -> None:
         self.host = host
         self.port = port
         self.errno_value = errno_value
+        self.what = what
+        self.port_flag = port_flag
+        self.port_example = port_example
+        self.bind_advice = bind_advice
         super().__init__(f"cannot bind {host}:{port}")
 
 
@@ -662,16 +679,6 @@ class ReadyFileError(Exception):
         self.errno_value = errno_value
         self.reason = os.strerror(errno_value) if errno_value is not None else "write failed"
         super().__init__(f"cannot write the readiness file {path}: {self.reason}")
-
-
-class MetricsBindError(Exception):
-    """The metrics listener could not bind (port in use, address unavailable)."""
-
-    def __init__(self, host: str, port: int, errno_value: int | None) -> None:
-        self.host = host
-        self.port = port
-        self.errno_value = errno_value
-        super().__init__(f"cannot bind {host}:{port}")
 
 
 def _errno_from(exc: BaseException) -> int | None:
@@ -690,34 +697,31 @@ def _errno_from(exc: BaseException) -> int | None:
     return None
 
 
-def _bind_error_message(exc: ListenerBindError) -> str:
-    """Actionable stderr message for a failed listener bind (exit code 3)."""
+def _bind_error_message(exc: BindError) -> str:
+    """Actionable stderr message for a failed endpoint bind (exit code 3)."""
     target = f"{exc.host}:{exc.port}"
     if exc.errno_value in (errno.EACCES, errno.EPERM):
         return (
-            f"error: cannot bind the QUIC/UDP listener on {target} — permission denied.\n"
+            f"error: cannot bind {exc.what} on {target} — permission denied.\n"
             "       Ports below 1024 (the 443 default) need root or CAP_NET_BIND_SERVICE.\n"
-            "       Fix: use an unprivileged port (hsync-rendezvous run --listen-port 8443), run as\n"
+            f"       Fix: use an unprivileged port (hsync-rendezvous run {exc.port_example}), run as\n"
             "       root, or grant the capability to the binary:\n"
             "         sudo setcap cap_net_bind_service=+ep <hsync-rendezvous>\n"
             "       The packaged systemd unit already grants CAP_NET_BIND_SERVICE."
         )
     if exc.errno_value == errno.EADDRINUSE:
         return (
-            f"error: cannot bind the QUIC/UDP listener on {target} — address already in use.\n"
-            "       Another process or another node instance is using that UDP port.\n"
-            "       Stop it, or pick a free port: hsync-rendezvous run --listen-port <PORT>"
+            f"error: cannot bind {exc.what} on {target} — address already in use.\n"
+            f"       Stop the process holding the port, or pick a free one: "
+            f"hsync-rendezvous run {exc.port_flag}"
         )
     if exc.errno_value in (errno.EADDRNOTAVAIL, errno.EINVAL):
         return (
-            f"error: cannot bind the QUIC/UDP listener on {target} — the address is not available.\n"
+            f"error: cannot bind {exc.what} on {target} — the address is not available.\n"
             "       --listen-host must be a local interface address, or 0.0.0.0 to listen on all of them."
         )
     reason = os.strerror(exc.errno_value) if exc.errno_value is not None else "bind failed"
-    return (
-        f"error: cannot bind the QUIC/UDP listener on {target}: {reason}.\n"
-        "       Check --listen-host/--listen-port; ports below 1024 need root or CAP_NET_BIND_SERVICE."
-    )
+    return f"error: cannot bind {exc.what} on {target}: {reason}.\n       {exc.bind_advice}"
 
 
 def _ready_file_error_message(exc: ReadyFileError) -> str:
@@ -742,21 +746,6 @@ def _ready_file_error_message(exc: ReadyFileError) -> str:
     return (
         f"error: cannot write the readiness file {target}: {exc.reason}.\n"
         "       Check --ready-file (HSYNC_RENDEZVOUS_READY_FILE)."
-    )
-
-
-def _metrics_bind_error_message(exc: MetricsBindError) -> str:
-    """Actionable stderr message for a failed metrics bind (exit code 3)."""
-    target = f"{exc.host}:{exc.port}"
-    if exc.errno_value == errno.EADDRINUSE:
-        return (
-            f"error: cannot bind the metrics listener on {target} — address already in use.\n"
-            "       Pick another port (--metrics-port) or stop the process holding it."
-        )
-    reason = os.strerror(exc.errno_value) if exc.errno_value is not None else "bind failed"
-    return (
-        f"error: cannot bind the metrics listener on {target}: {reason}.\n"
-        "       The endpoint only listens on a loopback address (--metrics-host)."
     )
 
 
@@ -802,7 +791,16 @@ async def _async_main(
             connection_guard=connection_guard,
         )
     except OSError as exc:
-        raise ListenerBindError(host, ports[0], _errno_from(exc)) from exc
+        raise BindError(
+            host,
+            ports[0],
+            _errno_from(exc),
+            what="the QUIC/UDP listener",
+            port_flag="--listen-port <PORT>",
+            port_example="--listen-port 8443",
+            bind_advice="Check --listen-host/--listen-port; ports below 1024 need root "
+            "or CAP_NET_BIND_SERVICE.",
+        ) from exc
     # Best-effort: a requested port that could not bind (address in use, e.g. 53
     # held by the local resolver) is skipped with an always-on, peer-free warning
     # instead of failing the whole node.
@@ -830,7 +828,15 @@ async def _async_main(
             try:
                 metrics_server = await MetricsServer.start(endpoint=metrics, stats=stats)
             except OSError as exc:
-                raise MetricsBindError(metrics.host, metrics.port, _errno_from(exc)) from exc
+                raise BindError(
+                    metrics.host,
+                    metrics.port,
+                    _errno_from(exc),
+                    what="the metrics listener",
+                    port_flag="--metrics-port <PORT>",
+                    port_example="--metrics-port 9001",
+                    bind_advice="The endpoint only listens on a loopback address (--metrics-host).",
+                ) from exc
         if ready_file:
             _write_ready_file(ready_file)
             ready_written = True
@@ -981,24 +987,53 @@ async def _stats_loop(stats: NodeStats, stats_file: str | None, interval: float)
             )
 
 
+def _resolve_secret(
+    fd: int | None,
+    file: str | None,
+    *,
+    what: str,
+    fd_flag: str,
+    file_flag: str,
+    fd_source: str,
+) -> tuple[str, str] | None:
+    """Resolve one startup secret from a descriptor or an operator-managed file.
+
+    ``fd`` and ``file`` are mutually exclusive, and both are then read with the
+    same transport policy: stdout/stderr rejection, symlink and non-file
+    refusal, bounded read. Returns ``(raw_text, source_label)``, or ``None``
+    when no source is supplied at all. ``what`` names the secret in every
+    message and ``fd_flag``/``file_flag`` the flags in the rejection messages.
+    """
+    if fd is not None and file is not None:
+        raise RendezvousConfigError(f"{fd_flag} and {file_flag} are mutually exclusive")
+    if file is not None:
+        return _read_secret_file(file, what=what), f"file {file}"
+    if fd is None or fd < 0:
+        return None
+    _reject_std_secret_fd(fd, what=what, example=fd_flag)
+    return _read_fd(fd, source=fd_source, what=what), fd_source
+
+
 def _load_keys(keys_fd: int | None, keys_file: str | None = None) -> dict[str, SecretStr]:
     """Load 'bucket=<hex-key>' lines from a descriptor or an operator file.
 
     ``--keys-fd`` is the preferred source on POSIX service managers: the key
     payload never has a path inside the sandbox that the process could reopen.
     ``--keys-file`` is the portable alternative (a Windows service cannot
-    inherit an arbitrary descriptor): the file is read once at startup, never
-    written, and may be deleted by the operator afterwards. The two sources are
-    mutually exclusive.
+    inherit an arbitrary descriptor): the file is read once at startup and
+    never written. With neither, the node runs open (no group keys).
     """
-    if keys_fd is not None and keys_file is not None:
-        raise RendezvousConfigError("--keys-fd and --keys-file are mutually exclusive")
-    if keys_file is not None:
-        return _load_keys_file(keys_file)
-    if keys_fd is None or keys_fd < 0:
+    resolved = _resolve_secret(
+        keys_fd,
+        keys_file,
+        what="group keys",
+        fd_flag="--keys-fd",
+        file_flag="--keys-file",
+        fd_source="--keys-fd",
+    )
+    if resolved is None:
         return {}
-    _reject_std_secret_fd(keys_fd, what="group keys", example="--keys-fd 5")
-    return _parse_keys(_read_fd(keys_fd))
+    return _parse_keys(resolved[0])
 
 
 def _reject_std_secret_fd(fd: int, *, what: str, example: str) -> None:
@@ -1040,14 +1075,9 @@ def _read_secret_file(path: str, *, what: str) -> str:
                 path=str(path),
                 reason=f"mode {oct(mode)}; restrict it to 0600 or 0640",
             )
-        return _read_fd(fd, source=f"file {path}")
+        return _read_fd(fd, source=f"file {path}", what=what)
     finally:
         os.close(fd)
-
-
-def _load_keys_file(path: str) -> dict[str, SecretStr]:
-    """Read an operator-managed keys file once (see :func:`_load_keys`)."""
-    return _parse_keys(_read_secret_file(path, what="group keys"))
 
 
 def _is_loopback_host(host: str) -> bool:
@@ -1062,22 +1092,20 @@ def _is_loopback_host(host: str) -> bool:
 
 def _read_token(token_fd: int | None, token_file: str | None) -> str:
     """Read the single-line metrics bearer token from its descriptor or file."""
-    if token_fd is not None and token_file is not None:
-        raise RendezvousConfigError(
-            "--metrics-token-fd and --metrics-token-file are mutually exclusive"
-        )
-    if token_file is not None:
-        raw = _read_secret_file(token_file, what="the metrics token")
-        source = f"file {token_file}"
-    elif token_fd is not None:
-        _reject_std_secret_fd(token_fd, what="the metrics token", example="--metrics-token-fd 6")
-        raw = _read_fd(token_fd, source="--metrics-token-fd")
-        source = "--metrics-token-fd"
-    else:
+    resolved = _resolve_secret(
+        token_fd,
+        token_file,
+        what="the metrics token",
+        fd_flag="--metrics-token-fd",
+        file_flag="--metrics-token-file",
+        fd_source="--metrics-token-fd",
+    )
+    if resolved is None:
         raise RendezvousConfigError(
             "the metrics endpoint requires a bearer token: pass --metrics-token-fd "
             "(a systemd credential) or --metrics-token-file"
         )
+    raw, source = resolved
     lines = [line.strip() for line in raw.splitlines() if line.strip()]
     if len(lines) != 1:
         raise RendezvousConfigError(f"{source} must hold exactly one line: the bearer token")
@@ -1186,25 +1214,24 @@ def _parse_keys(raw: str) -> dict[str, SecretStr]:
     return keys
 
 
-def _read_fd(fd: int, *, source: str | None = None) -> str:
-    """Read all bytes from an integer file descriptor (fd 1/2 excluded upstream).
+def _read_fd(fd: int, *, source: str, what: str) -> str:
+    """Read all bytes from an integer file descriptor, bounded in size and time.
 
-    The total payload is bounded (keys are finitely many short lines) and, on
-    POSIX, the wait is bounded in time too: a descriptor that never returns EOF
-    (a misrouted stdin, a pipe held open) fails fast instead of stalling startup
-    or growing without bound. On Windows ``select`` does not cover pipes/files,
-    so there only the byte cap applies. ``source`` only labels error messages
-    (a descriptor or an operator file).
+    The total payload is bounded (a secret is finitely many short lines) and,
+    on POSIX, the wait is bounded in time too: a descriptor that never returns
+    EOF (a misrouted stdin, a pipe held open) fails fast instead of stalling
+    startup or growing without bound. On Windows ``select`` does not cover
+    pipes/files, so there only the byte cap applies. ``source`` labels the
+    descriptor in the messages, ``what`` names the secret.
     """
-    where = source or f"fd {fd}"
     chunks: list[bytes] = []
     total = 0
     deadline = time.monotonic() + KEYS_FD_READ_TIMEOUT_SECONDS
     while True:
         if not _fd_readable_before(fd, deadline):
             raise RendezvousConfigError(
-                f"group keys not received within {KEYS_FD_READ_TIMEOUT_SECONDS:g}s on "
-                f"{where}: the descriptor must present whole, short lines and then EOF"
+                f"{what} not received within {KEYS_FD_READ_TIMEOUT_SECONDS:g}s on {source}: "
+                "the descriptor must present whole, short lines and then EOF"
             )
         chunk = os.read(fd, 4096)
         if not chunk:
@@ -1212,16 +1239,16 @@ def _read_fd(fd: int, *, source: str | None = None) -> str:
         total += len(chunk)
         if total > KEYS_FD_MAX_BYTES:
             raise RendezvousConfigError(
-                f"group keys payload exceeded {KEYS_FD_MAX_BYTES} bytes on {where}: "
+                f"{what} payload exceeded {KEYS_FD_MAX_BYTES} bytes on {source}: "
                 "the descriptor must present whole, short lines and EOF"
             )
         chunks.append(chunk)
     try:
         return b"".join(chunks).decode("utf-8")
     except UnicodeDecodeError as exc:
-        # A mangled key byte would silently derive a different token, so a
+        # A mangled secret byte would silently change the derived value, so a
         # non-UTF-8 source is a configuration error instead of substituted text.
-        raise RendezvousConfigError(f"group keys on {where} are not valid UTF-8") from exc
+        raise RendezvousConfigError(f"{what} on {source} are not valid UTF-8") from exc
 
 
 def _fd_readable_before(fd: int, deadline: float) -> bool:

@@ -11,12 +11,13 @@ the frame kind from the payload shape.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Annotated, Literal
 
 # CID shape is the hsync-common SSOT (``hsync_common.models.event.CID_PATTERN``,
-# ``^[A-Za-z0-9]{21}$``), re-exported here so ``from hsync_rendezvous.protocol
-# import CID_PATTERN`` keeps working. The ``rdv/1`` spec documents the same
-# value; ``test_cid_pattern_matches_boot1_spec`` pins the two together.
+# ``^[A-Za-z0-9]{21}$``), re-exported here because the daemon imports it from
+# ``hsync_rendezvous.protocol``. The ``rdv/1`` spec documents the same value;
+# ``test_cid_pattern_matches_boot1_spec`` pins the two together.
 from hsync_common.endpoint import is_valid_endpoint_host
 from hsync_common.models.event import CID_PATTERN
 from hsync_common.path_validation import is_valid_bucket_name
@@ -32,7 +33,6 @@ __all__ = [
     "RDV_RELAY_INCOMING_ADAPTER",
     "RDV_RELAY_LISTENING_ADAPTER",
     "RDV_RELAY_OK_ADAPTER",
-    "RDV_RESPONSE_ADAPTER",
     "BUCKET_TOKEN_LEN",
     "CAPACITY_MAX",
     "CID_PATTERN",
@@ -56,7 +56,6 @@ __all__ = [
     "RdvRelayListening",
     "RdvRelayOk",
     "RdvRelayPing",
-    "RdvResponse",
     "BucketName",
     "BucketProto",
     "Endpoint",
@@ -113,79 +112,81 @@ MAX_RELAY_ENDPOINTS = 4
 MAX_RESPONSE_BYTES = 32 * 1024
 
 
-def _validate_bucket_name(value: str) -> str:
-    """Reject any value that is not a canonical HSYNC bucket name.
+def _validated_string(*, check: Callable[[str], bool], error: str) -> Callable[[str], str]:
+    """One validator factory for the string-typed wire fields.
 
-    The ``rdv/1`` ``bucket`` field is the same sync bucket the client, server
-    and desktop use, so the daemon validates it with the shared hsync-common
-    predicate instead of an ad-hoc length bound: ``[A-Za-z0-9]`` with ``-``/``_``
-    only in the middle, 1..63 characters. A non-canonical value makes the frame
-    invalid (silently dropped, like every other malformed frame).
+    Every canonical field type (bucket name, bucket token, endpoint host,
+    certificate fingerprint) validates against the shared ``hsync_common``
+    grammar for its domain, never an ad-hoc length bound; a value that fails it
+    makes the frame invalid (silently dropped, like every other malformed
+    frame).
     """
-    if not is_valid_bucket_name(value):
-        raise ValueError("invalid bucket name (canonical HSYNC bucket name required)")
-    return value
+
+    def validate(value: str) -> str:
+        if not check(value):
+            raise ValueError(error)
+        return value
+
+    return validate
 
 
-# Canonical bucket-name field type, applied to every ``bucket`` on the wire.
-BucketName = Annotated[str, AfterValidator(_validate_bucket_name)]
-
-
-def _validate_bucket_token(value: str) -> str:
-    """Reject anything that is not a 64-char lowercase-hex bucket token.
-
-    The token domain is fixed by the key-derivation contract (``tokens.py``):
-    ``hex(HMAC-SHA256(key, 'rdv/1' || bucket)[:32])``, always 64 lowercase hex.
-    Enforcing that grammar on the wire model (like ``BucketName`` does) turns a
-    non-conforming token into an invalid frame — silently dropped, rate-limited
-    by the separate malformed-frame budget — instead of counting it as a
-    failed-token attempt.
-    """
-    if not is_valid_bucket_token(value):
-        raise ValueError("bucket_token must be 64 lowercase hex characters")
-    return value
-
-
-# Canonical bucket-token field type, applied to every ``bucket_token`` on the wire.
-BucketToken = Annotated[str, AfterValidator(_validate_bucket_token)]
-
-
-def _validate_endpoint_host(value: str) -> str:
-    """Reject anything that is not a host a remote peer can dial.
-
-    An ``endpoints[]`` host is relayed to third parties and dialed by them, so
-    the grammar is the shared dialable-host predicate (IP literal or LDH
-    hostname): a value a resolver cannot turn into an address (control
-    characters, path separators, empty/over-long labels, IPv4-shaped
-    non-addresses) makes the frame invalid instead of poisoning the relay.
-    """
-    if not is_valid_endpoint_host(value):
-        raise ValueError("endpoint host must be an IP literal or a valid DNS name")
-    return value
-
-
-# Canonical endpoint-host field type, applied to every advertised ``host``.
-EndpointHost = Annotated[str, AfterValidator(_validate_endpoint_host)]
-
-
-def _validate_cert_fp(value: str) -> str:
-    """Reject anything that is not a SHA-256 certificate fingerprint.
-
-    ``cert_fp`` is the pin the data plane compares, so it must normalize to a
-    full SHA-256 digest (``sha256:<hex>``, bare hex, or separator-grouped hex —
-    the shared :func:`hsync_common.protocol.pairing.parse_fingerprint` grammar).
-    A short or malformed value would be unusable for pinning downstream, so it
-    makes the frame invalid here.
-    """
-    if parse_fingerprint(value) is None:
-        raise ValueError(
-            "cert_fp must be a SHA-256 certificate fingerprint (sha256:<hex> or bare hex)"
+# Canonical bucket-name field type, applied to every ``bucket`` on the wire:
+# ``[A-Za-z0-9]`` with ``-``/``_`` only in the middle, 1..63 characters.
+BucketName = Annotated[
+    str,
+    AfterValidator(
+        _validated_string(
+            check=is_valid_bucket_name,
+            error="invalid bucket name (canonical HSYNC bucket name required)",
         )
-    return value
+    ),
+]
 
 
-# Canonical certificate-fingerprint field type for ``cert_fp``.
-CertificateFingerprint = Annotated[str, AfterValidator(_validate_cert_fp)]
+# Canonical bucket-token field type, applied to every ``bucket_token`` on the
+# wire: hex(HMAC-SHA256(key, 'rdv/1' || bucket)[:32]), always 64 lowercase hex.
+# Enforcing the grammar here (like ``BucketName`` does) turns a non-conforming
+# token into an invalid frame — silently dropped and rate-limited by the
+# malformed-frame budget — instead of a failed-token attempt.
+BucketToken = Annotated[
+    str,
+    AfterValidator(
+        _validated_string(
+            check=is_valid_bucket_token,
+            error="bucket_token must be 64 lowercase hex characters",
+        )
+    ),
+]
+
+
+# Canonical endpoint-host field type, applied to every advertised ``host``: an
+# ``endpoints[]`` host is relayed to third parties and dialed by them, so only
+# a value a resolver can turn into an address (IP literal or LDH hostname) is
+# accepted — anything else would poison the relay.
+EndpointHost = Annotated[
+    str,
+    AfterValidator(
+        _validated_string(
+            check=is_valid_endpoint_host,
+            error="endpoint host must be an IP literal or a valid DNS name",
+        )
+    ),
+]
+
+
+# Canonical certificate-fingerprint field type for ``cert_fp``: it must
+# normalize to a full SHA-256 digest (``sha256:<hex>``, bare hex, or
+# separator-grouped hex — the shared ``parse_fingerprint`` grammar), because a
+# short or malformed value would be unusable for pinning downstream.
+CertificateFingerprint = Annotated[
+    str,
+    AfterValidator(
+        _validated_string(
+            check=lambda value: parse_fingerprint(value) is not None,
+            error="cert_fp must be a SHA-256 certificate fingerprint (sha256:<hex> or bare hex)",
+        )
+    ),
+]
 
 
 # Data-relay session identifier handed out by the node per pairing: 16 random
@@ -194,36 +195,55 @@ CertificateFingerprint = Annotated[str, AfterValidator(_validate_cert_fp)]
 RelayId = Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
 
 
-class Endpoint(BaseModel):
-    """An advertised listen endpoint (register's ``endpoints[]``)."""
+class _StrictModel(BaseModel):
+    """A wire model that rejects every field it does not declare."""
 
     model_config = ConfigDict(extra="forbid")
+
+
+class Endpoint(_StrictModel):
+    """An advertised listen endpoint (register's ``endpoints[]``)."""
 
     proto: BucketProto
     host: EndpointHost
     port: int = Field(ge=1, le=65535)
 
 
-class ObservedEndpoint(BaseModel):
+class ObservedEndpoint(_StrictModel):
     """The source endpoint observed by the server (STUN-echo in ``ack``)."""
-
-    model_config = ConfigDict(extra="forbid")
 
     proto: BucketProto
     ip: str
     port: int = Field(ge=1, le=65535)
 
 
-class _RdvFrame(BaseModel):
+class _RdvFrame(_StrictModel):
     """Common shape: mandatory ``type`` discriminator + ``protocol_version``."""
-
-    model_config = ConfigDict(extra="forbid")
 
     protocol_version: Literal["rdv/1"]
     type: str
 
 
-class RdvRegister(_RdvFrame):
+class _BucketFrame(_RdvFrame):
+    """A frame scoped to one bucket, carrying the optional authorizing token.
+
+    ``bucket_token`` is the optional authorizer (the handler checks it, never
+    the model): on an open node it only gates the buckets the operator declared
+    protected, and a private node requires it for every frame.
+    """
+
+    cid: str = Field(pattern=CID_PATTERN)
+    bucket: BucketName
+    bucket_token: BucketToken | None = None
+
+
+class _GroupBucketFrame(_BucketFrame):
+    """A bucket frame scoped to an optional group (registrant-selected slot)."""
+
+    group: str | None = Field(default=None, max_length=128)
+
+
+class RdvRegister(_GroupBucketFrame):
     """Client announces presence in a bucket (first contact).
 
     ``capacity`` is the advisory service-capacity hint: the number of
@@ -241,10 +261,6 @@ class RdvRegister(_RdvFrame):
     """
 
     type: Literal["register"]
-    cid: str = Field(pattern=CID_PATTERN)
-    bucket: BucketName
-    group: str | None = Field(default=None, max_length=128)
-    bucket_token: BucketToken | None = None
     cert_fp: CertificateFingerprint = Field(max_length=256)
     version: str = Field(min_length=1, max_length=64)
     capacity: int = Field(default=0, ge=0, le=CAPACITY_MAX)
@@ -257,18 +273,14 @@ class RdvRegister(_RdvFrame):
     sync_direction: SyncDirection = "bidirectional"
 
 
-class RdvRefresh(_RdvFrame):
+class RdvRefresh(_GroupBucketFrame):
     """Client renews its TTL (and/or connected count) — authenticated like register."""
 
     type: Literal["refresh"]
-    cid: str = Field(pattern=CID_PATTERN)
-    bucket: BucketName
-    group: str | None = Field(default=None, max_length=128)
-    bucket_token: BucketToken | None = None
     connected: int | None = Field(default=None, ge=0, le=CONNECTED_MAX)
 
 
-class RdvLeave(_RdvFrame):
+class RdvLeave(_BucketFrame):
     """Client announces departure.
 
     ``bucket_token`` is optional on the wire: a private node (``--private``)
@@ -280,9 +292,6 @@ class RdvLeave(_RdvFrame):
     """
 
     type: Literal["leave"]
-    cid: str = Field(pattern=CID_PATTERN)
-    bucket: BucketName
-    bucket_token: BucketToken | None = None
 
 
 class RdvQuery(_RdvFrame):
@@ -305,8 +314,8 @@ class RdvAck(_RdvFrame):
     retry_after: int | None = Field(default=None, ge=1)
 
 
-class RdvPeer(BaseModel):
-    """A single advertised peer in a RdvResponse.
+class RdvPeer(_StrictModel):
+    """A single advertised peer in a query response.
 
     ``endpoints`` is capped at :data:`MAX_RELAY_ENDPOINTS` entries (in the
     peer's advertised order) so one response stays bounded, and each ``host``
@@ -324,8 +333,6 @@ class RdvPeer(BaseModel):
     authenticates identity by certificate pinning.
     """
 
-    model_config = ConfigDict(extra="forbid")
-
     cid: str = Field(pattern=CID_PATTERN)
     endpoints: list[Endpoint] = Field(min_length=1, max_length=16)
     cert_fp: CertificateFingerprint = Field(max_length=256)
@@ -342,18 +349,7 @@ class RdvPeer(BaseModel):
     sync_direction: SyncDirection = "bidirectional"
 
 
-class RdvResponse(_RdvFrame):
-    """Server reply to query: random sample of peers (or a uniform refusal)."""
-
-    type: Literal["response"]
-    peers: list[RdvPeer] = Field(default_factory=list)
-    count: int = Field(ge=0)
-    ttl: int = Field(ge=1, le=3600)
-    error: RdvError | None = None
-    retry_after: int | None = Field(default=None, ge=1)
-
-
-class RdvRelayListen(_RdvFrame):
+class RdvRelayListen(_GroupBucketFrame):
     """A serving peer registers a data-relay listener (``relay_listen``).
 
     The stream that carried this frame becomes the listener's **control**
@@ -365,10 +361,6 @@ class RdvRelayListen(_RdvFrame):
     """
 
     type: Literal["relay_listen"]
-    cid: str = Field(pattern=CID_PATTERN)
-    bucket: BucketName
-    group: str | None = Field(default=None, max_length=128)
-    bucket_token: BucketToken | None = None
 
 
 class RdvRelayPing(_RdvFrame):
@@ -379,7 +371,7 @@ class RdvRelayPing(_RdvFrame):
     bucket: BucketName
 
 
-class RdvRelayConnect(_RdvFrame):
+class RdvRelayConnect(_GroupBucketFrame):
     """A requester asks to be paired with a listening peer (``relay_connect``).
 
     Sent on a fresh stream: the node answers ``relay_ok`` (the rest of the
@@ -387,14 +379,10 @@ class RdvRelayConnect(_RdvFrame):
     """
 
     type: Literal["relay_connect"]
-    cid: str = Field(pattern=CID_PATTERN)
-    bucket: BucketName
     target_cid: str = Field(pattern=CID_PATTERN)
-    group: str | None = Field(default=None, max_length=128)
-    bucket_token: BucketToken | None = None
 
 
-class RdvRelayAttach(_RdvFrame):
+class RdvRelayAttach(_BucketFrame):
     """A listener attaches the stream of one relayed session (``relay_attach``).
 
     First (and only framed) line of a fresh stream; every following byte is
@@ -402,10 +390,7 @@ class RdvRelayAttach(_RdvFrame):
     """
 
     type: Literal["relay_attach"]
-    cid: str = Field(pattern=CID_PATTERN)
-    bucket: BucketName
     relay_id: RelayId
-    bucket_token: BucketToken | None = None
 
 
 class RdvRelayListening(_RdvFrame):
@@ -443,9 +428,9 @@ class RdvRelayError(_RdvFrame):
     retry_after: int | None = Field(default=None, ge=1)
 
 
-# Client→server frames, dispatched on ``type``. ``RdvResponse``/``RdvAck``/
-# ``RdvPeer`` and the ``relay_*`` server replies are server→client and
-# deliberately excluded: they are never validated in the input path.
+# Client→server frames, dispatched on ``type``. ``RdvAck``/``RdvPeer`` and the
+# ``relay_*`` server replies are server→client and deliberately excluded: they
+# are never validated in the input path.
 RdvFrame = Annotated[
     RdvRegister
     | RdvRefresh
@@ -465,7 +450,6 @@ RDV_FRAME_ADAPTER: TypeAdapter[RdvFrame] = TypeAdapter(RdvFrame)
 # fragment (``PeerRecord.wire``) instead of the ``RdvPeer`` model.
 RDV_ACK_ADAPTER: TypeAdapter[RdvAck] = TypeAdapter(RdvAck)
 RDV_PEER_ADAPTER: TypeAdapter[RdvPeer] = TypeAdapter(RdvPeer)
-RDV_RESPONSE_ADAPTER: TypeAdapter[RdvResponse] = TypeAdapter(RdvResponse)
 RDV_RELAY_LISTENING_ADAPTER: TypeAdapter[RdvRelayListening] = TypeAdapter(RdvRelayListening)
 RDV_RELAY_INCOMING_ADAPTER: TypeAdapter[RdvRelayIncoming] = TypeAdapter(RdvRelayIncoming)
 RDV_RELAY_OK_ADAPTER: TypeAdapter[RdvRelayOk] = TypeAdapter(RdvRelayOk)

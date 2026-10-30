@@ -471,11 +471,6 @@ def test_the_relay_headroom_is_a_separate_budget() -> None:
     from hsync_rendezvous.server import (
         MAX_RELAY_STREAMS_PER_CONNECTION,
         MAX_SESSIONS_PER_CONNECTION,
-        MAX_STREAMS_PER_CONNECTION,
-    )
-
-    assert MAX_STREAMS_PER_CONNECTION == (
-        MAX_SESSIONS_PER_CONNECTION + MAX_RELAY_STREAMS_PER_CONNECTION
     )
 
     class _Writer:

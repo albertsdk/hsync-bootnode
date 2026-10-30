@@ -15,7 +15,7 @@ No-log invariant: nothing in this module ever opens a file for writing.
 from __future__ import annotations
 
 import time
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Literal
 
 from pydantic import SecretStr, ValidationError
@@ -26,13 +26,10 @@ from hsync_rendezvous.protocol import (
     MAX_RELAY_ENDPOINTS,
     MAX_RESPONSE_BYTES,
     PROTOCOL_VERSION_RDV,
-    RDV_ACK_ADAPTER,
     RDV_FRAME_ADAPTER,
     RDV_PEER_ADAPTER,
     RDV_RELAY_ERROR_ADAPTER,
     Endpoint,
-    ObservedEndpoint,
-    RdvAck,
     RdvError,
     RdvFrame,
     RdvLeave,
@@ -382,57 +379,48 @@ class RendezvousHandler:
     ) -> bytes | RelayHandoff | None:
         """Authorize one relay frame and hand its stream to the registry.
 
-        ``relay_listen``/``relay_connect`` still have a framed stream, so a
-        refusal is a ``relay_error`` line. ``relay_attach`` arrives on a stream
-        that becomes opaque immediately, so a refusal is expressed as an
-        unauthorized handoff (the registry closes the stream).
+        ``relay_listen``/``relay_connect`` keep a framed stream, so a refusal is a
+        ``relay_error`` line. ``relay_attach`` arrives on a stream that becomes
+        opaque immediately, so a refusal is expressed as an unauthorized handoff
+        (the registry closes the stream).
         """
-        attach = isinstance(model, RdvRelayAttach)
         if not self.relay.enabled:
-            if attach:
+            if isinstance(model, RdvRelayAttach):
                 return RelayHandoff(model, authorized=False)
             return self._relay_refusal("relay_unavailable", None)
-        if isinstance(model, RdvRelayListen):
-            refused = self._charge_relay(self._relay_listen_pair, model, peer_ip, peer_port)
-            if refused is not None:
-                return refused
-            if self._authorize(model.bucket, model.bucket_token, peer_ip) != "ok":
-                return self._relay_refusal("token_required", None)
-            # Only the current owner of the rendezvous record may open a relay in
-            # that CID's name: a third party cannot make the node accept a
-            # session the record owner never offered.
-            if not self._may_replace(model.cid, model.bucket, model.group, peer_ip):
-                return None
-            return RelayHandoff(model)
-        if isinstance(model, RdvRelayConnect):
-            refused = self._charge_relay(self._relay_connect_pair, model, peer_ip, peer_port)
-            if refused is not None:
-                return refused
-            if self._authorize(model.bucket, model.bucket_token, peer_ip) != "ok":
-                return self._relay_refusal("token_required", None)
-            return RelayHandoff(model)
-        authorized = self._authorize(model.bucket, model.bucket_token, peer_ip) == "ok"
-        return RelayHandoff(model, authorized=authorized)
-
-    def _charge_relay(
-        self,
-        limiter: TokenBucketLimiter,
-        model: RdvRelayListen | RdvRelayConnect,
-        peer_ip: str,
-        peer_port: int,
-    ) -> bytes | None:
-        """Charge the per-(IP, bucket) relay limiter; return a refusal, or ``None``."""
-        key = f"{peer_ip}|{model.bucket}"
-        if self._limit_ok(limiter, key):
+        if isinstance(model, RdvRelayAttach):
+            authorized = self._authorize(model.bucket, model.bucket_token, peer_ip) == "ok"
+            return RelayHandoff(model, authorized=authorized)
+        # relay_listen / relay_connect pass through one charge->authorize->handoff
+        # flow on their own per-(IP, bucket) budget; relay_listen additionally
+        # requires ownership of the rendezvous record it opens a relay in (a
+        # third party cannot make the node accept a session the record owner
+        # never offered).
+        limiter = (
+            self._relay_listen_pair
+            if isinstance(model, RdvRelayListen)
+            else self._relay_connect_pair
+        )
+        refused = self._charge_or_refuse(
+            limiter,
+            f"{peer_ip}|{model.bucket}",
+            event=f"{model.type} rate_limited pair",
+            cid=model.cid,
+            bucket=model.bucket,
+            peer=f"{peer_ip}:{peer_port}",
+            refusal=lambda limiter, key: self._relay_refusal(
+                "rate_limited", limiter.retry_after(key)
+            ),
+        )
+        if refused is not None:
+            return refused
+        if self._authorize(model.bucket, model.bucket_token, peer_ip) != "ok":
+            return self._relay_refusal("token_required", None)
+        if isinstance(model, RdvRelayListen) and not self._may_replace(
+            model.cid, model.bucket, model.group, peer_ip
+        ):
             return None
-        if debug_enabled():
-            debug_event(
-                f"{model.type} rate_limited pair",
-                cid=model.cid,
-                bucket=model.bucket,
-                peer=f"{peer_ip}:{peer_port}",
-            )
-        return self._relay_refusal("rate_limited", limiter.retry_after(key))
+        return RelayHandoff(model)
 
     def _relay_refusal(self, error: RdvError, retry_after: int | None) -> bytes:
         """Serialize one uniform ``relay_error`` refusal (no bucket oracle)."""
@@ -725,7 +713,7 @@ class RendezvousHandler:
             return "ok"
         expected = self._tokens.get(bucket)
         provided_valid = token is not None and is_valid_bucket_token(token)
-        candidate = token if token is not None and provided_valid else _DUMMY_TOKEN
+        candidate = token if provided_valid and token is not None else _DUMMY_TOKEN
         reference = expected if expected is not None else _DUMMY_TOKEN
         matched = constant_time_equals(reference.encode("ascii"), candidate.encode("ascii"))
         if expected is not None and provided_valid and matched:
@@ -805,17 +793,21 @@ class RendezvousHandler:
         peer: str,
         cid: str | None = None,
         bucket: str | None = None,
+        refusal: Callable[[TokenBucketLimiter, str], bytes] | None = None,
     ) -> bytes | None:
         """Consume one token from ``limiter``; return the refusal bytes, or ``None``.
 
         One place owns the shared "charge -> debug -> refuse" shape of the per-IP
-        and per-(IP, bucket) limits, so register, refresh, query and the admission
-        gate cannot drift.
+        and per-(IP, bucket) limits, so register, refresh, query, the relay
+        budgets and the admission gate cannot drift. ``refusal`` overrides the
+        uniform ``response`` refusal with the relay's ``relay_error`` line.
         """
         if self._limit_ok(limiter, key):
             return None
         if debug_enabled():
             debug_event(event, cid=cid, bucket=bucket, peer=peer)
+        if refusal is not None:
+            return refusal(limiter, key)
         return self._rate_limited(limiter, key)
 
     def _refusal(self, error: Literal["token_required", "rate_limited"], peer_ip: str) -> bytes:
@@ -842,8 +834,8 @@ class RendezvousHandler:
         The envelope carries only server-controlled values (a fixed protocol
         version/type, integers, and the ASCII ``RdvError`` literal), so it needs
         no JSON escaping; every peer fragment is still produced by the pydantic
-        adapter (``_to_peer``). Byte-for-byte identical to what
-        ``RDV_RESPONSE_ADAPTER.dump_json(RdvResponse(...))`` emits — pinned by
+        adapter (``_to_peer``). Byte-for-byte identical to what the test-side pydantic mirror
+        (``tests/rdv_response``) emits — pinned by
         ``test_response_bytes_match_the_pydantic_serializer``.
         """
         error_field = b"null" if error is None else b'"' + error.encode("ascii") + b'"'
@@ -867,15 +859,21 @@ class RendezvousHandler:
     def _ack(self, peer_ip: str, peer_port: int) -> bytes:
         # STUN-echo: reply with the source endpoint the datagrams actually
         # arrived from (observed port = the NAT-mapped public port, if any).
-        observed = ObservedEndpoint(proto="udp", ip=peer_ip, port=peer_port)
-        return RDV_ACK_ADAPTER.dump_json(
-            RdvAck(
-                protocol_version=PROTOCOL_VERSION_RDV,
-                type="ack",
-                observed_endpoint=observed,
-                ttl=int(self.ttl),
-                server_time=_utc_now_z(),
-            )
+        # Hand-assembled like ``_response``: the envelope is server-controlled
+        # and the observed ip/port come from the socket, so a pydantic round-trip
+        # would only re-validate already-trusted values. Byte-identical to the
+        # model dump — pinned by ``test_ack_bytes_match_the_pydantic_serializer``.
+        return (
+            b'{"protocol_version":"rdv/1","type":"ack","observed_endpoint":'
+            b'{"proto":"udp","ip":"'
+            + peer_ip.encode("ascii")
+            + b'","port":'
+            + str(peer_port).encode("ascii")
+            + b'},"ttl":'
+            + str(int(self.ttl)).encode("ascii")
+            + b',"server_time":"'
+            + _utc_now_z().encode("ascii")
+            + b'","retry_after":null}'
         )
 
     @staticmethod

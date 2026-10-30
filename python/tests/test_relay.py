@@ -273,3 +273,43 @@ async def test_a_pipelined_prefix_is_not_lost() -> None:
     assert await reader.read(64) == b""
     empty = PrefixedReader(b"", underlying)
     assert await empty.read(64) == b""
+
+async def test_an_idle_session_is_dropped_by_the_watchdog() -> None:
+    """A session that stalls past the idle timeout closes itself (never hangs).
+
+    The forwarding loop carries no per-chunk timer: the per-session idle watch
+    must close both streams after ``idle_timeout`` without traffic, so the two
+    pump tasks end and the session is released on their own.
+    """
+    registry = _registry(idle_timeout=0.2)
+    listener, listener_task = await _open_listener(registry)
+    dialer = Side()
+    connect_task = asyncio.create_task(
+        registry.run(_connect(), reader=dialer.to_server, writer=dialer.writer, peer_ip=DIALER_IP)
+    )
+    incoming = await listener.line()
+    assert incoming["type"] == "relay_incoming"
+    relay_id = incoming["relay_id"]
+    assert (await dialer.line())["type"] == "relay_ok"
+
+    acceptor = Side()
+    attach_task = asyncio.create_task(
+        registry.run(
+            _attach(CID, relay_id),
+            reader=acceptor.to_server,
+            writer=acceptor.writer,
+            peer_ip=LISTENER_IP,
+        )
+    )
+
+    # Confirm the bridge is live, then stall: no more traffic in either
+    # direction, so the idle watchdog must close both streams and end the pump.
+    dialer.send(b"hello")
+    assert await asyncio.wait_for(acceptor.from_server.readexactly(5), 2) == b"hello"
+    await asyncio.wait_for(connect_task, 3.0)
+    await asyncio.wait_for(attach_task, 3.0)
+    assert registry.sessions == 0
+    listener_task.cancel()
+    await asyncio.gather(listener_task, return_exceptions=True)
+
+

@@ -39,6 +39,7 @@ from cryptography.x509.oid import NameOID
 from hsync_common import ssl_utils
 
 from hsync_rendezvous.diagnostics import debug_enabled, debug_event, error_event, warn_event
+from hsync_rendezvous.framing import FrameTooLarge, read_ndjson
 from hsync_rendezvous.handler import RendezvousHandler
 from hsync_rendezvous.ratelimit import TokenBucketLimiter
 from hsync_rendezvous.relay import PrefixedReader, RelayHandoff
@@ -53,7 +54,6 @@ __all__ = [
     "MAX_FRAME_BYTES",
     "MAX_RELAY_STREAMS_PER_CONNECTION",
     "MAX_SESSIONS_PER_CONNECTION",
-    "MAX_STREAMS_PER_CONNECTION",
     "RendezvousQuicProtocol",
     "ConnectionGuard",
     "IdentityError",
@@ -100,7 +100,6 @@ MAX_SESSIONS_PER_CONNECTION = 4
 # listener keeps one control stream plus one stream per relayed peer, so the
 # bound has to cover them without letting a connection pin unbounded tasks.
 MAX_RELAY_STREAMS_PER_CONNECTION = 32
-MAX_STREAMS_PER_CONNECTION = MAX_SESSIONS_PER_CONNECTION + MAX_RELAY_STREAMS_PER_CONNECTION
 
 # HSYNC service identities are always ECDSA P-256 (ADR-0037).
 PrivateKey = ec.EllipticCurvePrivateKey
@@ -370,20 +369,14 @@ def _load_identity_file(identity_path: Path) -> NodeIdentity:
 def _atomic_write_identity(identity_path: Path, payload: bytes) -> None:
     """Write the identity file atomically with owner-only permissions.
 
-    The temporary file gets a **unique** name in the target directory instead of
-    the fixed ``.{name}.tmp``: a crash (SIGKILL between create and replace)
-    can leave a temp behind, and with a fixed name that leftover made the next
-    run fail forever on ``O_EXCL``, because the ``finally`` cleanup never runs
-    after SIGKILL. A unique name means a stale temp can never block a later
-    write; the legacy fixed-name temp from older versions, if present, is
-    removed here (the current scheme never creates that exact name). ``mkstemp``
-    creates the file ``0600``; it is chmodded explicitly and handed to
+    The temporary file gets a **unique** name in the target directory: a crash
+    (SIGKILL between create and replace) can leave a temp behind, and with a
+    fixed name that leftover would block every later write on the exclusive
+    creation flag, because the ``finally`` cleanup never runs after SIGKILL.
+    A unique name means a stale temp can never block a later write; ``mkstemp``
+    creates the file ``0600``, it is chmodded explicitly and handed to
     ``os.replace``, so a reader never observes a partial identity.
     """
-    try:
-        os.unlink(identity_path.with_name(f".{identity_path.name}.tmp"))
-    except FileNotFoundError:
-        pass
     fd, tmp_name = tempfile.mkstemp(
         prefix=f".{identity_path.name}.", suffix=".tmp", dir=identity_path.parent
     )
@@ -684,7 +677,7 @@ class RendezvousQuicProtocol(QuicConnectionProtocol):
         try:
             pending = bytearray()
             while True:
-                raw = await _read_frame(reader, pending)
+                raw = await read_ndjson(reader, pending, max_bytes=MAX_FRAME_BYTES)
                 if raw is None:
                     return  # EOF: normal stream close, not a protocol drop
                 response = self.boot_handler.handle(
@@ -711,7 +704,7 @@ class RendezvousQuicProtocol(QuicConnectionProtocol):
                 if response is not None:
                     writer.write(response + b"\n")
                     await writer.drain()
-        except _OversizedFrame:
+        except FrameTooLarge:
             debug_event("drop oversized-frame", peer=f"{peer_ip}:{peer_port}")
             return  # oversized frame: refuse and close the session silently
         except (asyncio.CancelledError, ConnectionError, TimeoutError):
@@ -820,8 +813,8 @@ async def start_server(
 ) -> tuple[Any, int, NodeIdentity]:
     """Start a single QUIC/UDP listener and return ``(server, bound_port, identity)``.
 
-    One-port wrapper over :func:`start_servers` (kept for callers/tests that bind
-    a single port). ``retry`` enables QUIC RETRY packets + address-validation
+    Single-port form of :func:`start_servers` — the common one-listener case.
+    ``retry`` enables QUIC RETRY packets + address-validation
     tokens before any connection state is allocated (spec: mandatory,
     anti-amplification). ``connection_guard`` adds the node-side per-IP handshake
     budget and active-connection cap.
@@ -836,35 +829,3 @@ async def start_server(
         connection_guard=connection_guard,
     )
     return servers[0], bound_ports[0], identity
-
-
-class _OversizedFrame(Exception):
-    """A single frame exceeded MAX_FRAME_BYTES (refused, no-log)."""
-
-
-async def _read_frame(reader: Any, pending: bytearray) -> bytes | None:
-    """Read one newline-terminated frame (bounded to MAX_FRAME_BYTES).
-
-    ``pending`` keeps bytes already received but not yet consumed, so several
-    frames sent back-to-back on the same stream are each returned in turn
-    (no pipelined frame is ever lost). Returns ``None`` on EOF; raises
-    ``_OversizedFrame`` when a single frame exceeds the bound (the session is
-    then silently dropped — oversized frames are refused, no-log).
-    """
-    while True:
-        newline = pending.find(b"\n")
-        if newline != -1:
-            if newline > MAX_FRAME_BYTES:
-                raise _OversizedFrame
-            frame = bytes(pending[:newline])
-            del pending[: newline + 1]
-            return frame
-        if len(pending) > MAX_FRAME_BYTES:
-            # No newline within the bound: the frame is already oversized, and a
-            # larger read chunk must not let an oversized frame slip through as a
-            # "malformed" one just because its newline arrived in the same read.
-            raise _OversizedFrame
-        chunk = await reader.read(4096)
-        if not chunk:
-            return None
-        pending.extend(chunk)

@@ -7,11 +7,14 @@ written to disk from this module.
 
 from __future__ import annotations
 
-import secrets
+import os
 import time
 from dataclasses import dataclass, field
+from typing import TypeVar
 
 from hsync_rendezvous.protocol import BucketProto, RdvRegister, SyncDirection
+
+_T = TypeVar("_T")
 
 __all__ = [
     "DEFAULT_SAMPLE_LIMIT",
@@ -28,9 +31,11 @@ EndpointTuple = tuple[BucketProto, str, int]
 
 # Peer sampling is part of the matchmaker's exposure surface: with the
 # predictable MT19937 generator a heavy query loop could reconstruct state and
-# steer future samples. An OS-backed generator (SystemRandom) keeps the
-# matchmaking unpredictable at no functional cost.
-_RNG = secrets.SystemRandom()
+# steer future samples. Draws come straight from ``os.urandom`` through a
+# batch buffer (one syscall per chunk instead of one per draw) with rejection
+# sampling, so the matchmaking stays OS-random and a K-index sample costs a
+# fraction of the per-draw syscall version.
+_RANDOM_CHUNK_BYTES = 256
 
 # Seconds (spec: client refresh every 30 s, prune every 15 s, TTL 60 s).
 DEFAULT_TTL = 60.0
@@ -71,9 +76,6 @@ class PeerRecord:
     # connected count and the election advertisement), so none of them may be
     # mutated in place without a fresh register (new PeerRecord) or a reset.
     wire: bytes | None = field(default=None, repr=False, compare=False)
-
-    def is_expired(self, now: float | None = None) -> bool:
-        return (now if now is not None else time.monotonic()) >= self.expires_at
 
     def touch(self, ttl: float = DEFAULT_TTL) -> None:
         self.expires_at = time.monotonic() + ttl
@@ -129,6 +131,9 @@ class RoutingTable:
         self._max_records = max_records
         self._max_per_group = max_records_per_group
         self._max_per_bucket = max_records_per_bucket
+        # Batch-randomness buffer for ``_randbelow`` (see sample()).
+        self._rand_buf = b""
+        self._rand_pos = 0
 
     # -- mutation ----------------------------------------------------------
 
@@ -293,9 +298,9 @@ class RoutingTable:
         Left-over expired records are picked up by the next sweep.
         """
         now = now if now is not None else time.monotonic()
-        # Inlined PeerRecord.is_expired(now) — now is already resolved, so the
-        # method would just evaluate ``now >= r.expires_at``. Inlining removes
-        # one Python call per record from the TTL sweep (behaviour identical).
+        # Expiry is the bare ``now >= r.expires_at`` comparison: the sweep is
+        # called with a resolved ``now``, so there is no per-record method call
+        # to wrap it (one Python call less per record from the TTL sweep).
         expired = [k for k, r in self._records.items() if now >= r.expires_at]
         if max_remove is not None and len(expired) > max_remove:
             expired = expired[:max_remove]
@@ -328,6 +333,40 @@ class RoutingTable:
 
     # -- queries -----------------------------------------------------------
 
+    def _randbelow(self, n: int) -> int:
+        """Uniform ``int`` in ``[0, n)`` from a batched ``os.urandom`` stream.
+
+        Same rejection technique as CPython's ``_randbelow_with_getrandbits``
+        (no modulo bias); indices are read from a refilled batch buffer, so the
+        OS randomness syscall happens once per chunk instead of once per draw.
+        """
+        level = n.bit_length()
+        # Draw exactly ``level`` random bits (the same sample space CPython's
+        # ``getrandbits`` uses): two bytes would widen the sample space to 2**16
+        # and push the acceptance rate of the rejection loop below 2% for n~1000.
+        nbytes = (level + 7) // 8
+        mask = (1 << level) - 1
+        limit = (1 << level) // n * n
+        while True:
+            if self._rand_pos + nbytes > len(self._rand_buf):
+                self._rand_buf = os.urandom(_RANDOM_CHUNK_BYTES)
+                self._rand_pos = 0
+            value = (
+                int.from_bytes(
+                    self._rand_buf[self._rand_pos : self._rand_pos + nbytes], "big"
+                )
+                & mask
+            )
+            self._rand_pos += nbytes
+            if value < limit:
+                return value % n
+
+    def _shuffle(self, items: list[_T]) -> None:
+        """Fisher–Yates over ``items`` using the batched OS randomness."""
+        for i in range(len(items) - 1, 0, -1):
+            j = self._randbelow(i + 1)
+            items[i], items[j] = items[j], items[i]
+
     def sample(
         self,
         bucket: str,
@@ -344,10 +383,10 @@ class RoutingTable:
         n = len(keys)
         k = min(limit, n)
         if k == n:
-            # Single ``records[key]`` lookup per key (walrus) instead of the
-            # is_expired() call plus a second lookup in the comprehension.
+            # Single ``records[key]`` lookup per key (walrus) instead of a
+            # second lookup in the comprehension.
             all_records = [record for key in keys if now < (record := records[key]).expires_at]
-            _RNG.shuffle(all_records)
+            self._shuffle(all_records)
             return all_records
         # n > k: rejection-sample up to a bounded number of distinct draws; if
         # that does not yield k active records (mostly-expired group), fall back
@@ -357,7 +396,7 @@ class RoutingTable:
         chosen: set[int] = set()
         budget = max(4 * k, 64)
         while len(result) < k and len(chosen) < budget:
-            idx = _RNG.randrange(n)
+            idx = self._randbelow(n)
             if idx in chosen:
                 continue
             chosen.add(idx)
@@ -366,7 +405,8 @@ class RoutingTable:
                 result.append(record)
         if len(result) < k:
             remaining = [record for key in keys if now < (record := records[key]).expires_at]
-            return _RNG.sample(remaining, min(k, len(remaining)))
+            self._shuffle(remaining)
+            return remaining[:k]
         return result
 
     def count(self, bucket: str | None = None, group: str | None = None) -> int:

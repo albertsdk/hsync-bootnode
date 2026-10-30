@@ -7,8 +7,8 @@ itself is never transported on the wire; only the derived token is.
 
 The algorithm and the token grammar are the shared, protocol-neutral
 implementation in :mod:`hsync_common.protocol.rdv_tokens` (ADR-0033 keeps the
-frame *models* separate, not the cryptography); this module only re-exports it
-so the daemon's import path stays stable.
+frame *models* separate, not the cryptography); the daemon imports the names
+through this facade.
 """
 
 from __future__ import annotations

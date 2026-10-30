@@ -86,7 +86,7 @@ def free_udp_port(family: int = socket.AF_INET) -> int:
     """A free loopback UDP port (not reserved — the caller binds it).
 
     ``family`` selects the address family so an IPv6 listener
-    (``--host [::1]``) can be given a free ``::1`` port, not an IPv4 one.
+    (``--listen-host [::1]``) can be given a free ``::1`` port, not an IPv4 one.
     """
     sock = socket.socket(family, socket.SOCK_DGRAM)
     try:
@@ -291,7 +291,7 @@ def start_rendezvous(
 ) -> RendezvousProc:
     """Start a rendezvous subprocess; ``keys`` are provisioned via ``--keys-fd``.
 
-    ``host`` is the ``--host`` bind address (default loopback IPv4); pass
+    ``host`` is the ``--listen-host`` bind address (default loopback IPv4); pass
     ``"[::1]"`` for an IPv6 listener (the free port is then reserved on ``::1``).
     ``private`` appends ``--private``; ``env_extra`` adds environment variables on
     top of the scrubbed environment (used to exercise the envvar form of a flag,

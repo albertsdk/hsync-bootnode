@@ -18,7 +18,7 @@ Internal, agent-optimized knowledge base for the `hsync-rendezvous` project
 | Wire-protocol specification (SSOT) | `protocol-spec/rdv-1.md` |
 | Shared protocol fixtures | `fixtures/rendezvous-*.json` |
 | Python implementation | `python/src/hsync_rendezvous/` |
-| [`compile.sh`](../compile.sh) | Root build entry point (`native`/`rpi`/`deb`/`deb-all`, `-l/--language`); per-language binary builds stay in their own directory | v1 |
+| [`compile.sh`](../compile.sh) | Root build entry point (`native`/`rpi`/`deb`/`deb-all`/`rpm`/`rpm-all`, `-l/--language`); per-language binary builds stay in their own directory | v1 |
 | [`run.sh`](../run.sh) | Uniform "run after clone" entry point (checks the sibling `hsync-common`, creates the in-project venv, runs the node) — mirrors `hsync-server/run.sh` |
 | Install/distribution | `install.sh` (Docker Compose installer), `compose.yaml`, `Dockerfile` + `Dockerfile.dockerignore` + `python/entrypoint.sh` (image, group keys as fd 3), `docker.sh` (source image build/lifecycle) |
 | OS service units | `packaging/{systemd,launchd,windows}/` |

@@ -9,8 +9,9 @@ each other over the Internet when they are **not** on the same local network. It
 is a stateless, no-log meeting point: it tells P2P clients which peers are
 online without ever storing anything, speaking the `rdv/1` protocol over QUIC
 (UDP port 443). Think of it as an **address book, not a post office**: it helps
-your devices find each other, and the file data always flows directly between
-them.
+your devices find each other. File data normally flows directly between peers;
+two that no NAT mapping can reach fall back to relaying their encrypted traffic
+through the node (see [Usage](docs/usage.md)).
 
 > New to HSYNC? Start with the [HSYNC Ecosystem](https://github.com/albertsdk/hsync/blob/main/README.md) for an overview of the platform before deploying a rendezvous.
 
@@ -49,7 +50,8 @@ implementations sharing the same spec and fixtures (see the
   frame is authenticated against a group key: no accounts, nothing stored.
 - **Keep rendezvous stateless and no-log** — clients register and query
   candidates; the routing table is RAM-only with a 60-second TTL, and file data
-  never passes through the node.
+  flows only between peers (through the relay, still opaque TLS, only when no
+  peer can be reached directly).
   
 ## What it is
 

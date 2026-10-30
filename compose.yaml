@@ -24,7 +24,7 @@ services:
       - ${HSYNC_RENDEZVOUS_KEYS_PATH:-/dev/null}:/keys:ro
     # Aggregate metrics are opt-in and loopback-only. To scrape the running node
     # add the flags to `command` and publish the port on the host's loopback:
-    #   command: ["run", "--host", "0.0.0.0", "--port", "8443",
+    #   command: ["run", "--listen-host", "0.0.0.0", "--listen-port", "8443",
     #             "--metrics-port", "8444", "--metrics-token-file", "/keys/metrics-token"]
     #   ports: ["127.0.0.1:9101:8444/tcp"]
     # The token file never joins the public port mapping: see docs/operations.md,

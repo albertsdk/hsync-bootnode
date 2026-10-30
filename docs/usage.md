@@ -104,6 +104,10 @@ Prints the version and the protocol, e.g.
 | `HSYNC_STATE_DIR` | Installation state directory; the default identity lives under its `rendezvous/` subdirectory. |
 | `HSYNC_RENDEZVOUS_EPHEMERAL` | Same as `--ephemeral`; set to `1` to keep the identity in memory (no identity file). |
 | `HSYNC_RENDEZVOUS_PRIVATE` | Same as `--private`; set to `1` to require a valid `bucket_token` on every frame. |
+| `HSYNC_RENDEZVOUS_RELAY` | Same as `--relay`; `0` disables the data relay (discovery-only), `1` forces it on. |
+| `HSYNC_RENDEZVOUS_RELAY_IDLE_TIMEOUT` | Same as `--relay-idle-timeout`. |
+| `HSYNC_RENDEZVOUS_RELAY_SESSION_BYTES` | Same as `--relay-session-bytes`. |
+| `HSYNC_RENDEZVOUS_RELAY_BANDWIDTH` | Same as `--relay-bandwidth`. |
 | `HSYNC_RENDEZVOUS_DEBUG` | Same as `--debug`; set to `1` for the full opt-in operation log (peer identity included; stderr only). |
 | `HSYNC_RENDEZVOUS_READY_FILE` | Same as `--ready-file`; the readiness PID path used by tests/orchestrators. |
 | `HSYNC_RENDEZVOUS_METRICS_HOST` | Same as `--metrics-host`. |

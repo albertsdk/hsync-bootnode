@@ -23,7 +23,9 @@ with its observed public (NAT-mapped) endpoint; its full endpoint candidate list
 is relayed to querying peers. To find peers, clients query the node and receive a
 random sample of the currently registered peers in their bucket. Everything lives
 in RAM with a 60-second TTL: stop the process and every trace of your network is
-gone.
+gone. The node also relays the peers' opaque TLS by default, so two peers that
+no NAT mapping reaches can still run their data plane through it (disable with
+`--no-relay`).
 
 ## Requirements
 

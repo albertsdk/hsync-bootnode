@@ -1,4 +1,4 @@
-.TH HSYNC-RENDEZVOUS 1 "2026-10-29" "hsync-rendezvous 1.0.12" "User Commands"
+.TH HSYNC-RENDEZVOUS 1 "2026-10-30" "hsync-rendezvous 1.0.13" "User Commands"
 .SH NAME
 hsync-rendezvous \- HSYNC P2P rendezvous node (no-log, zero-knowledge)
 .SH SYNOPSIS
@@ -24,6 +24,12 @@ pinned by clients;
 keeps it in memory instead. Stopping the process erases every trace of the
 network except the node's own key+cert.
 .PP
+The node can also relay the peers' opaque TLS by default: two peers that no
+inbound NAT mapping reaches (carrier-grade NAT, a hotspot behind a carrier) can
+still run their data plane through the node, which forwards the encrypted bytes
+without ever terminating or inspecting them. Disable the relay with
+.BR "run \-\-no\-relay" .
+.PP
 Diagnostics go to stderr in two channels: an always\-on, peer\-free operational
 channel (\fBwarn\fP/\fBerror\fP: a UPnP mapping that could not be created, an
 unwritable readiness file, an unexpected session failure) and the opt\-in full
@@ -33,7 +39,8 @@ which is the only channel that may contain peer identity.
 .SH COMMANDS
 .TP
 .B run
-Run the rendezvous node: single QUIC/UDP listener (rdv/1).
+Run the rendezvous node (rdv/1): one QUIC/UDP listener, or several with
+.BR \-\-listen\-ports .
 .TP
 .B identity show
 Print the persisted identity fingerprint (or its certificate PEM with
@@ -147,6 +154,32 @@ With
 .BR \-\-listen\-ports ,
 each bound port is mapped so every offered door is also reachable from the WAN.
 .TP
+.B run\ \fR--relay\fP\ /\fR--no-relay\fP
+Relay the peers' opaque TLS (on by default; disable with
+.BR \-\-no\-relay ).
+Without the relay every relay frame is answered with
+.I relay_unavailable
+and only directly reachable peers connect. The node never terminates or
+inspects the relayed TLS. Env form:
+.B HSYNC_RENDEZVOUS_RELAY=0
+disables the relay,
+.B =1
+forces it.
+.TP
+.BI run\ \fR--relay-idle-timeout\fP= SECONDS
+Seconds without traffic in either direction before a relayed session (or a
+listener control stream) is closed. Default: 120; range 30\-3600. Env form:
+.BR HSYNC_RENDEZVOUS_RELAY_IDLE_TIMEOUT .
+.TP
+.BI run\ \fR--relay-session-bytes\fP= BYTES
+Close a relayed session after this many forwarded bytes (0 = no per\-session
+cap; the byte rate stays the primary bound). Env form:
+.BR HSYNC_RENDEZVOUS_RELAY_SESSION_BYTES .
+.TP
+.BI run\ \fR--relay-bandwidth\fP= KIB_PER_SECOND
+Aggregate relay throughput cap in KiB/s (default 8192; 0 = unlimited). Excess
+traffic is throttled by backpressure, never dropped. Env form:
+.BR HSYNC_RENDEZVOUS_RELAY_BANDWIDTH .
 .BI run\ \fR--ttl\fP= SECONDS
 Record TTL in seconds (1\-3600). Default: 60 (peers refresh every 30 s).
 .TP
@@ -253,6 +286,31 @@ to require a valid
 on every frame (private node); same as
 .BR "run \-\-private" .
 .TP
+.B HSYNC_RENDEZVOUS_RELAY
+Set to
+.I 0
+to make the node discovery-only (the data relay stays off), or
+.I 1
+to force it on; same as
+.BR "run \-\-relay" .
+.TP
+.B HSYNC_RENDEZVOUS_RELAY_IDLE_TIMEOUT
+Seconds without traffic before a relayed session closes; same as
+.BR "run \-\-relay\-idle\-timeout" .
+.TP
+.B HSYNC_RENDEZVOUS_RELAY_SESSION_BYTES
+Per\-session forwarded\-byte ceiling; same as
+.BR "run \-\-relay\-session\-bytes" .
+.TP
+.B HSYNC_RENDEZVOUS_RELAY_BANDWIDTH
+Aggregate relay throughput cap in KiB/s; same as
+.BR "run \-\-relay\-bandwidth" .
+.TP
+.B HSYNC_STATE_DIR
+Installation state directory; the default identity lives under its
+.IR rendezvous/
+subdirectory.
+.TP
 .B HSYNC_RENDEZVOUS_METRICS_HOST
 Loopback address for the metrics endpoint; same as
 .BR "run \-\-metrics\-host" .
@@ -291,8 +349,8 @@ per line. The package creates it empty on install (an empty file means open
 mode \(em no protected buckets); the administrator provisions the keys over it
 (never part of the package; a root-only 0750 directory holds it). It is exposed
 to the service only through the systemd credential mechanism (see
-.BR HSYNC_RENDEZVOUS_KEYS_FD ).
-pass it with
+.BR HSYNC_RENDEZVOUS_KEYS_FD );
+pass the keys with
 .B \-\-keys\-file
 instead when a service manager cannot inherit a descriptor (Windows).
 .TP
@@ -341,13 +399,13 @@ Private node with the keys read from a file (portable form):
 .B hsync-rendezvous run --private --keys-file /etc/hsync-rendezvous/group-keys
 .TP
 Open mode (no protected buckets):
-.B hsync-rendezvous run --host 0.0.0.0 --port 443
+.B hsync-rendezvous run --listen-host 0.0.0.0 --listen-port 443
 .TP
 Listen on several UDP ports so clients whose egress firewall blocks UDP 443 can
 reach the node on another port (443 QUIC + 53 DNS; 53 may require freeing the
 local resolver):
 .br
-.B hsync-rendezvous run --ports 443,53
+.B hsync-rendezvous run --listen-ports 443,53
 .TP
 Protected bucket with keys from a file descriptor:
 .br
@@ -360,7 +418,7 @@ Private node (every bucket needs a key; no anonymous frames):
 Show the certificate fingerprint printed at startup to pin the node on
 clients:
 .br
-.B hsync-rendezvous run --port 443
+.B hsync-rendezvous run --listen-port 443
 .TP
 Read the persisted fingerprint to distribute to clients (the identity is created
 on first run):
@@ -383,7 +441,7 @@ Rotate the identity after a suspected compromise:
 .TP
 Unprivileged port (no root or capability needed):
 .br
-.B hsync-rendezvous run --port 8443
+.B hsync-rendezvous run --listen-port 8443
 .SH EXIT STATUS
 .TP
 .B 0
@@ -395,7 +453,7 @@ out-of-range value): the node refuses to start.
 .TP
 .B 3
 Listener bind failure: the QUIC/UDP port is privileged, already in use, or
-.B --host
+.B --listen-host
 is not a local address. The message on stderr explains the remediation.
 .TP
 .B 4

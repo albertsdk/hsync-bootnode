@@ -70,7 +70,7 @@ port. To also answer clients whose network blocks UDP 443, listen on a second
 internal port and map it to another host port:
 
 ```yaml
-command: ["run", "--host", "0.0.0.0", "--ports", "8443,5353"]
+command: ["run", "--listen-host", "0.0.0.0", "--listen-ports", "8443,5353"]
 ports:
   - "443:8443/udp"
   - "53:5353/udp"

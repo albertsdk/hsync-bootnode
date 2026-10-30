@@ -91,7 +91,7 @@
 | Frame | Payload |
 |---|---|
 | `ack` | `{protocol_version:"rdv/1", type:"ack", observed_endpoint:{proto:"udp", ip, port}, ttl, server_time, retry_after?}` (STUN-echo) |
-| `response` | `{protocol_version:"rdv/1", type:"response", peers:[{cid, endpoints:[{proto:"tcp"\|"udp", host, port}], cert_fp, bucket, group?, version, capacity, connected, reachable, server_ready, prefer_master, never_master, startup_time, sync_direction}], count, ttl}` or `{peers: [], count: 0, error:"token_required"\|"rate_limited"\|"overloaded"\|"relay_unavailable", retry_after?}` |
+| `response` | `{protocol_version:"rdv/1", type:"response", peers:[{cid, endpoints:[{proto:"tcp"\|"udp", host, port}], cert_fp, bucket, group?, version, capacity, connected, reachable, server_ready, prefer_master, never_master, startup_time, sync_direction}], count, ttl}` or `{peers: [], count: 0, error:"token_required"\|"rate_limited"\|"overloaded", retry_after?}` |
 | `relay_listening` | `{protocol_version:"rdv/1", type:"relay_listening", ttl}` (§Data relay) |
 | `relay_incoming` | `{protocol_version:"rdv/1", type:"relay_incoming", relay_id, cid, expires_in}` (§Data relay) |
 | `relay_ok` | `{protocol_version:"rdv/1", type:"relay_ok", relay_id}` (§Data relay) |

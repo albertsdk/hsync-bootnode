@@ -501,7 +501,7 @@ ssh = ["bcrypt (>=3.1.5)"]
 
 [[package]]
 name = "hsync-common"
-version = "1.0.12"
+version = "1.0.13"
 description = "HSYNC Common - shared models, constants, and compression utilities"
 optional = false
 python-versions = ">=3.12,<3.15"

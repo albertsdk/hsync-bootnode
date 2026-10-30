@@ -274,6 +274,7 @@ class BootnodeProc:
 def start_bootnode(
     tmp_path: Path,
     *,
+    instance: str = "",
     port: int | None = None,
     ports: Sequence[int] | None = None,
     host: str = "127.0.0.1",
@@ -299,6 +300,12 @@ def start_bootnode(
     to the operator's/CI's XDG state dir; pass ``ephemeral=False`` (with an
     explicit ``--identity``/``HSYNC_BOOTNODE_IDENTITY``) to test persistence.
     """
+    # A test that runs two nodes in one ``tmp_path`` must keep their readiness
+    # files and logs apart: ``instance`` gives each node its own subdirectory
+    # (empty = today's exact paths).
+    workdir = tmp_path / instance if instance else tmp_path
+    workdir.mkdir(parents=True, exist_ok=True)
+
     family = socket.AF_INET6 if ":" in host else socket.AF_INET
     if ports is not None:
         resolved_ports = list(ports)
@@ -308,7 +315,7 @@ def start_bootnode(
         port = port or free_udp_port(family)
         resolved_ports = [port]
         port_args = ["--listen-port", str(port)]
-    ready_file = tmp_path / "ready.pid" if ready else None
+    ready_file = workdir / "ready.pid" if ready else None
 
     cmd = [resolve_bin(), "run", "--listen-host", host, *port_args]
     if ephemeral:
@@ -339,8 +346,8 @@ def start_bootnode(
         cmd += ["--keys-fd", str(read_fd)]
         pass_fds = (read_fd,)
 
-    stdout_f = (tmp_path / "stdout.log").open("wb")
-    stderr_f = (tmp_path / "stderr.log").open("wb")
+    stdout_f = (workdir / "stdout.log").open("wb")
+    stderr_f = (workdir / "stderr.log").open("wb")
     proc = subprocess.Popen(
         cmd,
         env=env,
@@ -354,7 +361,7 @@ def start_bootnode(
     if keys:
         os.close(read_fd)
 
-    handle = BootnodeProc(proc, port, ready_file, tmp_path, ports=resolved_ports)
+    handle = BootnodeProc(proc, port, ready_file, workdir, ports=resolved_ports)
     if ready:
         try:
             wait_ready(handle)

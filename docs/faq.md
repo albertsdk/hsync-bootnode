@@ -191,7 +191,7 @@ See [usage.md](usage.md#run-options) and the wire contract in
 
 ## Where can I read the pin the client stored?
 
-On the client host, in `bootnode_known_hosts.json` under `$XDG_STATE_HOME/hsync/`
+On the client host, in `discovery_server_known_hosts.json` under `$XDG_STATE_HOME/hsync/`
 (or `~/.local/state/hsync/`), overridable with `HSYNC_BOOTNODE_TRUST_FILE`; the
 client prints this path whenever it pins a fingerprint. It maps `<host>:<port>`
 to the current fingerprint and its `updated_at` timestamp.

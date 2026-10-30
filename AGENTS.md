@@ -224,7 +224,7 @@ The wiki must describe the code as it is **now**. Accumulated inaccuracies come 
 
 * **Multi-language obligation**
   Breaking the wire contract means bumping the mandatory `protocol_version`
-  (`rdv/1` → `boot/next`) and updating **atomically**: `protocol-spec/rdv-1.md`
+  (`rdv/1` → `rdv/next`) and updating **atomically**: `protocol-spec/rdv-1.md`
   (or its successor), `fixtures/`, `python/`, `c/`, `tests/`, `bench/`,
   `compile.sh`/`packaging/`, `llm-wiki/` and `docs/`. No implementation may
   keep speaking the retired version, and no compatibility shim may exist in one

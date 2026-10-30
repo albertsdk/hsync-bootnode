@@ -187,7 +187,7 @@ update the consumers and their parity tests atomically:
 
 - `hsync-common` — `hsync_common/protocol/rendezvous.py` (frames + validators) and
   the committed fixtures
-- `hsync-client` — `RendezvousClient` / the rendezvous rendezvous plan
+- `hsync-client` — `RendezvousClient` / the rdv rendezvous plan
 - `hsync-android` — the Kotlin `RendezvousProtocol` mirror
 
 ## Documentation

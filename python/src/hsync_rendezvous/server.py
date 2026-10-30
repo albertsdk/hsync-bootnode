@@ -574,7 +574,7 @@ def build_quic_configuration(
 class RendezvousQuicProtocol(QuicConnectionProtocol):
     """One QUIC/UDP connection; every bidirectional stream is a ``rdv/1`` session.
 
-    ``boot_handler`` is bound by :func:`start_server` before the first datagram
+    ``rdv_handler`` is bound by :func:`start_server` before the first datagram
     is dispatched (class attribute shared by all connections of the server).
     When a ``ConnectionGuard`` is bound too, a connecting peer is admitted
     against the per-IP handshake budget and active-connection cap before its

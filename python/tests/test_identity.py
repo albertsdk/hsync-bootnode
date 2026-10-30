@@ -33,10 +33,10 @@ def test_make_identity_is_ecdsa_p256():
 
 
 def test_make_identity_san_includes_bind_and_public_hosts():
-    node = make_identity(host="127.0.0.1", public_hosts=["boot.example.com", "198.51.100.9"])
+    node = make_identity(host="127.0.0.1", public_hosts=["rdv.example.com", "198.51.100.9"])
     san = node.certificate.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
     names = {n.value for n in san}
-    assert "boot.example.com" in names
+    assert "rdv.example.com" in names
     assert ipaddress.IPv4Address("198.51.100.9") in names
     assert ipaddress.IPv4Address("127.0.0.1") in names
 
@@ -58,7 +58,7 @@ def test_make_identity_validity_is_twenty_years():
 
 def test_load_or_create_creates_with_restricted_permissions(tmp_path):
     path = tmp_path / "state" / "identity.pem"
-    node = load_or_create_identity(path, host="127.0.0.1", public_hosts=["boot.example.com"])
+    node = load_or_create_identity(path, host="127.0.0.1", public_hosts=["rdv.example.com"])
     assert path.is_file()
     assert path.stat().st_mode & 0o777 == 0o600
     assert path.parent.stat().st_mode & 0o777 == 0o700

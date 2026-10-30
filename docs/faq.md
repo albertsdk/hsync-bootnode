@@ -105,7 +105,7 @@ every name/IP that clients dial:
 
 ```bash
 hsync-rendezvous run --identity /var/lib/hsync-rendezvous/identity.pem \
-    --public-host boot.example.net
+    --public-host rdv.example.net
 ```
 
 `--public-host` is repeatable. Changing the SAN requires regenerating the
@@ -120,7 +120,7 @@ suspected compromise — rotate it:
 
 ```bash
 hsync-rendezvous identity rotate --identity /var/lib/hsync-rendezvous/identity.pem \
-    --public-host boot.example.com
+    --public-host rdv.example.com
 ```
 
 Rotation prints the new fingerprint; during the change window clients can be

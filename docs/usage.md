@@ -77,7 +77,7 @@ to regenerate).
 
 ```bash
 hsync-rendezvous identity rotate --identity /var/lib/hsync-rendezvous/identity.pem \
-    --public-host boot.example.com
+    --public-host rdv.example.com
 ```
 
 ### `--version`
@@ -411,7 +411,7 @@ explicit path (e.g. a service directory) with `--identity`:
 ```bash
 # create (first run) and reuse (subsequent runs) the identity:
 hsync-rendezvous run --identity /var/lib/hsync-rendezvous/identity.pem \
-    --public-host boot.example.com
+    --public-host rdv.example.com
 ```
 
 Each name/IP clients dial should be added with `--public-host` (repeatable) so a
@@ -441,7 +441,7 @@ a client with `hsync trust rendezvous-server fingerprint <host:port>`.
 
 ```bash
 hsync-rendezvous identity rotate --identity /var/lib/hsync-rendezvous/identity.pem \
-    --public-host boot.example.com
+    --public-host rdv.example.com
 ```
 
 ## Diagnostics

@@ -352,9 +352,7 @@ class RoutingTable:
                 self._rand_buf = os.urandom(_RANDOM_CHUNK_BYTES)
                 self._rand_pos = 0
             value = (
-                int.from_bytes(
-                    self._rand_buf[self._rand_pos : self._rand_pos + nbytes], "big"
-                )
+                int.from_bytes(self._rand_buf[self._rand_pos : self._rand_pos + nbytes], "big")
                 & mask
             )
             self._rand_pos += nbytes

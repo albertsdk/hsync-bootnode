@@ -274,6 +274,7 @@ async def test_a_pipelined_prefix_is_not_lost() -> None:
     empty = PrefixedReader(b"", underlying)
     assert await empty.read(64) == b""
 
+
 async def test_an_idle_session_is_dropped_by_the_watchdog() -> None:
     """A session that stalls past the idle timeout closes itself (never hangs).
 
@@ -311,5 +312,3 @@ async def test_an_idle_session_is_dropped_by_the_watchdog() -> None:
     assert registry.sessions == 0
     listener_task.cancel()
     await asyncio.gather(listener_task, return_exceptions=True)
-
-

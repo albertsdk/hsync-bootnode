@@ -1007,17 +1007,13 @@ def test_ack_bytes_match_the_pydantic_serializer(monkeypatch) -> None:
         RdvAck,
     )
 
-    monkeypatch.setattr(
-        "hsync_rendezvous.handler._utc_now_z", lambda: "2026-10-09T10:00:00Z"
-    )
+    monkeypatch.setattr("hsync_rendezvous.handler._utc_now_z", lambda: "2026-10-09T10:00:00Z")
     h = make_handler()
     expected = RDV_ACK_ADAPTER.dump_json(
         RdvAck(
             protocol_version=PROTOCOL_VERSION_RDV,
             type="ack",
-            observed_endpoint=ObservedEndpoint(
-                proto="udp", ip="198.51.100.7", port=54321
-            ),
+            observed_endpoint=ObservedEndpoint(proto="udp", ip="198.51.100.7", port=54321),
             ttl=int(h.ttl),
             server_time="2026-10-09T10:00:00Z",
         )

@@ -34,6 +34,12 @@ missing.
 > `CAP_NET_BIND_SERVICE`; in development prefer an unprivileged port, e.g.
 > `./run.sh run --listen-port 8443`.
 
+From source the node has the same features as any other method: protected
+buckets (`--protected-bucket`, repeatable, with a group-keys file) and private
+mode (`--private`) are described in the shared reference
+[usage.md → Group keys](usage.md#group-keys---keys-fd----keys-file) and
+[usage.md → Private node](usage.md#private-node-authenticated-rendezvous).
+
 ### Native commands
 
 The same steps, spelled out (the virtualenv is created by `run.sh`):

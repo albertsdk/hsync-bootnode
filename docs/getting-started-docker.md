@@ -29,6 +29,10 @@ HSYNC_RENDEZVOUS_IDENTITY=/var/lib/hsync-rendezvous/identity.pem
 #HSYNC_RENDEZVOUS_RELAY=0
 ```
 
+The keys file carries one `bucket=<hex-key>` line per bucket — the format,
+rotation and the `--protected-bucket`/`--private` model are in the shared
+reference [usage.md → Group keys](usage.md#group-keys---keys-fd----keys-file).
+
 `HSYNC_RENDEZVOUS_PRIVATE=1` is the one-switch equivalent of declaring
 `--protected-bucket` for every bucket in the keys file (it additionally gates
 `leave` and refuses to start with an empty keys file) — see

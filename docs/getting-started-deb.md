@@ -74,7 +74,9 @@ live in [usage.md → Group keys](usage.md#group-keys---keys-fd----keys-file) an
 
 A drop-in
 cannot append an argument to `ExecStart`, so replace the whole command while
-keeping the identity path, the keys source and the credential redirection:
+keeping the identity path, the keys source and the credential redirection.
+`--protected-bucket` is repeatable: pass it once per bucket to protect
+(`--protected-bucket shared --protected-bucket home`):
 
 ```bash
 sudo systemctl edit hsync-rendezvous.service

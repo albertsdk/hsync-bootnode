@@ -113,8 +113,13 @@ Existing DNS/IP SANs are preserved automatically.
 .BI run\ \fR--protected-bucket\fP= NAME
 Bucket requiring a valid
 .I bucket_token
-Repeatable for multiple buckets. Declaring a protected bucket without
-provisioning its key fails fast at startup with exit code 2.
+Repeat this option once per bucket you want to protect, for example
+\fB--protected-bucket shared --protected-bucket home\fP. The group-keys file
+may carry more buckets than declared; each declared bucket needs its key
+provisioned or the node refuses to start (exit code 2). Buckets not declared
+stay open unless
+.B \-\-private
+gates all of them.
 .TP
 .BI run\ \fR--keys-fd\fP= FD
 File descriptor carrying the group keys, one

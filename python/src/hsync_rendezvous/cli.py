@@ -265,7 +265,12 @@ def run(
     protected_bucket: list[str] = typer.Option(
         [],
         "--protected-bucket",
-        help="Bucket requiring a valid bucket_token (repeatable).",
+        help=(
+            "Bucket that requires a valid bucket_token. Repeat this flag once "
+            "per bucket (e.g. '--protected-bucket shared --protected-bucket "
+            "home'); each declared bucket needs its key via --keys-fd/--keys-file "
+            "or the node refuses to start (exit 2)."
+        ),
     ),
     keys_fd: int | None = typer.Option(
         None,

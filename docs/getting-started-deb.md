@@ -57,7 +57,22 @@ sudo install -m 0640 /path/to/group-keys /etc/hsync-rendezvous/group-keys
 The keys are read **once at startup**: if the node is already running, restart the
 service (`sudo systemctl restart hsync-rendezvous`) to load them.
 
-The file has one `bucket=<hex-group-key>` line per protected bucket. A drop-in
+The file has one `bucket=<hex-group-key>` line per protected bucket (comments
+and blank lines are ignored; a duplicate bucket is a configuration error).
+Mint each key with `openssl rand -hex 32` — a key shorter than 32 characters is
+refused — and keep the file root-only. An example with two protected buckets:
+
+```text
+# one bucket=<hex-group-key> line per protected bucket
+shared=378767051d3c551e615922cbffb543563a93bbf39d615a2c46389c2f6b246068
+home=63379453eeb327abf615e2e89aa3921fb4c20edf11a12a260058ed299dc153cb
+```
+
+The full format, the client-side token derivation and the rotation procedure
+live in [usage.md → Group keys](usage.md#group-keys---keys-fd----keys-file) and
+[usage.md → Provisioning and key rotation](usage.md#provisioning-and-key-rotation).
+
+A drop-in
 cannot append an argument to `ExecStart`, so replace the whole command while
 keeping the identity path, the keys source and the credential redirection:
 

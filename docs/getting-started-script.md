@@ -143,11 +143,22 @@ override in the [Docker guide](getting-started-docker.md#serve-a-second-udp-port
 ### Private node (authenticated rendezvous)
 
 A **private** node requires a valid `bucket_token` on every frame. Provision the
-group keys with a `bucket=<hex-group-key>` line per protected bucket:
+group keys file with one `bucket=<hex-group-key>` line per protected bucket
+(mint a key per bucket with `openssl rand -hex 32`; an **empty** file means open
+mode, while `--private` with an empty file is a configuration error):
+
+```text
+# /secure/path/group-keys — one line per protected bucket
+shared=378767051d3c551e615922cbffb543563a93bbf39d615a2c46389c2f6b246068
+home=63379453eeb327abf615e2e89aa3921fb4c20edf11a12a260058ed299dc153cb
+```
 
 ```bash
 ./install.sh --private --keys-file /secure/path/group-keys
 ```
+
+The full format, the client-side token derivation and the key-rotation procedure
+are in [usage.md → Group keys](usage.md#group-keys---keys-fd----keys-file).
 
 ## Verify the node is running
 

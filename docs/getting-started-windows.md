@@ -39,7 +39,17 @@ Restart-Service hsync-rendezvous
   `C:\ProgramData\hsync-rendezvous\group-keys` **empty** (open mode) and grants
   administrators write access / `LocalService` read access. Provision one
   `bucket=<hex-group-key>` line per protected bucket there and restart the
-  service. The installed service already passes `--keys-file` for that file; for
+  service. For example:
+
+  ```text
+  shared=378767051d3c551e615922cbffb543563a93bbf39d615a2c46389c2f6b246068
+  home=63379453eeb327abf615e2e89aa3921fb4c20edf11a12a260058ed299dc153cb
+  ```
+
+  (Mint a key per bucket with `openssl rand -hex 32`; comments and blank lines
+  are ignored. The full format is in
+  [usage.md → Group keys](usage.md#group-keys---keys-fd----keys-file).) The
+  installed service already passes `--keys-file` for that file; for
   a fully private node uncomment the `HSYNC_RENDEZVOUS_PRIVATE` environment block
   in `hsync-rendezvous-service.xml` and restart. The node reads the file once at
   startup and never writes it.

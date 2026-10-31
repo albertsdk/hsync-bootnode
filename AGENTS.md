@@ -516,7 +516,8 @@ never gets its own dialect, its own spec or its own fixtures.
 * This also applies to code comments, doc comments (Python docstrings and C
   `/** */` doc comments), error messages and CLI help strings.
 * Commit messages follow Conventional Commits: `type(scope): description`
-  (feat, fix, docs, style, refactor, test, chore, perf, ci, build).
+  (feat, fix, docs, style, refactor, test, chore, perf, ci, build). Keep the
+  message concise: precise, but no elaboration.
 
 ---
 
@@ -528,6 +529,9 @@ notable internal improvement, evaluate whether the change warrants an entry in
 format. Add an entry under an `## [Unreleased]` section when relevant. The
 repository does not ship a `CHANGELOG.md` yet: the first change that warrants an
 entry creates it.
+
+* **Concise entries**: one short, precise line per change, without
+  elaboration.
 
 * **Explicit User Confirmation Required**: Do not edit `CHANGELOG.md` unless the
   user has explicitly confirmed the update for the current task. If an entry

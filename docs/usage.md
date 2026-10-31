@@ -199,6 +199,11 @@ What `--private` changes:
 
 Notes:
 
+- For an operator who provisions a key for **every** bucket the node serves,
+  `--private` is the convenience one-switch equivalent of declaring every bucket
+  with `--protected-bucket`: the provisioned buckets behave the same, plus
+  `leave` is gated too, and an **empty** key file is refused at startup (exit 2)
+  instead of staying open — see the table above.
 - The wire format does not change: `bucket_token` is the same optional field the
   protected buckets already use, so a client only needs the group key — no
   new protocol version and no client-side mode switch.

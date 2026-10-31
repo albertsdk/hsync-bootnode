@@ -30,6 +30,10 @@ dependencies, and starts the node, forwarding any argument to `hsync-rendezvous`
 (`./run.sh --help`). It stops with a clear message if `../hsync-common` is
 missing.
 
+> UDP **443 is a privileged port** (below 1024). To bind it, run as root or grant
+> `CAP_NET_BIND_SERVICE`; in development prefer an unprivileged port, e.g.
+> `./run.sh run --listen-port 8443`.
+
 ### Native commands
 
 The same steps, spelled out (the virtualenv is created by `run.sh`):
@@ -100,7 +104,12 @@ interactive terminal:
 
 ```bash
 sudo install -d -m 0750 /etc/hsync-rendezvous
-sudo install -m 0640 /path/to/group-keys /etc/hsync-rendezvous/group-keys
+# The unit's LoadCredential= sources must exist or the service fails to start:
+# group-keys empty = open mode; metrics-token empty = metrics endpoint off.
+sudo install -m 0640 -o root -g root /dev/null /etc/hsync-rendezvous/group-keys
+sudo install -m 0640 -o root -g root /dev/null /etc/hsync-rendezvous/metrics-token
+sudo install -m 0640 -o root -g root /path/to/group-keys \
+    /etc/hsync-rendezvous/group-keys   # protected buckets (overwrites the empty file)
 sudo cp packaging/systemd/hsync-rendezvous.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now hsync-rendezvous.service

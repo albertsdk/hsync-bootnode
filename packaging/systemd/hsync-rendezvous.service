@@ -3,11 +3,13 @@
 # Install:
 #   sudo cp packaging/systemd/hsync-rendezvous.service /etc/systemd/system/
 #   sudo install -d -m 0750 /etc/hsync-rendezvous
-#   # The credential source must exist: create it EMPTY for open mode, or
-#   # provision the operator's group-keys file to enable protected buckets.
+#   # The LoadCredential= sources below must exist or the service fails to
+#   # start: group-keys EMPTY = open mode; metrics-token EMPTY = metrics off.
 #   sudo install -m 0640 -o root -g root /dev/null /etc/hsync-rendezvous/group-keys
+#   sudo install -m 0640 -o root -g root /dev/null /etc/hsync-rendezvous/metrics-token
+#   # Protected buckets only (overwrites the empty file with the operator's keys):
 #   sudo install -m 0640 -o root -g root /path/to/group-keys \
-#       /etc/hsync-rendezvous/group-keys   # protected buckets only
+#       /etc/hsync-rendezvous/group-keys
 #   sudo systemctl daemon-reload && sudo systemctl enable --now hsync-rendezvous
 #
 # The group-keys file is exposed to the process ONLY through systemd's

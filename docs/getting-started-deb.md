@@ -31,7 +31,9 @@ instead of `amd64` on those architectures. To pin a version, use
 
 ### Build from the checkout
 
-From the `hsync-rendezvous` checkout (needs Docker for the cross build):
+From the `hsync-rendezvous` checkout — `-t deb` builds for the host architecture
+and needs **no Docker** (the host must provide `dpkg-shlibdeps` so the `libc6`
+dependency is computed):
 
 ```bash
 ./compile.sh -t deb
@@ -39,7 +41,7 @@ From the `hsync-rendezvous` checkout (needs Docker for the cross build):
 ```
 
 `./compile.sh -t deb-all` cross-builds the `amd64`, `arm64` and `armhf` packages
-inside Docker.
+inside Docker (needs Docker plus the qemu-user-static binfmt handlers).
 
 ## Provision group keys (protected buckets / private node)
 
@@ -51,6 +53,9 @@ credential. Provision the keys over it:
 ```bash
 sudo install -m 0640 /path/to/group-keys /etc/hsync-rendezvous/group-keys
 ```
+
+The keys are read **once at startup**: if the node is already running, restart the
+service (`sudo systemctl restart hsync-rendezvous`) to load them.
 
 The file has one `bucket=<hex-group-key>` line per protected bucket. A drop-in
 cannot append an argument to `ExecStart`, so replace the whole command while
@@ -117,6 +122,7 @@ protected-bucket example above). See `--listen-ports` in
 ```bash
 sudo journalctl -u hsync-rendezvous.service
 sudo hsync-rendezvous identity show --identity /var/lib/hsync-rendezvous/identity.pem
+# → sha256:<fingerprint>   (the exact value clients pin)
 ```
 
 The identity command prints the certificate fingerprint clients pin. The

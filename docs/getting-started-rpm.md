@@ -34,11 +34,34 @@ To build from the checkout instead:
 
 ## Configure and run
 
-The package behaves exactly like the Debian package. Follow the steps in
+The package behaves like the Debian package: group keys and the TLS identity
+are provisioned the same way, the service is opt-in
+(`sudo systemctl enable --now hsync-rendezvous.service`), and removing the
+package stops and disables it (an upgrade leaves the running service
+untouched). Follow the steps in
 [Debian package → Provision group keys](getting-started-deb.md#provision-group-keys-protected-buckets--private-node)
 through
-[→ Start the service](getting-started-deb.md#start-the-service), using
-`sudo dnf upgrade hsync-rendezvous-*.rpm` instead of `dpkg -i` to update.
+[→ Start the service](getting-started-deb.md#start-the-service).
+
+> Unlike `dpkg -i`, an RPM upgrade does **not** restart an enabled service for
+> you: after `sudo dnf upgrade hsync-rendezvous-*.rpm`, restart it once to pick
+> up the new binary:
+>
+> ```bash
+> sudo systemctl restart hsync-rendezvous
+> ```
+>
+> First install: if `sudo systemctl enable --now hsync-rendezvous` fails with a
+> `Failed to load credential ... metrics-token` error, the packaged `%post`
+> (before 1.0.15) created only the empty `group-keys` source. Create both empty
+> credential sources and start again:
+>
+> ```bash
+> sudo install -m 0640 -o root -g root /dev/null /etc/hsync-rendezvous/group-keys
+> sudo install -m 0640 -o root -g root /dev/null /etc/hsync-rendezvous/metrics-token
+> sudo systemctl enable --now hsync-rendezvous
+> ```
+
 The optional
 [second UDP port](getting-started-deb.md#optional-serve-a-second-udp-port)
 drop-in applies unchanged.

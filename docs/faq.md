@@ -219,7 +219,7 @@ or 2.36 (Debian 12). `-t deb` is **not** a fix: it builds that same host payload
 and merely moves the failure from exec time to `dpkg -i`.
 
 **Fix.** Use the cross-build target, which compiles inside a Debian 12
-(bookworm) container with its own CPython 3.12; the produced package's measured
+(bookworm) container with its own CPython 3.14; the produced package's measured
 glibc floor is **2.35**, then install it on the machine:
 
 ```bash

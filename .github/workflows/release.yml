@@ -41,8 +41,8 @@ jobs:
         with: { path: hsync-rendezvous }
       # Path dependency: the Python implementation declares hsync-common as
       # {path = "../../hsync-common"}, so the sibling must be checked out next to
-      # this repo. hsync-common is private, so the default GITHUB_TOKEN cannot
-      # read it; authenticate with a PAT.
+      # this repo; it is checked out with a PAT (this repo's GITHUB_TOKEN is
+      # scoped to this repository, not to its sibling).
       - uses: actions/checkout@v7
         with:
           repository: albertsdk/hsync-common

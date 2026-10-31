@@ -47,6 +47,14 @@ if [ ! -e %{_sysconfdir}/hsync-rendezvous/group-keys ]; then
     chown root:root %{_sysconfdir}/hsync-rendezvous/group-keys 2>/dev/null || true
     chmod 0600 %{_sysconfdir}/hsync-rendezvous/group-keys
 fi
+# Same contract as group-keys: the unit's LoadCredential= also references the
+# metrics bearer token, so the source must exist for the unit to start. An
+# EMPTY file keeps the opt-in /metrics endpoint off.
+if [ ! -e %{_sysconfdir}/hsync-rendezvous/metrics-token ]; then
+    : > %{_sysconfdir}/hsync-rendezvous/metrics-token
+    chown root:root %{_sysconfdir}/hsync-rendezvous/metrics-token 2>/dev/null || true
+    chmod 0600 %{_sysconfdir}/hsync-rendezvous/metrics-token
+fi
 command -v restorecon >/dev/null 2>&1 && \
     restorecon -R %{_sysconfdir}/hsync-rendezvous /usr/lib/systemd/system/hsync-rendezvous.service 2>/dev/null || true
 # Register the unit but do NOT enable or start it: opt-in

@@ -1,4 +1,4 @@
-name: hsync-rendezvous
+name: hsync
 
 services:
   rendezvous:

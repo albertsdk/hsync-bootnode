@@ -567,7 +567,7 @@ parse_args() {
 
 write_compose_file() {
     cat > "${INSTALL_DIR}/compose.yaml" <<'EOF'
-name: hsync-rendezvous
+name: hsync
 
 services:
   rendezvous:

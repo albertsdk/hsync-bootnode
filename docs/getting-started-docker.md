@@ -29,6 +29,11 @@ HSYNC_RENDEZVOUS_IDENTITY=/var/lib/hsync-rendezvous/identity.pem
 #HSYNC_RENDEZVOUS_RELAY=0
 ```
 
+`HSYNC_RENDEZVOUS_PRIVATE=1` is the one-switch equivalent of declaring
+`--protected-bucket` for every bucket in the keys file (it additionally gates
+`leave` and refuses to start with an empty keys file) — see
+[usage.md → Private node](usage.md#private-node-authenticated-rendezvous).
+
 The container binds the unprivileged UDP port `8443`; the host maps
 `RENDEZVOUS_HOST_UDP_PORT` (default `443`) to it. Verify the image signature before
 starting (the released image is signed keyless by the release workflow), then

@@ -51,7 +51,9 @@ Restart-Service hsync-rendezvous
   [usage.md → Group keys](usage.md#group-keys---keys-fd----keys-file).) The
   installed service already passes `--keys-file` for that file; for
   a fully private node uncomment the `HSYNC_RENDEZVOUS_PRIVATE` environment block
-  in `hsync-rendezvous-service.xml` and restart. The node reads the file once at
+  in `hsync-rendezvous-service.xml` and restart (the one-switch equivalent of
+  declaring `--protected-bucket` for every bucket in the keys file — see
+  [Usage](../docs/usage.md#private-node-authenticated-rendezvous)). The node reads the file once at
   startup and never writes it.
 - Read the fingerprint clients pin with
   `hsync-rendezvous identity show --identity C:\ProgramData\hsync-rendezvous\identity.pem`.

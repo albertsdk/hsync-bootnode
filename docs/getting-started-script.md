@@ -157,6 +157,11 @@ home=63379453eeb327abf615e2e89aa3921fb4c20edf11a12a260058ed299dc153cb
 ./install.sh --private --keys-file /secure/path/group-keys
 ```
 
+`--private` is the one-switch equivalent of declaring every bucket provisioned
+in the keys file with `--protected-bucket` (it additionally gates `leave` and
+refuses to start with an empty keys file) — see
+[usage.md → Private node](usage.md#private-node-authenticated-rendezvous).
+
 The full format, the client-side token derivation and the key-rotation procedure
 are in [usage.md → Group keys](usage.md#group-keys---keys-fd----keys-file).
 

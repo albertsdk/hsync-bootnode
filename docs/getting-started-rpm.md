@@ -34,18 +34,51 @@ To build from the checkout instead:
 
 ## Configure and run
 
-The package behaves like the Debian package: group keys and the TLS identity
-are provisioned the same way, the service is opt-in
-(`sudo systemctl enable --now hsync-rendezvous.service`), and removing the
-package stops and disables it (an upgrade leaves the running service
-untouched). Follow the steps in
-[Debian package → Provision group keys](getting-started-deb.md#provision-group-keys-protected-buckets--private-node)
-through
-[→ Start the service](getting-started-deb.md#start-the-service).
+The package installs a hardened systemd unit (DynamicUser +
+`CAP_NET_BIND_SERVICE` so it can bind UDP 443; group keys exposed only as a
+systemd credential) and **never enables the service automatically** — opt in
+with:
 
-> Unlike `dpkg -i`, an RPM upgrade does **not** restart an enabled service for
-> you: after `sudo dnf upgrade hsync-rendezvous-*.rpm`, restart it once to pick
-> up the new binary:
+```bash
+sudo systemctl enable --now hsync-rendezvous.service
+sudo systemctl status hsync-rendezvous.service
+```
+
+Group keys and private mode are node-wide concerns, not packaging ones: the
+`bucket=<hex-key>` file format, key rotation, and the
+`--protected-bucket` / `--private` model are in the shared reference
+[usage.md → Group keys](usage.md#group-keys---keys-fd----keys-file) and
+[usage.md → Private node](usage.md#private-node-authenticated-rendezvous).
+On RPM the keys file lives at `/etc/hsync-rendezvous/group-keys` (created empty
+by `%post`; open mode until you provision it) and the unit reads it as a
+credential — restart the service after writing it:
+
+```bash
+sudo install -m 0640 /path/to/group-keys /etc/hsync-rendezvous/group-keys
+sudo systemctl restart hsync-rendezvous
+```
+
+For a fully private node, an environment drop-in leaves the unit's command
+untouched (what `--private` changes is in the shared reference above):
+
+```bash
+sudo systemctl edit hsync-rendezvous.service
+```
+
+```ini
+[Service]
+Environment=HSYNC_RENDEZVOUS_PRIVATE=1
+```
+
+To also serve a second UDP port (for clients whose network blocks 443), replace
+the unit's single `--listen-port` with `--listen-ports` in a drop-in, keeping
+the unit's `--keys-fd 5 5<"$CREDENTIALS_DIRECTORY/group-keys"` when you
+provisioned keys — see `--listen-ports` in
+[usage.md → run options](usage.md#run-options).
+
+> Unlike `dpkg -i`, an RPM upgrade does **not** stop and restart an enabled
+> service for you: after `sudo dnf upgrade hsync-rendezvous-*.rpm`, restart it
+> once to pick up the new binary:
 >
 > ```bash
 > sudo systemctl restart hsync-rendezvous
@@ -61,10 +94,6 @@ through
 > sudo install -m 0640 -o root -g root /dev/null /etc/hsync-rendezvous/metrics-token
 > sudo systemctl enable --now hsync-rendezvous
 > ```
-
-The optional
-[second UDP port](getting-started-deb.md#optional-serve-a-second-udp-port)
-drop-in applies unchanged.
 
 ## Next
 

@@ -89,15 +89,17 @@ ExecStart=/bin/sh -c 'exec /usr/bin/hsync-rendezvous run --listen-host 0.0.0.0 -
 ```
 
 For a fully private node (every bucket gated), an environment drop-in is enough
-and keeps the unit's command untouched — `--private` is the one-switch
-equivalent of declaring every bucket provisioned in the keys file with
-`--protected-bucket` (it additionally gates `leave` and refuses to start with an
-empty keys file):
+and keeps the unit's command untouched:
 
 ```ini
 [Service]
 Environment=HSYNC_RENDEZVOUS_PRIVATE=1
 ```
+
+What `--private` changes — the one-switch equivalent of a `--protected-bucket`
+for every provisioned bucket, plus `leave` gating and the empty-keys-file
+refusal — is in the shared reference
+[usage.md → Private node](usage.md#private-node-authenticated-rendezvous).
 
 ## Start the service
 

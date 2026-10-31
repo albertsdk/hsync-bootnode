@@ -144,6 +144,10 @@ shared=9f1c...
 home=44ab...
 ```
 
+Provisioning keys never turns a bucket on by itself: a bucket is token-gated
+only when it is declared with the (repeatable) `--protected-bucket` flag, or —
+for every bucket, provisioned or not — when the node runs with `--private`.
+
 A bucket may appear only once: a duplicate line is a configuration error, never
 a silent last-wins override.
 
